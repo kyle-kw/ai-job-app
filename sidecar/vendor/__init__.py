@@ -1,0 +1,1 @@
+"""Vendored MIT-licensed adapters."""

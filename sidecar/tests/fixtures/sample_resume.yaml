@@ -1,0 +1,26 @@
+cv:
+  name: 林知远
+  location: 上海
+  email: lin@example.com
+  phone: "+86 138 0000 0000"
+  website: https://github.com/linzhiyuan
+  sections:
+    个人简介:
+      - 3 年 AI 应用研发经验，专注于 RAG、Agent 工作流和生产级服务交付。
+    核心技能:
+      - Python、FastAPI、RAG、Docker、PostgreSQL
+    工作经历:
+      - company: 云帆科技
+        position: AI 应用研发工程师
+        location: 上海
+        start_date: 2023-06
+        end_date: present
+        highlights:
+          - 负责企业知识库 RAG 平台，检索命中率提升 23%。
+          - 设计多 Agent 审核工作流，将处理时长从 20 分钟降到 6 分钟。
+    教育经历:
+      - institution: 浙江工业大学
+        area: 计算机科学与技术
+        degree: 本科
+        start_date: 2017-09
+        end_date: 2021-06

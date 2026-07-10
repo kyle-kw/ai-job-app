@@ -1,0 +1,4 @@
+interface:
+  display_name: "岗位招呼语"
+  short_description: "使用岗位信息和已确认事实生成简洁自然且不超过六十字的招聘招呼语"
+  default_prompt: "Use $greeting-message to draft one concise recruiter greeting grounded in confirmed facts."

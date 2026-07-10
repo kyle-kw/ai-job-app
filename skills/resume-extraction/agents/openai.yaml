@@ -1,0 +1,4 @@
+interface:
+  display_name: "简历事实提取"
+  short_description: "将简历可靠转换为结构化资料，并建立可追溯且不虚构的事实清单"
+  default_prompt: "Use $resume-extraction to extract this resume into a traceable structured profile without inventing facts."

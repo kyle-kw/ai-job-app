@@ -1,0 +1,35 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "求职舱",
+  "version": "0.1.0",
+  "identifier": "com.localfirst.aijobapp",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "求职舱",
+        "width": 1440,
+        "height": 920,
+        "minWidth": 1060,
+        "minHeight": 720,
+        "center": true,
+        "decorations": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' asset: data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost https://api.xiaomimimo.com https://openrouter.ai"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Productivity",
+    "shortDescription": "本地优先的 AI 求职助手",
+    "longDescription": "抓取岗位、优化简历、评估匹配度并生成专岗求职材料。"
+  }
+}

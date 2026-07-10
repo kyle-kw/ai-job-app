@@ -1,0 +1,4 @@
+interface:
+  display_name: "岗位匹配评估"
+  short_description: "基于已确认简历事实和求职偏好评估岗位匹配度优势缺口与风险"
+  default_prompt: "Use $job-fit to evaluate this job against the confirmed resume and stated preferences."
