@@ -23,6 +23,12 @@ fn request_blocking(
     mut on_event: Option<&mut dyn FnMut(Value) -> Result<(), String>>,
 ) -> Result<Value, String> {
     let mut command = sidecar_command()?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
     command
         .env("PYTHONUTF8", "1")
         .env("PYTHONIOENCODING", "utf-8")

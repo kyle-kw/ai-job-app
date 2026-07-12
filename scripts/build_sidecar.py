@@ -46,8 +46,12 @@ def main() -> int:
             raise RuntimeError(f"Refusing to clean unexpected build path: {resolved}")
         shutil.rmtree(resolved, ignore_errors=True)
         resolved.mkdir(parents=True, exist_ok=True)
-    subprocess.check_call([
+    pyinstaller_args = [
         str(build_python), "-m", "PyInstaller", "--noconfirm", "--clean", "--onefile",
+    ]
+    if os.name == "nt":
+        pyinstaller_args.append("--noconsole")
+    pyinstaller_args.extend([
         "--name", name,
         "--paths", str(SIDECAR),
         "--collect-all", "rendercv",
@@ -61,6 +65,7 @@ def main() -> int:
         "--specpath", str(work_path),
         str(SIDECAR / "worker.py"),
     ])
+    subprocess.check_call(pyinstaller_args)
     built = SIDECAR / "dist" / f"{name}{suffix}"
     destination = BINARIES / f"{name}-{target}{suffix}"
     shutil.copy2(built, destination)
