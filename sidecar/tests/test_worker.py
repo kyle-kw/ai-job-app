@@ -340,6 +340,28 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(terminate_mock.call_args.args, (22,))
         self.assertEqual(running[0][0], 11)
 
+    def test_windows_chrome_process_lookup_hides_powershell_window(self):
+        completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="[]", stderr="")
+        with patch.object(boss_vendor.platform, "system", return_value="Windows"), \
+                patch.object(boss_vendor.subprocess, "run", return_value=completed) as run:
+            self.assertEqual(boss_vendor.iter_chrome_process_commands(), [])
+
+        self.assertEqual(
+            run.call_args.kwargs["creationflags"],
+            getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
+        )
+
+    def test_windows_chrome_termination_hides_taskkill_window(self):
+        with patch.object(boss_vendor.platform, "system", return_value="Windows"), \
+                patch.object(boss_vendor.subprocess, "run") as run:
+            boss_vendor.terminate_process(22, force=True)
+
+        self.assertEqual(run.call_args.args[0], ["taskkill", "/PID", "22", "/T", "/F"])
+        self.assertEqual(
+            run.call_args.kwargs["creationflags"],
+            getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
+        )
+
     def test_profile_reset_refuses_to_delete_while_pid_remains(self):
         with patch.object(boss_vendor, "stop_cdp_chrome", return_value=0), \
                 patch.object(boss_vendor, "chrome_pids_for_user_data_dir", return_value=[22]), \
