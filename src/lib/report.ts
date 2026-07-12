@@ -1,4 +1,4 @@
-import type { Job, JobDataReport, ReportBucket, SalaryByExperience } from '$lib/types';
+import type { Job, JobDataReport, ReportBucket, ReportKeyword, SalaryByExperience } from '$lib/types';
 
 const fallback = (value: string) => value.trim() || '未注明';
 const cityOf = (value: string) => value.split('·')[0]?.trim() || '未注明';
@@ -56,7 +56,7 @@ function salaryBand(value: number): string {
   return '50K 以上';
 }
 
-export function buildClientJobDataReport(jobs: Job[]): JobDataReport {
+export function buildClientJobDataReport(jobs: Job[], selectedKeywords: ReportKeyword[] = []): JobDataReport {
   const total = jobs.length;
   const companies = new Set<string>();
   const counters = {
@@ -108,7 +108,7 @@ export function buildClientJobDataReport(jobs: Job[]): JobDataReport {
   const dates = jobs.flatMap((job) => [job.firstSeen, job.lastSeen]).filter(Boolean).sort();
 
   return {
-    generatedAt: new Date().toISOString(), dataFrom: dates[0]?.slice(0, 10), dataTo: dates.at(-1)?.slice(0, 10),
+    generatedAt: new Date().toISOString(), selectedKeywords, dataFrom: dates[0]?.slice(0, 10), dataTo: dates.at(-1)?.slice(0, 10),
     totalJobs: total, totalCompanies: companies.size, totalCities: counters.cities.size, detailJobs,
     detailCoverage: percentage(detailJobs, total),
     salary: { sampleCount: mids.length, medianLowK: median(lows), medianMidK: median(mids), medianHighK: median(highs), extraMonthsCount, bands: buckets(counters.bands, mids.length) },

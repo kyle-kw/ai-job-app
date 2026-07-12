@@ -3,7 +3,12 @@ import { backend } from '$lib/services/backend';
 import type { AppSettings, BootstrapSnapshot, ImportResumePayload, JobPreferences, SearchSpec, TaskEvent } from '$lib/types';
 
 const empty: BootstrapSnapshot = {
-  readiness: { ai: false, resume: false, boss: false }, jobs: [], resume: null, providers: [], tasks: [], scrapeRuns: [],
+  readiness: { ai: false, resume: false, boss: false },
+  configuration: {
+    boss: { state: 'needs_setup', message: '需要配置 BOSS 专用浏览器。' },
+    llm: { state: 'needs_setup', message: '需要配置默认模型。' }
+  },
+  jobs: [], resume: null, providers: [], tasks: [], scrapeRuns: [],
   settings: { locale: 'zh-CN', theme: 'light', advancedMode: false, telemetry: false, privacyAcknowledged: false }
 };
 
@@ -23,7 +28,7 @@ function mergeTask(event: TaskEvent) {
     else tasks.unshift(event);
     return { ...value, tasks };
   });
-  if (event.state === 'completed') void refresh();
+  if (event.state === 'completed' || event.state === 'failed' || event.state === 'cancelled') void refresh();
 }
 
 export async function initialize() {
@@ -53,8 +58,8 @@ export async function startScrape(spec: SearchSpec) {
   await refresh();
 }
 
-export async function setupBoss() {
-  await backend.setupBoss();
+export async function setupBoss(options: { resetProfile: boolean }) {
+  await backend.setupBoss(options);
   await refresh();
 }
 

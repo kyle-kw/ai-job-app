@@ -34,10 +34,15 @@ def configure_utf8_stdio() -> None:
 
 
 configure_utf8_stdio()
+PROTOCOL_STDOUT = sys.stdout
 
 
 def emit(kind: str, **payload: Any) -> None:
-    print(json.dumps({"type": kind, **payload}, ensure_ascii=False), flush=True)
+    print(
+        json.dumps({"type": kind, **payload}, ensure_ascii=False),
+        file=PROTOCOL_STDOUT,
+        flush=True,
+    )
 
 
 def now() -> str:
@@ -127,16 +132,56 @@ def load_boss_module():
 
 def setup_boss(params: dict[str, Any]) -> dict[str, Any]:
     boss = load_boss_module()
-    ensure_boss_session(boss, int(params.get("loginTimeout", 300)))
-    return {"loggedIn": True}
+    reset_requested = bool(params.get("resetProfile", False))
+    outcome: dict[str, Any] = {
+        "loginSucceeded": False,
+        "resetRequested": reset_requested,
+        "cleanupSucceeded": True,
+        "closedProcesses": 0,
+        "error": None,
+    }
+
+    def record_cleanup(cleanup: dict[str, Any]) -> None:
+        outcome["closedProcesses"] += int(cleanup["closedProcesses"])
+        if not cleanup["cleanupSucceeded"]:
+            outcome["cleanupSucceeded"] = False
+            cleanup_error = str(cleanup.get("error") or "无法确认专用 Chrome 已关闭。")
+            if not outcome["error"]:
+                outcome["error"] = cleanup_error
+
+    try:
+        if reset_requested:
+            # Never let prepare_cdp_profile delete the profile while one of its
+            # Chrome processes is still alive. The check is scoped to the exact
+            # --user-data-dir used by the sidecar, not the user's normal Chrome.
+            reset_cleanup = close_boss_session(boss, progress=12, action="重新配置前")
+            record_cleanup(reset_cleanup)
+            if not reset_cleanup["cleanupSucceeded"]:
+                raise RuntimeError(
+                    f"无法安全重置 BOSS 专用浏览器配置：{reset_cleanup['error']}"
+                )
+
+        ensure_boss_session(
+            boss,
+            int(params.get("loginTimeout", 300)),
+            reset_profile=reset_requested,
+        )
+        outcome["loginSucceeded"] = True
+    except Exception as error:  # Setup failures are part of the structured outcome.
+        if not outcome["error"]:
+            outcome["error"] = str(error)
+    finally:
+        record_cleanup(close_boss_session(boss, progress=90, action="配置结束后"))
+
+    return outcome
 
 
-def ensure_boss_session(boss: Any, login_timeout: int) -> None:
+def ensure_boss_session(boss: Any, login_timeout: int, reset_profile: bool = False) -> None:
     with contextlib.redirect_stdout(io.StringIO()) as captured:
         code = boss.run_setup_chrome(
             9222,
             copy_login_state=False,
-            reset_profile=False,
+            reset_profile=reset_profile,
             wait_login=True,
             login_timeout=login_timeout,
         )
@@ -144,11 +189,61 @@ def ensure_boss_session(boss: Any, login_timeout: int) -> None:
         raise RuntimeError(captured.getvalue().strip() or "BOSS 登录未完成。")
 
 
+def close_boss_session(
+    boss: Any,
+    *,
+    progress: int = 90,
+    action: str = "任务结束后",
+) -> dict[str, Any]:
+    """Close and verify only Chrome processes using the isolated BOSS profile."""
+    result: dict[str, Any] = {
+        "cleanupSucceeded": False,
+        "closedProcesses": 0,
+        "error": None,
+    }
+    try:
+        stopped = boss.stop_cdp_chrome(boss.DEFAULT_CDP_DATA_DIR)
+        result["closedProcesses"] = int(stopped or 0)
+        remaining = list(boss.chrome_pids_for_user_data_dir(boss.DEFAULT_CDP_DATA_DIR))
+        if remaining:
+            raise RuntimeError(f"仍检测到专用 Chrome 进程：{remaining}")
+        result["cleanupSucceeded"] = True
+        message = f"{action}已关闭并确认 BOSS 专用 Chrome（{stopped} 个进程）"
+    except Exception as error:  # Cleanup failure must not discard scraped jobs.
+        result["error"] = str(error)
+        message = f"{action}关闭 BOSS 专用 Chrome 失败：{error}"
+    emit("progress", progress=progress, message=message)
+    return result
+
+
+def close_boss(_params: dict[str, Any]) -> dict[str, Any]:
+    return close_boss_session(load_boss_module(), action="手动清理时")
+
+
 def scrape_jobs(params: dict[str, Any]) -> dict[str, Any]:
+    if not str(params.get("keyword") or "").strip():
+        raise ValueError("岗位关键词不能为空。")
     boss = load_boss_module()
-    keyword = str(params.get("keyword") or "AI Agent").strip()
+    try:
+        return _scrape_jobs(boss, params)
+    finally:
+        # Login timeouts, captcha errors, list/detail exceptions, and empty
+        # results all travel through this path. Cleanup errors are reported as
+        # progress but do not hide the original scrape result or exception.
+        close_boss_session(boss)
+
+
+def _scrape_jobs(boss: Any, params: dict[str, Any]) -> dict[str, Any]:
+    keyword = str(params.get("keyword") or "").strip()
+    if not keyword:
+        raise ValueError("岗位关键词不能为空。")
     city = str(params.get("city") or "上海").strip()
-    pages = max(1, min(int(params.get("pages") or 3), 10))
+    pages = max(1, min(int(params.get("pages") or 1), 5))
+    completed_detail_external_ids = {
+        str(external_id).strip()
+        for external_id in (params.get("completedDetailExternalIds") or [])
+        if str(external_id).strip()
+    }
     city_name, city_code = boss.resolve_city(city)
     city_code = str(city_code).strip()
     if not re.fullmatch(r"\d{9}", city_code):
@@ -165,9 +260,85 @@ def scrape_jobs(params: dict[str, Any]) -> dict[str, Any]:
         output = str(pathlib.Path(temporary) / "jobs.json")
         details_output = str(pathlib.Path(temporary) / "details.json")
         with contextlib.redirect_stdout(io.StringIO()):
-            listing = boss.scrape_list(keyword, city_code, pages, filters, output, cdp_port=9222, fmt="json", allow_dom_fallback=False)
-            emit("progress", progress=55, message="岗位列表抓取完成")
-            details = boss.scrape_details(listing, None, details_output, cdp_port=9222, fmt="json") if listing.get("jobs") else []
+            listing = boss.scrape_list(
+                keyword,
+                city_code,
+                pages,
+                filters,
+                output,
+                cdp_port=9222,
+                fmt="json",
+                allow_dom_fallback=False,
+                on_job=lambda raw: emit("job", phase="list", job=normalize_job(raw)),
+            )
+
+            listed_jobs = list(listing.get("jobs") or [])
+            detail_candidates = [
+                raw
+                for raw in listed_jobs
+                if str(raw.get("job_id") or raw.get("encrypt_job_id") or "").strip()
+                not in completed_detail_external_ids
+            ]
+            skipped_existing = len(listed_jobs) - len(detail_candidates)
+            detail_state = {
+                "succeeded": 0,
+                "skipped": skipped_existing,
+                "failed": 0,
+                "processed": skipped_existing,
+            }
+
+            emit(
+                "progress",
+                progress=55,
+                message=(
+                    f"岗位列表抓取完成，共 {len(listed_jobs)} 个；"
+                    f"已有详情跳过 {skipped_existing} 个"
+                ),
+                detailTotal=len(listed_jobs),
+                detailProcessed=skipped_existing,
+                detailSucceeded=0,
+                detailSkipped=skipped_existing,
+                detailFailed=0,
+            )
+
+            def emit_detail(raw: dict[str, Any], detail: dict[str, Any]) -> None:
+                if str(detail.get("jd") or "").strip():
+                    emit("job", phase="detail", job=normalize_job(raw, detail))
+
+            def emit_detail_progress(**detail_progress: Any) -> None:
+                detail_state["succeeded"] = int(detail_progress.get("succeeded") or 0)
+                detail_state["skipped"] = skipped_existing + int(detail_progress.get("skipped") or 0)
+                detail_state["failed"] = int(detail_progress.get("failed") or 0)
+                detail_state["processed"] = skipped_existing + int(detail_progress.get("processed") or 0)
+                total = len(listed_jobs)
+                progress = 55 + int(22 * detail_state["processed"] / max(total, 1))
+                emit(
+                    "progress",
+                    progress=min(progress, 77),
+                    message=(
+                        "正在抓取岗位详情："
+                        f"成功 {detail_state['succeeded']}，"
+                        f"跳过 {detail_state['skipped']}，"
+                        f"失败 {detail_state['failed']}"
+                        f"（{detail_state['processed']}/{total}）"
+                    ),
+                    detailTotal=total,
+                    detailProcessed=detail_state["processed"],
+                    detailSucceeded=detail_state["succeeded"],
+                    detailSkipped=detail_state["skipped"],
+                    detailFailed=detail_state["failed"],
+                )
+
+            detail_listing = {**listing, "jobs": detail_candidates, "total": len(detail_candidates)}
+            details = boss.scrape_details(
+                detail_listing,
+                None,
+                details_output,
+                cdp_port=9222,
+                fmt="json",
+                on_detail=emit_detail,
+                on_progress=emit_detail_progress,
+            ) if detail_candidates else []
 
     if not listing.get("jobs"):
         raise RuntimeError(
@@ -177,34 +348,106 @@ def scrape_jobs(params: dict[str, Any]) -> dict[str, Any]:
 
     detail_by_id = {str(detail.get("job_id")): detail for detail in details or []}
     jobs = [normalize_job(raw, detail_by_id.get(str(raw.get("job_id")))) for raw in listing.get("jobs", [])]
-    emit("progress", progress=78, message="岗位详情抓取完成")
+    emit(
+        "progress",
+        progress=78,
+        message=(
+            "岗位详情抓取完成："
+            f"成功 {detail_state['succeeded']}，"
+            f"跳过 {detail_state['skipped']}，"
+            f"失败 {detail_state['failed']}"
+        ),
+        detailTotal=len(listing.get("jobs") or []),
+        detailProcessed=detail_state["processed"],
+        detailSucceeded=detail_state["succeeded"],
+        detailSkipped=detail_state["skipped"],
+        detailFailed=detail_state["failed"],
+    )
     return {
         "jobs": jobs,
         "reportMarkdown": market_report(jobs, keyword, city_name),
         "resolvedCity": city_name,
         "cityCode": city_code,
+        "detailSummary": detail_state,
     }
 
 
-def extract_text(path: pathlib.Path) -> tuple[str, dict[str, Any] | None]:
+def extract_docx_text(path: pathlib.Path) -> str:
+    from docx import Document
+    from docx.oxml.table import CT_Tbl
+    from docx.oxml.text.paragraph import CT_P
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
+    document = Document(str(path))
+    lines: list[str] = []
+    for child in document.element.body.iterchildren():
+        if isinstance(child, CT_P):
+            value = Paragraph(child, document).text.strip()
+            if value:
+                lines.append(value)
+        elif isinstance(child, CT_Tbl):
+            table = Table(child, document)
+            for row in table.rows:
+                cells = [cell.text.strip().replace("\n", " ") for cell in row.cells]
+                value = " | ".join(dict.fromkeys(cell for cell in cells if cell))
+                if value:
+                    lines.append(value)
+    for section in document.sections:
+        for container in (section.header, section.footer):
+            for paragraph in container.paragraphs:
+                value = paragraph.text.strip()
+                if value and value not in lines:
+                    lines.append(value)
+            for table in container.tables:
+                for row in table.rows:
+                    value = " | ".join(cell.text.strip().replace("\n", " ") for cell in row.cells if cell.text.strip())
+                    if value and value not in lines:
+                        lines.append(value)
+    return "\n".join(lines)
+
+
+def render_pdf_page(path: pathlib.Path, page_index: int, output_dir: pathlib.Path) -> pathlib.Path:
+    import pypdfium2 as pdfium
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    document = pdfium.PdfDocument(str(path))
+    page = document[page_index]
+    image = page.render(scale=2.25).to_pil()
+    output_path = output_dir / f"page-{page_index + 1}.png"
+    image.save(output_path, format="PNG", optimize=True)
+    image.close()
+    page.close()
+    document.close()
+    return output_path
+
+
+def extract_text(path: pathlib.Path) -> tuple[str, dict[str, Any] | None, list[dict[str, Any]]]:
     suffix = path.suffix.lower()
     if suffix == ".pdf":
         from pypdf import PdfReader
-        text = "\n".join(page.extract_text() or "" for page in PdfReader(str(path)).pages)
-        if len(text.strip()) < 30:
-            raise RuntimeError("PDF 没有可读取的文本层，请改用 DOCX、YAML 或粘贴文本。")
-        return text, None
+        pages: list[dict[str, Any]] = []
+        page_texts: list[str] = []
+        reader = PdfReader(str(path))
+        image_dir = path.parent / f"{path.stem}-pages"
+        for index, page in enumerate(reader.pages):
+            page_text = (page.extract_text() or "").strip()
+            page_texts.append(page_text)
+            page_data: dict[str, Any] = {"pageNumber": index + 1, "text": page_text}
+            has_visual_content = bool(list(page.images))
+            if len(page_text) < 30 and has_visual_content:
+                page_data["imagePath"] = str(render_pdf_page(path, index, image_dir).resolve())
+            pages.append(page_data)
+        return "\n\n".join(page_texts), None, pages
     if suffix == ".docx":
-        from docx import Document
-        document = Document(str(path))
-        text = "\n".join(paragraph.text for paragraph in document.paragraphs if paragraph.text.strip())
+        text = extract_docx_text(path)
         if len(text.strip()) < 20:
             raise RuntimeError("DOCX 中没有足够的可读取文本。")
-        return text, None
+        return text, None, []
     if suffix in {".yaml", ".yml"}:
         import yaml
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        return path.read_text(encoding="utf-8"), data
+        return path.read_text(encoding="utf-8"), data, []
     raise RuntimeError("仅支持 PDF、DOCX、YAML 和 YML。")
 
 
@@ -216,12 +459,81 @@ def first_value(data: dict[str, Any], *keys: str) -> str:
     return ""
 
 
+def split_skill_items(value: Any) -> list[str]:
+    if isinstance(value, list):
+        values = [str(item).strip() for item in value]
+    else:
+        values = [item.strip() for item in re.split(r"[,，、|]", str(value or ""))]
+    return list(dict.fromkeys(item for item in values if item))
+
+
+def entry_dates(entry: dict[str, Any]) -> tuple[str, str]:
+    start = first_value(entry, "start_date", "startDate")
+    end = first_value(entry, "end_date", "endDate")
+    combined = first_value(entry, "date")
+    if combined and not (start or end):
+        start, end = normalize_date_pair("", combined)
+    return normalize_date_pair(start, end)
+
+
+DATE_RANGE_PATTERN = re.compile(
+    r"^\s*(\d{4}(?:[./\-年]\d{1,2}(?:月)?)?)\s*(?:-|–|—|至|到)\s*(\d{4}(?:[./\-年]\d{1,2}(?:月)?)?|至今|现在|present)\s*$",
+    re.IGNORECASE,
+)
+
+
+def normalize_date_pair(start: Any, end: Any) -> tuple[str, str]:
+    start_value = str(start or "").strip().strip("-–— ")
+    end_value = str(end or "").strip().strip("-–— ")
+    candidate = end_value if not start_value else start_value if not end_value else ""
+    match = DATE_RANGE_PATTERN.fullmatch(candidate) if candidate else None
+    if match:
+        return match.group(1).strip(), match.group(2).strip()
+    return start_value, end_value
+
+
+def render_date_fields(item: dict[str, Any]) -> tuple[str | None, str | None]:
+    start, end = normalize_date_pair(item.get("startDate"), item.get("endDate"))
+    if not start and end:
+        return rendercv_date(end), None
+    return rendercv_date(start), rendercv_date(end, end_date=True)
+
+
+def rendercv_date(value: str, *, end_date: bool = False) -> str | None:
+    normalized = value.strip()
+    if not normalized:
+        return None
+    if end_date and normalized.lower() in {"至今", "现在", "present", "current"}:
+        return "present"
+    match = re.fullmatch(r"(\d{4})(?:[./年-](\d{1,2})(?:月)?)?(?:[./日-](\d{1,2})(?:日)?)?", normalized)
+    if not match:
+        return normalized
+    return "-".join(part.zfill(2) if index else part for index, part in enumerate(match.groups(default="")) if part)
+
+
+def rendercv_phone(value: Any) -> str | None:
+    phone = str(value or "").strip()
+    digits = re.sub(r"\D", "", phone)
+    if len(digits) == 11 and digits.startswith("1"):
+        return f"+86{digits}"
+    return phone or None
+
+
+def display_degree(item: dict[str, Any]) -> str:
+    degree = str(item.get("degree") or "").strip()
+    if degree == "其他":
+        return str(item.get("degreeDetail") or "").strip() or degree
+    return degree
+
+
 def profile_from_yaml(data: dict[str, Any], file_name: str) -> dict[str, Any]:
     cv = data.get("cv") if isinstance(data.get("cv"), dict) else data
     sections = cv.get("sections") if isinstance(cv.get("sections"), dict) else {}
     experience_entries: list[dict[str, Any]] = []
     education_entries: list[dict[str, Any]] = []
-    skills: list[str] = []
+    professional_skills: list[dict[str, Any]] = []
+    projects: list[dict[str, Any]] = []
+    certifications: list[dict[str, Any]] = []
     summary = ""
     for section_name, entries in sections.items():
         name = str(section_name).lower()
@@ -229,29 +541,56 @@ def profile_from_yaml(data: dict[str, Any], file_name: str) -> dict[str, Any]:
         if any(word in name for word in ["education", "教育"]):
             for entry in entries:
                 if isinstance(entry, dict):
+                    start_date, end_date = entry_dates(entry)
                     education_entries.append({
                         "institution": first_value(entry, "institution"), "area": first_value(entry, "area"),
-                        "degree": first_value(entry, "degree"), "startDate": first_value(entry, "start_date", "startDate"),
-                        "endDate": first_value(entry, "end_date", "endDate", "date"), "highlights": [str(item) for item in entry.get("highlights", [])],
+                        "degree": first_value(entry, "degree"), "startDate": start_date,
+                        "degreeDetail": first_value(entry, "degree_detail", "degreeDetail"),
+                        "endDate": end_date, "highlights": [str(item) for item in entry.get("highlights", [])],
                     })
-        elif any(word in name for word in ["experience", "工作", "职业经历"]):
+        elif any(word in name for word in ["experience", "工作", "职业经历"]) and not any(word in name for word in ["project", "项目"]):
             for entry in entries:
                 if isinstance(entry, dict):
+                    start_date, end_date = entry_dates(entry)
                     experience_entries.append({
                         "company": first_value(entry, "company", "institution"),
                         "position": first_value(entry, "position", "title"),
                         "location": first_value(entry, "location"),
-                        "startDate": first_value(entry, "start_date", "startDate"),
-                        "endDate": first_value(entry, "end_date", "endDate", "date"),
+                        "startDate": start_date,
+                        "endDate": end_date,
                         "highlights": [str(item) for item in entry.get("highlights", [])],
                     })
         elif "skill" in name or "技能" in name:
             for entry in entries:
-                if isinstance(entry, str): skills.extend(re.split(r"[,，、|]", entry))
-                elif isinstance(entry, dict): skills.extend(re.split(r"[,，、|]", first_value(entry, "details", "label")))
-        elif any(word in name for word in ["summary", "profile", "简介"]):
+                if isinstance(entry, str):
+                    professional_skills.append({"id": str(uuid.uuid4()), "label": "核心技能", "items": split_skill_items(entry)})
+                elif isinstance(entry, dict):
+                    professional_skills.append({
+                        "id": str(uuid.uuid4()),
+                        "label": first_value(entry, "label") or "专业技能",
+                        "items": split_skill_items(entry.get("details") or entry.get("items")),
+                    })
+        elif any(word in name for word in ["project", "项目"]):
+            for entry in entries:
+                if isinstance(entry, dict):
+                    start_date, end_date = entry_dates(entry)
+                    projects.append({
+                        "id": str(uuid.uuid4()), "name": first_value(entry, "name", "title"),
+                        "summary": first_value(entry, "summary"), "startDate": start_date, "endDate": end_date,
+                        "highlights": [str(item) for item in entry.get("highlights", [])],
+                    })
+        elif any(word in name for word in ["certification", "certificate", "证书", "资质"]):
+            for entry in entries:
+                if isinstance(entry, dict):
+                    certifications.append({
+                        "id": str(uuid.uuid4()), "name": first_value(entry, "name", "title"),
+                        "issuer": first_value(entry, "issuer", "institution"), "date": first_value(entry, "date"),
+                    })
+                elif str(entry).strip():
+                    certifications.append({"id": str(uuid.uuid4()), "name": str(entry).strip(), "issuer": "", "date": ""})
+        elif any(word in name for word in ["summary", "profile", "简介", "个人定位"]):
             summary = " ".join(str(item) for item in entries)
-    return base_profile(file_name, first_value(cv, "name"), first_value(cv, "email"), first_value(cv, "phone"), first_value(cv, "location"), first_value(cv, "website"), first_value(cv, "headline"), summary, skills, experience_entries, education_entries)
+    return base_profile(file_name, first_value(cv, "name"), first_value(cv, "email"), first_value(cv, "phone"), first_value(cv, "location"), first_value(cv, "website"), first_value(cv, "headline"), summary, professional_skills, experience_entries, education_entries, projects, certifications)
 
 
 KNOWN_SKILLS = ["Python", "Java", "Golang", "Rust", "TypeScript", "JavaScript", "Svelte", "React", "Vue", "FastAPI", "Django", "Flask", "LangChain", "RAG", "Docker", "Kubernetes", "Redis", "MySQL", "PostgreSQL", "PyTorch", "TensorFlow", "AWS", "Azure"]
@@ -265,16 +604,23 @@ def profile_from_text(text: str, file_name: str) -> dict[str, Any]:
     skills = [skill for skill in KNOWN_SKILLS if re.search(rf"(?<![A-Za-z]){re.escape(skill)}(?![A-Za-z])", text, re.IGNORECASE)]
     headline = next((line for line in lines[:12] if any(word in line.lower() for word in ["工程师", "开发", "产品", "designer", "engineer"])), "")
     summary = next((line for line in lines if 35 <= len(line) <= 180), "")
-    return base_profile(file_name, name, email_match.group(0) if email_match else "", phone_match.group(0) if phone_match else "", "", "", headline, summary, skills, [], [])
+    skill_groups = [{"id": str(uuid.uuid4()), "label": "核心技能", "items": skills}] if skills else []
+    return base_profile(file_name, name, email_match.group(0) if email_match else "", phone_match.group(0) if phone_match else "", "", "", headline, summary, skill_groups, [], [])
 
 
-def base_profile(file_name: str, name: str, email: str, phone: str, location: str, website: str, headline: str, summary: str, skills: list[str], experiences: list[dict[str, Any]], education: list[dict[str, Any]]) -> dict[str, Any]:
-    skills = list(dict.fromkeys(item.strip() for item in skills if item.strip()))
-    facts = [{"id": str(uuid.uuid4()), "category": "skill", "value": skill, "source": f"{file_name} · 技能", "confidence": 0.95, "confirmed": True} for skill in skills]
+def base_profile(file_name: str, name: str, email: str, phone: str, location: str, website: str, headline: str, summary: str, professional_skills: list[dict[str, Any]], experiences: list[dict[str, Any]], education: list[dict[str, Any]], projects: list[dict[str, Any]] | None = None, certifications: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    if professional_skills and isinstance(professional_skills[0], str):
+        professional_skills = [{"id": str(uuid.uuid4()), "label": "核心技能", "items": split_skill_items(professional_skills)}]
+    professional_skills = [group for group in professional_skills if group.get("items")]
+    facts = [
+        {"id": str(uuid.uuid4()), "category": "skill", "value": skill, "source": f"{file_name} · 专业技能 · {group.get('label', '')}", "confidence": 0.95, "confirmed": False}
+        for group in professional_skills for skill in group.get("items", [])
+    ]
     return {
         "id": "resume-master", "name": name, "headline": headline, "email": email, "phone": phone,
-        "location": location, "website": website, "summary": summary, "skills": skills,
-        "experiences": experiences, "education": education, "facts": facts,
+        "location": location, "website": website, "summary": summary, "templateId": "ai-engineering",
+        "professionalSkills": professional_skills, "experiences": experiences, "education": education,
+        "projects": projects or [], "certifications": certifications or [], "facts": facts,
         "preferences": {"targetRoles": [], "cities": [], "remotePreference": "flexible", "energizingTasks": [], "drainingTasks": [], "hardConstraints": []},
         "sourceFileName": file_name, "updatedAt": now(), "version": 1,
     }
@@ -283,43 +629,81 @@ def base_profile(file_name: str, name: str, email: str, phone: str, location: st
 def extract_resume(params: dict[str, Any]) -> dict[str, Any]:
     path = pathlib.Path(str(params["path"]))
     file_name = str(params.get("fileName") or path.name)
-    text, yaml_data = extract_text(path)
+    text, yaml_data, pages = extract_text(path)
     profile = profile_from_yaml(yaml_data, file_name) if isinstance(yaml_data, dict) else profile_from_text(text, file_name)
-    return {"profile": profile, "rawText": text}
+    return {"profile": profile, "rawText": text, "pages": pages}
 
 
 def profile_to_rendercv(profile: dict[str, Any]) -> dict[str, Any]:
-    sections: dict[str, Any] = {}
+    section_values: dict[str, tuple[str, Any]] = {}
     if profile.get("summary"):
-        sections["个人简介"] = [profile["summary"]]
-    if profile.get("skills"):
-        sections["核心技能"] = ["、".join(profile["skills"])]
+        section_values["summary"] = ("个人简介", [profile["summary"]])
+    skill_groups = profile.get("professionalSkills") or []
+    if not skill_groups and profile.get("skills"):
+        skill_groups = [{"label": "核心技能", "items": profile["skills"]}]
+    if skill_groups:
+        section_values["professionalSkills"] = ("专业技能", [
+            {"label": group.get("label") or "专业技能", "details": ", ".join(group.get("items") or [])}
+            for group in skill_groups if group.get("items")
+        ])
     if profile.get("experiences"):
-        sections["工作经历"] = [
-            {
+        experience_entries = []
+        for item in profile["experiences"]:
+            start_date, end_date = render_date_fields(item)
+            experience_entries.append({
                 "company": item.get("company", ""), "position": item.get("position", ""), "location": item.get("location", ""),
-                "start_date": item.get("startDate") or None, "end_date": item.get("endDate") or None,
+                "start_date": start_date, "end_date": end_date,
                 "highlights": item.get("highlights", []),
-            }
-            for item in profile["experiences"]
-        ]
+            })
+        section_values["experiences"] = ("工作经历", experience_entries)
+    if profile.get("projects"):
+        project_entries = []
+        for item in profile["projects"]:
+            start_date, end_date = render_date_fields(item)
+            project_entries.append({
+                "name": item.get("name", ""), "summary": item.get("summary", ""),
+                "start_date": start_date, "end_date": end_date,
+                "highlights": item.get("highlights", []),
+            })
+        section_values["projects"] = ("项目经历", project_entries)
+    if profile.get("certifications"):
+        section_values["certifications"] = ("证书 / 专业资质", [
+            " · ".join(part for part in [item.get("name", ""), item.get("issuer", ""), item.get("date", "")] if part)
+            for item in profile["certifications"]
+        ])
     if profile.get("education"):
-        sections["教育经历"] = [
-            {
-                "institution": item.get("institution", ""), "area": item.get("area", ""), "degree": item.get("degree", ""),
-                "start_date": item.get("startDate") or None, "end_date": item.get("endDate") or None,
+        education_entries = []
+        for item in profile["education"]:
+            start_date, end_date = render_date_fields(item)
+            education_entries.append({
+                "institution": item.get("institution", ""), "area": item.get("area", ""), "degree": display_degree(item),
+                "start_date": start_date, "end_date": end_date,
                 "highlights": item.get("highlights", []),
-            }
-            for item in profile["education"]
-        ]
+            })
+        section_values["education"] = ("教育经历", education_entries)
+    orders = {
+        "ai-engineering": ["summary", "professionalSkills", "projects", "experiences", "certifications", "education"],
+        "data-analysis": ["summary", "professionalSkills", "experiences", "projects", "certifications", "education"],
+        "finance-accounting": ["summary", "experiences", "certifications", "professionalSkills", "education", "projects"],
+        "general": ["summary", "experiences", "professionalSkills", "projects", "certifications", "education"],
+    }
+    sections: dict[str, Any] = {}
+    for key in orders.get(str(profile.get("templateId") or "ai-engineering"), orders["ai-engineering"]):
+        if key in section_values and section_values[key][1]:
+            title, entries = section_values[key]
+            sections[title] = entries
     return {
         "cv": {
             "name": profile.get("name") or "Candidate", "headline": profile.get("headline") or None,
             "location": profile.get("location") or None, "email": profile.get("email") or None,
-            "phone": profile.get("phone") or None, "website": profile.get("website") or None,
+            "phone": rendercv_phone(profile.get("phone")), "website": profile.get("website") or None,
             "sections": sections,
         },
-        "design": {"theme": "engineeringresumes"},
+        "design": {"theme": {
+            "ai-engineering": "engineeringresumes",
+            "data-analysis": "opal",
+            "finance-accounting": "harvard",
+        }.get(str(profile.get("templateId") or "ai-engineering"), "engineeringresumes")},
         "locale": {"language": "mandarin_chinese"},
     }
 
@@ -335,43 +719,45 @@ def render_resume(params: dict[str, Any]) -> dict[str, Any]:
 
     output_path = pathlib.Path(str(params["outputPath"])).resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    yaml_path = output_path.with_suffix(".yaml")
-    typst_path = output_path.with_suffix(".typ")
     data = profile_to_rendercv(dict(params["profile"]))
     yaml_text = yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
-    yaml_path.write_text(yaml_text, encoding="utf-8")
-    _, model = build_rendercv_dictionary_and_model(
-        yaml_text,
-        input_file_path=yaml_path,
-        output_folder=output_path.parent,
-        typst_path=typst_path,
-        pdf_path=output_path,
-        dont_generate_png=True,
-        dont_generate_markdown=True,
-        dont_generate_html=True,
-    )
-    # RenderCV 2.8 imports the Font Awesome Typst package even when the selected
-    # theme disables all icons. Replace that unused network import with a local
-    # no-op implementation so resume rendering remains fully offline.
-    package_path = pdf_png.get_package_path()
-    for library in package_path.glob("preview/rendercv/*/lib.typ"):
-        source = library.read_text(encoding="utf-8")
-        source = source.replace(
-            '#import "@preview/fontawesome:0.6.0": fa-icon',
-            '#let fa-icon(name, size: 1em) = none',
+    with tempfile.TemporaryDirectory(prefix="resume-render-") as temporary:
+        temporary_path = pathlib.Path(temporary)
+        yaml_path = temporary_path / "resume.yaml"
+        typst_path = temporary_path / "resume.typ"
+        yaml_path.write_text(yaml_text, encoding="utf-8")
+        _, model = build_rendercv_dictionary_and_model(
+            yaml_text,
+            input_file_path=yaml_path,
+            output_folder=temporary_path,
+            typst_path=typst_path,
+            pdf_path=output_path,
+            dont_generate_png=True,
+            dont_generate_markdown=True,
+            dont_generate_html=True,
         )
-        library.write_text(source, encoding="utf-8")
-    pdf_png.get_typst_compiler.cache_clear()
+        # RenderCV 2.8 imports Font Awesome even when a theme disables icons.
+        # Replace that unused network import so rendering remains fully offline.
+        package_path = pdf_png.get_package_path()
+        for library in package_path.glob("preview/rendercv/*/lib.typ"):
+            source = library.read_text(encoding="utf-8")
+            source = source.replace(
+                '#import "@preview/fontawesome:0.6.0": fa-icon',
+                '#let fa-icon(name, size: 1em) = none',
+            )
+            library.write_text(source, encoding="utf-8")
+        pdf_png.get_typst_compiler.cache_clear()
 
-    generated_typst = generate_typst(model)
-    generated_pdf = pdf_png.generate_pdf(model, generated_typst)
-    if generated_pdf is None or not pathlib.Path(generated_pdf).exists():
-        raise RuntimeError("RenderCV 没有生成 PDF，请检查简历字段。")
-    return {"path": str(pathlib.Path(generated_pdf).resolve()), "yamlPath": str(yaml_path)}
+        generated_typst = generate_typst(model)
+        generated_pdf = pdf_png.generate_pdf(model, generated_typst)
+        if generated_pdf is None or not pathlib.Path(generated_pdf).exists():
+            raise RuntimeError("RenderCV 没有生成 PDF，请检查简历字段。")
+    return {"path": str(output_path)}
 
 
 OPERATIONS = {
     "setup_boss": setup_boss,
+    "close_boss": close_boss,
     "scrape_jobs": scrape_jobs,
     "extract_resume": extract_resume,
     "render_resume": render_resume,

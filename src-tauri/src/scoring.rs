@@ -1,11 +1,10 @@
-use crate::models::{FitDimension, FitReport, HardConstraint, Job, ResumePatch, ResumeProfile};
+use crate::models::{FitDimension, FitReport, HardConstraint, Job, ResumeProfile};
 use crate::time;
 use std::collections::HashSet;
-use uuid::Uuid;
 
 pub fn deterministic_fit(job: &Job, resume: &ResumeProfile) -> FitReport {
     let resume_skills: HashSet<String> = resume
-        .skills
+        .flattened_skills()
         .iter()
         .map(|skill| skill.to_lowercase())
         .collect();
@@ -207,84 +206,49 @@ pub fn deterministic_fit(job: &Job, resume: &ResumeProfile) -> FitReport {
             .cloned()
             .collect(),
         generated_at: time::shanghai_rfc3339(),
-        skill_version: "job-fit@1.0.0".into(),
+        skill_version: "job-fit@1.1.0".into(),
+        input_hash: String::new(),
+        analysis_source: "local".into(),
+        fallback_reason: None,
+        cache_status: "fresh".into(),
     }
 }
 
-pub fn deterministic_patches(job: &Job, resume: &ResumeProfile) -> Vec<ResumePatch> {
-    let fact_ids: Vec<String> = resume
+pub fn fallback_greeting(job: &Job, resume: &ResumeProfile) -> String {
+    let confirmed_skills = resume
         .facts
         .iter()
-        .filter(|fact| fact.confirmed)
-        .take(3)
-        .map(|fact| fact.id.clone())
-        .collect();
-    let first_highlight = resume
-        .experiences
-        .first()
-        .and_then(|experience| experience.highlights.first())
-        .cloned()
-        .unwrap_or_default();
-    vec![
-        ResumePatch {
-            id: Uuid::new_v4().to_string(),
-            job_id: job.id.clone(),
-            section: "个人简介".into(),
-            before: resume.summary.clone(),
-            after: format!(
-                "{} 年相关研发经验，聚焦于 {} 所需的 AI 应用、工作流与生产级服务交付。",
-                resume.experiences.len().max(1),
-                job.title
-            ),
-            rationale: "把岗位最关注的职责前置，同时不增加未经确认的经历。".into(),
-            evidence_fact_ids: fact_ids.clone(),
-            status: "pending".into(),
-        },
-        ResumePatch {
-            id: Uuid::new_v4().to_string(),
-            job_id: job.id.clone(),
-            section: "最近经历 · 重点成果".into(),
-            before: first_highlight.clone(),
-            after: first_highlight,
-            rationale: "保留原始量化结果，仅调整它在专岗简历中的优先级。".into(),
-            evidence_fact_ids: fact_ids,
-            status: "pending".into(),
-        },
-    ]
-}
-
-pub fn fallback_greeting(job: &Job, resume: &ResumeProfile) -> String {
+        .filter(|fact| fact.confirmed && fact.category == "skill")
+        .map(|fact| fact.value.to_lowercase())
+        .collect::<Vec<_>>();
     let strengths = job
         .skills
         .iter()
         .filter(|skill| {
-            resume
-                .skills
+            confirmed_skills
                 .iter()
-                .any(|candidate| candidate.eq_ignore_ascii_case(skill))
+                .any(|candidate| candidate.contains(&skill.to_lowercase()))
         })
         .take(2)
         .cloned()
         .collect::<Vec<_>>();
-    let strength_text = if strengths.is_empty() {
-        "AI 应用工程落地".into()
+    let mut message = if strengths.is_empty() {
+        format!(
+            "您好，我关注贵司{}岗位，想进一步了解，方便沟通一下吗？",
+            job.title
+        )
     } else {
-        strengths.join(" 与 ")
+        format!(
+            "您好，我熟悉{}，和贵司{}较匹配，方便沟通一下吗？",
+            strengths.join(" 与 "),
+            job.title
+        )
     };
-    let mut message = format!(
-        "您好，我有{strength_text}经验，和贵司{}较匹配，方便沟通一下吗？",
-        job.title
-    );
-    while message.chars().count() > 60 {
-        message = format!(
-            "您好，我有{strength_text}经验，对贵司{}很感兴趣，方便聊聊吗？",
-            job.title.chars().take(10).collect::<String>()
-        );
-        if message.chars().count() <= 60 {
-            break;
-        }
+    if message.chars().count() > 60 {
+        let title = job.title.chars().take(10).collect::<String>();
+        message = format!("您好，我关注贵司{title}岗位，方便沟通一下吗？");
     }
-    message
+    message.chars().take(60).collect()
 }
 
 fn verdict(score: i64) -> &'static str {
@@ -328,6 +292,7 @@ mod tests {
             fit: None,
             greeting: None,
             patches: vec![],
+            structured_details: None,
         };
         let resume = ResumeProfile {
             id: "r".into(),
@@ -338,9 +303,16 @@ mod tests {
             location: String::new(),
             website: String::new(),
             summary: String::new(),
-            skills: vec!["Python".into()],
+            template_id: "ai-engineering".into(),
+            professional_skills: vec![crate::models::ProfessionalSkillGroup {
+                id: "skills".into(),
+                label: "核心技能".into(),
+                items: vec!["Python".into()],
+            }],
             experiences: vec![],
             education: vec![],
+            projects: vec![],
+            certifications: vec![],
             facts: vec![],
             preferences: Default::default(),
             source_file_name: String::new(),
@@ -348,5 +320,71 @@ mod tests {
             version: 1,
         };
         assert!(fallback_greeting(&job, &resume).chars().count() <= 60);
+        assert!(!fallback_greeting(&job, &resume).contains("AI 应用工程落地"));
+        assert!(!fallback_greeting(&job, &resume).contains("经验"));
+    }
+
+    #[test]
+    fn greeting_uses_only_confirmed_matching_skill_facts() {
+        let mut job = Job {
+            id: "1".into(),
+            source: "boss".into(),
+            external_id: "1".into(),
+            title: "财务会计".into(),
+            company: "示例公司".into(),
+            salary: String::new(),
+            location: String::new(),
+            experience: String::new(),
+            degree: String::new(),
+            company_scale: String::new(),
+            company_stage: String::new(),
+            industry: String::new(),
+            skills: vec!["Excel".into()],
+            welfare: vec![],
+            description: String::new(),
+            source_url: String::new(),
+            boss_name: None,
+            boss_title: None,
+            first_seen: String::new(),
+            last_seen: String::new(),
+            is_new: true,
+            fit: None,
+            greeting: None,
+            patches: vec![],
+            structured_details: None,
+        };
+        let mut resume = ResumeProfile {
+            id: "r".into(),
+            name: String::new(),
+            headline: String::new(),
+            email: String::new(),
+            phone: String::new(),
+            location: String::new(),
+            website: String::new(),
+            summary: String::new(),
+            template_id: "finance-accounting".into(),
+            professional_skills: vec![],
+            experiences: vec![],
+            education: vec![],
+            projects: vec![],
+            certifications: vec![],
+            facts: vec![crate::models::ResumeFact {
+                id: "f".into(),
+                category: "skill".into(),
+                value: "Excel".into(),
+                source: "手工".into(),
+                confidence: 1.0,
+                confirmed: false,
+            }],
+            preferences: Default::default(),
+            source_file_name: String::new(),
+            updated_at: String::new(),
+            version: 1,
+        };
+        assert!(!fallback_greeting(&job, &resume).contains("熟悉Excel"));
+        resume.facts[0].confirmed = true;
+        assert!(fallback_greeting(&job, &resume).contains("熟悉Excel"));
+        job.skills = vec!["SQL".into()];
+        assert!(!fallback_greeting(&job, &resume).contains("熟悉Excel"));
     }
 }

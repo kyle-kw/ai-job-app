@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { BarChart3, BriefcaseBusiness, FileText, LayoutDashboard, Settings2, Sparkles } from 'lucide-svelte';
+  import { BarChart3, BriefcaseBusiness, FileText, ListChecks, Settings2, Sparkles } from 'lucide-svelte';
   import { page } from '$app/stores';
   import { t } from '$lib/i18n';
 
   const nav = [
-    { href: '/', label: 'nav.dashboard', icon: LayoutDashboard },
+    { href: '/', label: 'nav.dashboard', icon: ListChecks },
     { href: '/jobs', label: 'nav.jobs', icon: BriefcaseBusiness },
     { href: '/reports', label: 'nav.reports', icon: BarChart3 },
     { href: '/resume', label: 'nav.resume', icon: FileText }
@@ -14,7 +14,7 @@
 </script>
 
 <aside class="sidebar flex w-[224px] shrink-0 flex-col border-r px-3 py-4" style="background: var(--sidebar); border-color: var(--line);">
-  <a href="/" class="mb-7 flex items-center gap-3 px-2.5" aria-label="求职舱首页">
+  <a href="/" class="mb-7 flex items-center gap-3 px-2.5" aria-label="求职舱初始化">
     <span class="grid h-10 w-10 place-items-center rounded-[14px] text-white shadow-sm" style="background: var(--brand);">
       <Sparkles size={20} strokeWidth={2.2} />
     </span>
@@ -43,7 +43,7 @@
         <span class="h-1.5 w-1.5 rounded-full" style="background: var(--brand);"></span>
         本地优先
       </div>
-      <p class="text-[11px] leading-5 body-muted">岗位与简历保存在本机，API 密钥进入系统密钥库。</p>
+      <p class="text-[11px] leading-5 body-muted">岗位与简历保存在本机，仅主动使用 AI 时发送必要上下文。</p>
     </div>
     <a href="/settings" class:active={active('/settings')} class="nav-item flex h-11 items-center gap-3 rounded-xl px-3 text-sm font-medium transition">
       <Settings2 size={18} strokeWidth={active('/settings') ? 2.25 : 1.8} />

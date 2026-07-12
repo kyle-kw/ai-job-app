@@ -12,9 +12,15 @@ export const mockResume: ResumeProfile = {
   location: '上海',
   website: 'github.com/linzhiyuan',
   summary: '3 年 AI 应用与后端工程经验，专注于大模型应用、RAG、Agent 工作流和生产级服务交付。',
-  skills: ['Python', 'FastAPI', 'LangChain', 'RAG', 'Docker', 'PostgreSQL', 'Redis', 'TypeScript'],
+  templateId: 'ai-engineering',
+  professionalSkills: [
+    { id: 'skills-core', label: '核心方向', items: ['LangChain', 'RAG'] },
+    { id: 'skills-backend', label: '后端与数据', items: ['Python', 'FastAPI', 'PostgreSQL', 'Redis', 'TypeScript'] },
+    { id: 'skills-ops', label: '工程运维', items: ['Docker'] }
+  ],
   experiences: [
     {
+      id: 'experience-cloud',
       company: '云帆科技',
       position: 'AI 应用研发工程师',
       location: '上海',
@@ -27,6 +33,7 @@ export const mockResume: ResumeProfile = {
       ]
     },
     {
+      id: 'experience-star-ring',
       company: '星环数据',
       position: '后端开发工程师',
       location: '杭州',
@@ -37,14 +44,18 @@ export const mockResume: ResumeProfile = {
   ],
   education: [
     {
+      id: 'education-zjut',
       institution: '浙江工业大学',
       area: '计算机科学与技术',
       degree: '本科',
+      degreeDetail: '',
       startDate: '2017-09',
       endDate: '2021-06',
       highlights: []
     }
   ],
+  projects: [],
+  certifications: [],
   facts: [
     { id: 'fact-rag', category: 'experience', value: 'RAG 检索命中率提升 23%', source: '云帆科技经历第 1 条', confidence: 0.99, confirmed: true },
     { id: 'fact-agent', category: 'experience', value: '多 Agent 流程将处理时长从 20 分钟降到 6 分钟', source: '云帆科技经历第 2 条', confidence: 0.99, confirmed: true },
@@ -84,13 +95,16 @@ const baseJobs: Job[] = [
 export const mockJobs = baseJobs.map((job) => ({ ...job, fit: deterministicFit(job, mockResume) }));
 
 export const defaultProviders: AiProviderConfig[] = [
-  { id: 'provider-xiaomi', kind: 'xiaomi', name: '小米 MiMo', baseUrl: 'https://api.xiaomimimo.com/v1', model: 'mimo-v2.5-pro', isDefault: true, verified: false },
-  { id: 'provider-openrouter', kind: 'openrouter', name: 'OpenRouter 免费路由', baseUrl: 'https://openrouter.ai/api/v1', model: 'openrouter/free', isDefault: false, verified: false },
-  { id: 'provider-custom', kind: 'custom', name: '自定义 OpenAI 兼容服务', baseUrl: '', model: '', isDefault: false, verified: false }
+  { id: 'provider-xiaomi', kind: 'xiaomi', name: '默认模型 · 小米 MiMo', baseUrl: 'https://token-plan-sgp.xiaomimimo.com/v1', model: 'mimo-v2.5-pro', isDefault: true, verified: false, visionVerified: false },
+  { id: 'provider-custom', kind: 'custom', name: '自定义 OpenAI 兼容服务', baseUrl: '', model: '', isDefault: false, verified: false, visionVerified: false }
 ];
 
 export const mockSnapshot: BootstrapSnapshot = {
   readiness: { ai: false, resume: true, boss: false },
+  configuration: {
+    boss: { state: 'needs_setup', message: '需要配置 BOSS 专用浏览器。' },
+    llm: { state: 'needs_setup', message: '填写 API Key 并测试默认模型。' }
+  },
   jobs: mockJobs,
   resume: mockResume,
   providers: defaultProviders,

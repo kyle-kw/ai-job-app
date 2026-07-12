@@ -1,14 +1,15 @@
 <script lang="ts">
-  import { Activity, Bell, PanelRightOpen } from 'lucide-svelte';
+  import { Activity, PanelRightOpen } from 'lucide-svelte';
   import { page } from '$app/stores';
   import { runningTasks } from '$lib/stores/app';
 
   export let onTasks: () => void;
   const titles: Record<string, { title: string; subtitle: string }> = {
-    '/': { title: '工作台', subtitle: '今天，从最值得做的下一步开始' },
+    '/': { title: '初始化', subtitle: '完成 BOSS 与默认模型配置' },
     '/jobs': { title: '岗位库', subtitle: '抓取、筛选并理解每一个机会' },
+    '/reports': { title: '数据报告', subtitle: '从本地岗位数据生成求职与面试准备洞察' },
     '/resume': { title: '我的简历', subtitle: '维护一份可信、可复用的职业事实库' },
-    '/settings': { title: '设置', subtitle: '连接模型，并掌控数据与高级能力' }
+    '/settings': { title: '设置', subtitle: '配置默认模型与高级能力' }
   };
   $: current = titles[$page.url.pathname] ?? titles['/'];
 </script>
@@ -29,8 +30,6 @@
         <span>任务中心</span>
       {/if}
     </button>
-    <button class="btn-icon" aria-label="通知"><Bell size={17} /></button>
-    <div class="ml-1 grid h-9 w-9 place-items-center rounded-full text-xs font-semibold" style="background: var(--brand-soft); color: var(--brand);">L</div>
   </div>
 </header>
 

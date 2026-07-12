@@ -4,6 +4,7 @@ use reqwest::Client;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::time::Duration;
 use std::time::Instant;
 
 const KEYRING_SERVICE: &str = "com.localfirst.aijobapp";
@@ -45,6 +46,19 @@ pub fn load_secret(provider: &AiProviderConfig) -> Result<String, String> {
         .map_err(|_| "未找到 API Key，请在设置中重新填写。".to_string())
 }
 
+pub fn secret_available(provider: &AiProviderConfig) -> bool {
+    load_secret(provider).is_ok()
+}
+
+pub fn delete_secret(provider_id: &str) -> Result<(), String> {
+    let entry = Entry::new(KEYRING_SERVICE, provider_id).map_err(|error| error.to_string())?;
+    match entry.delete_credential() {
+        Ok(()) => Ok(()),
+        Err(keyring::Error::NoEntry) => Ok(()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
 pub async fn test(provider: &AiProviderConfig) -> Result<ProviderTestResult, String> {
     if provider.base_url.trim().is_empty() || provider.model.trim().is_empty() {
         return Err("请填写 Base URL 和模型名。".into());
@@ -59,6 +73,11 @@ pub async fn test(provider: &AiProviderConfig) -> Result<ProviderTestResult, Str
     )
     .await?;
     let structured = value.get("ok").and_then(Value::as_bool) == Some(true);
+    let (vision_supported, vision_message) = match test_vision(provider, &key).await {
+        Ok(true) => (true, "图片识别能力正常".to_string()),
+        Ok(false) => (false, "模型接收了图片，但未能读取测试文字".to_string()),
+        Err(error) => (false, format!("图片能力未通过：{}", redact(&error))),
+    };
     Ok(ProviderTestResult {
         ok: structured,
         message: if structured {
@@ -68,7 +87,40 @@ pub async fn test(provider: &AiProviderConfig) -> Result<ProviderTestResult, Str
         },
         latency_ms: started.elapsed().as_millis() as i64,
         structured_output: structured,
+        vision_supported,
+        vision_message,
     })
+}
+
+const VISION_PROBE_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAANwAAABQCAYAAAByKBsiAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAVOSURBVHhe7ZntdSoxDAVTHgVRDr2klXTCW5LwwqJr+8q7KJwwc45+gb9kjW2StzMAlIFwAIUgHEAhCAdQCMIBFIJwAIUgHEAhCAdQCMIBFIJwAIUgHEAhCAdQCMIBFIJwAIUgHEAhCAdQCMIBFIJwAIUgHEAhCAdQCMIBFIJwAIUgHEAhCAdQCMIBFIJwAIUgHEAhE8J9nE+Ht/Pb220czqeP74+H9NqLz47vn626vB/Xbe5i3MXkuN98nA7rtqvI5OaylNjHzPwPmUHvUHNwozvXj9P5INpsmWvoM7Fvv8HUDacKzE6aSvrhtJTM54epwu8Xeoz2HOeEyxamkyPZ5//8tHh24UR+Q+QOpithrn9RuL40fZQkPznyCz8r2zV0IWaFez8fb7+biUGeWsXeF+i5hfP7S0qnXjZ/UjhVoFayVLvjUr5XzMIfPCH7oeaZEW6DbNfoSNcuzl5+n0Q4ta7sXpkHd7PfvyncssUzz0p1M64S5BW+LAiZaCW4+q4rXKO/S8hC6cgp+x8Ue6ONmtcW4SzCXt4enD/E9QwOWOPgnsvRczAtnJRncDr1n5MXnMKPRZx9bsV5OuMuyFPVuNkT7Ua3i66nauHieHpeca/C90Qd6b4WnNuy2fg5mBduIRZH7tkTT0Wn8LPCOTjjqvl3iuMO+ZtTNB4Jpw+1OLdHChfW0kvCSihxC5rC2b/Z3Q35JTYJp06c5kaLxMbvzha+cct0McaduNHXqOdlLMChcEs4eXuYcCEP+ilpE2pI96dfR069PBfbhFNF1CjCmDAliZfAXlHO5dsYN3O4NHBeBOE7h0MUPbSrE+5+fpvGSeR0VT//a+zlhPOKSCbGfBrJBKrbRoWd/PG4+oT9/tDE6SMKt+RJ/XZZNSwSbqfbTeXhEr05f7YJNfOCwlmnlPWcvJBIoCrCTvQLcDyud7AMMHIlhVPzW+JnijXC7XW77ZLLT15ROONZGU+0VoKTCXRvupvQ3T27cAtqrf/zXCDcTrebzPVN5Hx5SeFGxSiSEp4GVyYTmBQvFuN43F8XbkE9xb7ax/nvLVwYe6fCVmvyu35R4bqFJGRo52SHBFpPzXtZxuNuK4wvnD56wi2fir90XtZiCGfkpb2eOG527T1CXpoH8j2vKlznWRmLrPcU2TmBnZtvXZDGuMbtNMK5JfvCLShxjqfHChfabvxXwD1hn9zXw8sK1yqmbEIelUBxIKz6NcZV8ton8QV1O8XCHQq3EHMdY0/hwni77MkNqVfQLS8snNrQw/GYTOQogfMJ7heN06/4zhLuLaeek2rujnC9m/sa+wkX1+2u2VrLBYSbQZ3g9zF6iowTOPdbaocb7kKjaEfjS9ka7dwibfV5DVeKIdPPPTVH3TasmSelx/YiMBLYOt1bibYkcTdOfO8aUozOIdSYr30rDA643YQL+Uv8fpN7tZZJ1kxzzfe8uHBNGT7DObW8BMYTMRlhQzMb59zko2gXrS/cQueZuJdwQQhbhi9m9sp35tWFUwm4hrVRbgI74wxDiZ/duA3SDfKQEm6hVdB7CZedTySXq9y8X164JQWNZ6WXyFwC86dn62aZ27js+E4O0gXeeFU8TLipgvaky88Z4RoF8NgfwaPfjuM+Nm5c9y+A7tq/mLlR1Pr3EW7ngs7+/h6CcADQAeEACkE4gEIQDqAQhAMoBOEACkE4gEIQDqAQhAMoBOEACkE4gEIQDqAQhAMoBOEACkE4gEIQDqAQhAMoBOEACkE4gEIQDqAQhAMoBOEACkE4gEIQDqAQhAMoBOEACkE4gEIQDqAQhAMoBOEAyjif/wEVqgfKZ+5UfAAAAABJRU5ErkJggg==";
+
+async fn test_vision(provider: &AiProviderConfig, api_key: &str) -> Result<bool, String> {
+    let content = json!([
+        {"type":"text","text":"Read the exact code in this image. Return JSON only: {\"vision\":\"the code\"}."},
+        {"type":"image_url","image_url":{"url":format!("data:image/png;base64,{VISION_PROBE_PNG_BASE64}")}}
+    ]);
+    let value = chat_json_with_content(provider, api_key, "You test image-reading capability and return JSON only.", content).await?;
+    Ok(value.get("vision").and_then(Value::as_str).is_some_and(|value| value.trim().eq_ignore_ascii_case("VISION-731")))
+}
+
+pub async fn transcribe_resume_page(
+    provider: &AiProviderConfig,
+    image_data_url: &str,
+    page_number: usize,
+) -> Result<String, String> {
+    let key = load_secret(provider)?;
+    let content = json!([
+        {"type":"text","text":format!("Transcribe resume page {page_number} exactly in reading order. Preserve names, dates, numbers, links, headings, bullets, and table cell text. Do not summarize or infer. Return JSON only as {{\"text\":\"...\"}}.")},
+        {"type":"image_url","image_url":{"url":image_data_url}}
+    ]);
+    let value = chat_json_with_content(
+        provider,
+        &key,
+        "You are a precise resume OCR transcriber. Never add text not visible in the image.",
+        content,
+    )
+    .await?;
+    value.get("text").and_then(Value::as_str).map(str::to_string).ok_or_else(|| "视觉模型未返回页面文字。".to_string())
 }
 
 pub async fn run_skill<T: DeserializeOwned>(
@@ -91,6 +143,15 @@ async fn chat_json(
     system: &str,
     user: &str,
 ) -> Result<Value, String> {
+    chat_json_with_content(provider, api_key, system, Value::String(user.to_string())).await
+}
+
+async fn chat_json_with_content(
+    provider: &AiProviderConfig,
+    api_key: &str,
+    system: &str,
+    user_content: Value,
+) -> Result<Value, String> {
     let endpoint = format!(
         "{}/chat/completions",
         provider.base_url.trim_end_matches('/')
@@ -99,13 +160,16 @@ async fn chat_json(
         "model": provider.model,
         "messages": [
             {"role": "system", "content": system},
-            {"role": "user", "content": user}
+            {"role": "user", "content": user_content}
         ],
         "temperature": 0.2,
         "max_completion_tokens": 3000,
         "response_format": {"type": "json_object"}
     });
-    let response = Client::new()
+    let response = Client::builder()
+        .timeout(Duration::from_secs(60))
+        .build()
+        .map_err(|error| format!("无法创建模型客户端：{error}"))?
         .post(endpoint)
         .bearer_auth(api_key)
         .header("Content-Type", "application/json")

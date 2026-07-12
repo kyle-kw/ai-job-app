@@ -1,4 +1,5 @@
 import type { FitDimension, FitReport, Job, ResumeProfile } from './types';
+import { flattenProfessionalSkills } from './resume-templates';
 
 export const FIT_WEIGHTS = {
   technical: 30,
@@ -27,7 +28,7 @@ export function verdictFor(score: number): FitReport['verdict'] {
 }
 
 export function deterministicFit(job: Job, resume: ResumeProfile): FitReport {
-  const resumeSkills = new Set(resume.skills.map((skill) => skill.toLocaleLowerCase()));
+  const resumeSkills = new Set(flattenProfessionalSkills(resume).map((skill) => skill.toLocaleLowerCase()));
   const matched = job.skills.filter((skill) => resumeSkills.has(skill.toLocaleLowerCase()));
   const technical = job.skills.length === 0 ? 60 : Math.round((matched.length / job.skills.length) * 70 + 25);
   const hasRelatedRole = resume.experiences.some((experience) =>

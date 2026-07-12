@@ -1,15 +1,27 @@
 use serde_json::Value;
-use std::io::Write;
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 pub async fn request(payload: Value) -> Result<Value, String> {
-    tokio::task::spawn_blocking(move || request_blocking(payload))
+    tokio::task::spawn_blocking(move || request_blocking(payload, None))
         .await
         .map_err(|error| format!("sidecar task failed: {error}"))?
 }
 
-fn request_blocking(payload: Value) -> Result<Value, String> {
+pub async fn request_with_events<F>(payload: Value, mut on_event: F) -> Result<Value, String>
+where
+    F: FnMut(Value) -> Result<(), String> + Send + 'static,
+{
+    tokio::task::spawn_blocking(move || request_blocking(payload, Some(&mut on_event)))
+        .await
+        .map_err(|error| format!("sidecar task failed: {error}"))?
+}
+
+fn request_blocking(
+    payload: Value,
+    mut on_event: Option<&mut dyn FnMut(Value) -> Result<(), String>>,
+) -> Result<Value, String> {
     let mut command = sidecar_command()?;
     command
         .env("PYTHONUTF8", "1")
@@ -31,26 +43,38 @@ fn request_blocking(payload: Value) -> Result<Value, String> {
         .map_err(|error| format!("无法写入 sidecar：{error}"))?;
     }
 
-    let output = child
-        .wait_with_output()
-        .map_err(|error| format!("sidecar 执行失败：{error}"))?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = child.stdout.take().ok_or("无法读取 sidecar 输出")?;
+    let mut stderr = child.stderr.take().ok_or("无法读取 sidecar 错误输出")?;
+    let stderr_reader = std::thread::spawn(move || {
+        let mut output = String::new();
+        let _ = stderr.read_to_string(&mut output);
+        output
+    });
     let mut result: Option<Value> = None;
-    for line in stdout.lines().filter(|line| !line.trim().is_empty()) {
-        let value: Value = serde_json::from_str(line)
-            .map_err(|error| format!("sidecar 返回了无效 JSON：{error}\n{line}\n{stderr}"))?;
+    for line in BufReader::new(stdout).lines() {
+        let line = line.map_err(|error| format!("无法读取 sidecar 输出：{error}"))?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let value: Value = serde_json::from_str(&line)
+            .map_err(|error| format!("sidecar 返回了无效 JSON：{error}\n{line}"))?;
         if value.get("type").and_then(Value::as_str) == Some("result") {
             result = Some(value);
+        } else if let Some(handler) = on_event.as_mut() {
+            if let Err(error) = handler(value) {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = stderr_reader.join();
+                return Err(error);
+            }
         }
     }
-    let result = result.ok_or_else(|| {
-        format!(
-            "sidecar 未返回结果（exit={}）：{}",
-            output.status,
-            redact(&stderr)
-        )
-    })?;
+    let status = child
+        .wait()
+        .map_err(|error| format!("sidecar 执行失败：{error}"))?;
+    let stderr = stderr_reader.join().unwrap_or_default();
+    let result = result
+        .ok_or_else(|| format!("sidecar 未返回结果（exit={}）：{}", status, redact(&stderr)))?;
     if result.get("ok").and_then(Value::as_bool).unwrap_or(false) {
         Ok(result.get("data").cloned().unwrap_or(Value::Null))
     } else {

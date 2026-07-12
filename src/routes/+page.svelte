@@ -1,163 +1,158 @@
 <script lang="ts">
-  import { ArrowRight, Bot, BriefcaseBusiness, Check, ChevronRight, Circle, FileText, KeyRound, LockKeyhole, Play, Search, Sparkles, Upload, UserRoundCheck } from 'lucide-svelte';
-  import FitScore from '$lib/components/FitScore.svelte';
-  import MarkdownView from '$lib/components/MarkdownView.svelte';
-  import { importResume, loading, snapshot, startScrape } from '$lib/stores/app';
+  import { ArrowRight, Bot, CheckCircle2, Circle, FileText, KeyRound, LockKeyhole, RefreshCw, Rocket, ShieldCheck, Sparkles, UserRoundCheck, XCircle } from 'lucide-svelte';
+  import { backend } from '$lib/services/backend';
+  import { loading, refresh, setupBoss, snapshot } from '$lib/stores/app';
+  import type { AiProviderConfig, BootstrapSnapshot, ProviderTestResult } from '$lib/types';
 
-  let keyword = 'AI Agent';
-  let city = '上海';
-  let busyAction: string | null = null;
-  let fileInput: HTMLInputElement;
+  type SetupState = 'needs_setup' | 'running' | 'ready' | 'failed';
+  type SetupStatus = { state: SetupState; message?: string | null; lastAttemptAt?: string | null };
+  type ConfiguredSnapshot = BootstrapSnapshot & { configuration?: { boss?: SetupStatus; llm?: SetupStatus } };
 
-  const readiness = [
-    { key: 'ai', title: '连接 AI', description: '用于简历解析、匹配分析与材料生成', icon: Bot, href: '/settings' },
-    { key: 'resume', title: '准备主简历', description: '导入 PDF、DOCX 或 RenderCV YAML', icon: FileText, href: '/resume' },
-    { key: 'boss', title: '抓取时连接 BOSS', description: '每次抓取都会自动打开或复用专用 Chrome，并检查登录状态', icon: UserRoundCheck, href: null }
-  ] as const;
+  let bossBusy = false;
+  let bossFeedback = '';
+  let llmDraft: AiProviderConfig | null = null;
+  let llmDraftId = '';
+  let apiKey = '';
+  let testingLlm = false;
+  let llmResult: ProviderTestResult | null = null;
+  let llmError = '';
 
-  async function quickScrape() {
-    busyAction = 'scrape';
-    try { await startScrape({ keyword, city, pages: 3 }); } finally { busyAction = null; }
+  const setupBossWithOptions = setupBoss as unknown as (options: { resetProfile: boolean }) => Promise<void>;
+  const stateLabel: Record<SetupState, string> = { needs_setup: '待配置', running: '配置中', ready: '已完成', failed: '配置失败' };
+  const formatTime = (value?: string | null) => value ? new Intl.DateTimeFormat('zh-CN', {
+    month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false
+  }).format(new Date(value)) : '';
+
+  $: configuration = ($snapshot as ConfiguredSnapshot).configuration;
+  $: bossTask = $snapshot.tasks.find((task) => task.kind === 'boss-login');
+  $: bossState = configuration?.boss?.state ?? (bossTask?.state === 'queued' || bossTask?.state === 'running' ? 'running' : bossTask?.state === 'failed' ? 'failed' : $snapshot.readiness.boss ? 'ready' : 'needs_setup');
+  $: bossMessage = configuration?.boss?.message ?? (bossState === 'running' ? bossTask?.message : bossState === 'failed' ? bossTask?.recoverableError || bossTask?.message : '');
+  $: llmState = configuration?.llm?.state ?? ($snapshot.readiness.ai ? 'ready' : 'needs_setup');
+  $: availableProviders = $snapshot.providers.filter((provider) => (provider.kind as string) !== 'openrouter');
+  $: defaultProvider = availableProviders.find((provider) => provider.isDefault) ?? availableProviders.find((provider) => provider.kind === 'xiaomi') ?? availableProviders[0];
+  $: if (defaultProvider && llmDraftId !== defaultProvider.id) {
+    llmDraft = structuredClone(defaultProvider);
+    llmDraftId = defaultProvider.id;
+    apiKey = '';
+    llmResult = null;
+    llmError = '';
   }
 
-  async function pickResume(event: Event) {
-    const file = (event.currentTarget as HTMLInputElement).files?.[0];
-    if (!file) return;
-    busyAction = 'resume';
+  async function configureBoss(resetProfile: boolean) {
+    bossBusy = true;
+    bossFeedback = '';
     try {
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      let binary = '';
-      for (const byte of bytes) binary += String.fromCharCode(byte);
-      await importResume({ fileName: file.name, contentBase64: btoa(binary) });
-    } finally { busyAction = null; }
+      await setupBossWithOptions({ resetProfile });
+      bossFeedback = '专用 Chrome 已启动。请在浏览器中完成登录，验证结束后浏览器会自动关闭。';
+    } catch (error) {
+      bossFeedback = error instanceof Error ? error.message : String(error);
+    } finally {
+      bossBusy = false;
+    }
   }
 
-  $: topJobs = [...$snapshot.jobs].sort((a, b) => (b.fit?.overallScore ?? 0) - (a.fit?.overallScore ?? 0)).slice(0, 3);
-  $: latestRun = $snapshot.scrapeRuns[0];
-  $: readyCount = Number($snapshot.readiness.ai) + Number($snapshot.readiness.resume);
+  async function testAndSaveLlm() {
+    if (!llmDraft) return;
+    testingLlm = true;
+    llmResult = null;
+    llmError = '';
+    try {
+      llmResult = await backend.testProvider({ ...llmDraft, apiKey: apiKey || undefined });
+      if (llmResult.ok) {
+        await refresh();
+        const verified = $snapshot.providers.find((provider) => provider.id === llmDraft?.id);
+        if (verified) llmDraft = structuredClone(verified);
+        apiKey = '';
+      }
+    } catch (error) {
+      llmError = error instanceof Error ? error.message : String(error);
+    } finally {
+      testingLlm = false;
+    }
+  }
 </script>
 
-<div class="page-content">
+<div class="page-content max-w-[1180px]">
   {#if $loading}
-    <div class="space-y-5">
-      <div class="skeleton h-28 rounded-2xl"></div>
-      <div class="grid grid-cols-3 gap-4">{#each [1,2,3] as _}<div class="skeleton h-36 rounded-2xl"></div>{/each}</div>
-      <div class="skeleton h-80 rounded-2xl"></div>
-    </div>
+    <div class="space-y-5"><div class="skeleton h-40 rounded-2xl"></div><div class="grid grid-cols-2 gap-5"><div class="skeleton h-96 rounded-2xl"></div><div class="skeleton h-96 rounded-2xl"></div></div></div>
   {:else}
-    <section class="relative overflow-hidden rounded-[24px] border px-7 py-6 shadow-panel" style="border-color: var(--line); background: linear-gradient(115deg, var(--panel) 0%, var(--brand-faint) 100%);">
+    <section class="relative overflow-hidden rounded-[24px] border px-7 py-7 shadow-panel" style="border-color: var(--line); background: linear-gradient(115deg, var(--panel) 0%, var(--brand-faint) 100%);">
       <div class="dot-grid pointer-events-none absolute inset-y-0 right-0 w-[42%] opacity-40"></div>
       <div class="relative flex items-end justify-between gap-8">
-        <div class="max-w-[650px]">
-          <div class="mb-3 inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold" style="background: var(--brand-soft); color: var(--brand);"><Sparkles size={13} />求职工作台</div>
-          <h2 class="text-[29px] font-semibold tracking-[-0.04em]">晚上好，{$snapshot.resume?.name || '欢迎回来'}</h2>
-          <p class="mt-2 text-sm leading-6 body-muted">
-            {#if $snapshot.readiness.resume && $snapshot.jobs.length > 0}
-              已经有 {$snapshot.jobs.length} 个岗位可以比较。先看高匹配机会，再决定把时间花在哪里。
-            {:else}
-              先完成任意一项。简历解析和岗位抓取可以同时进行，不需要等候。
-            {/if}
-          </p>
+        <div class="max-w-[720px]">
+          <div class="mb-3 inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold" style="background: var(--brand-soft); color: var(--brand);"><Sparkles size={13} />首次使用向导</div>
+          <h2 class="text-[29px] font-semibold tracking-[-0.04em]">先完成两项必要配置</h2>
+          <p class="mt-2 text-sm leading-6 body-muted">连接 BOSS 专用浏览器并验证默认模型后，就可以开始抓取和分析岗位。配置未完成时，其他页面仍然可以正常查看。</p>
         </div>
-        <a href="/jobs" class="btn-primary shrink-0">查看推荐岗位 <ArrowRight size={16} /></a>
+        <span class="hidden h-12 w-12 shrink-0 place-items-center rounded-2xl bg-panel text-brand shadow-sm lg:grid"><Rocket size={22} /></span>
       </div>
     </section>
 
-    <section class="mt-7">
-      <div class="mb-3 flex items-end justify-between">
-        <div><p class="eyebrow">准备状态</p><h3 class="section-title mt-1">两项准备，抓取时自动连接 BOSS</h3></div>
-        <span class="text-xs body-muted">{readyCount} / 2 已完成</span>
-      </div>
-      <div class="grid grid-cols-3 gap-4">
-        {#each readiness as item, index}
-          {@const ready = item.key !== 'boss' && $snapshot.readiness[item.key]}
-          <article class="panel-flat animate-lift p-5" style={`animation-delay:${index * 55}ms`}>
-            <div class="mb-4 flex items-start justify-between">
-              <span class="grid h-10 w-10 place-items-center rounded-xl" style={`background:${ready ? 'var(--brand-soft)' : 'var(--panel-soft)'}; color:${ready ? 'var(--brand)' : 'var(--muted)'}`}><svelte:component this={item.icon} size={19} /></span>
-              <span class={ready ? 'chip-brand' : 'chip'}>{#if item.key === 'boss'}<Circle size={10} /> 随抓随连{:else if ready}<Check size={12} /> 已就绪{:else}<Circle size={10} /> 待完成{/if}</span>
-            </div>
-            <h4 class="text-sm font-semibold">{item.title}</h4>
-            <p class="mt-1 min-h-10 text-xs leading-5 body-muted">{item.description}</p>
-            {#if item.key === 'boss'}
-              <div class="mt-4 flex items-center gap-1 text-xs font-semibold text-brand"><Check size={14} />已合并到“开始抓取”</div>
-            {:else if ready}
-              <div class="mt-4 flex items-center gap-1 text-xs font-semibold" style="color: var(--success);"><Check size={14} />无需再次配置</div>
-            {:else if item.key === 'resume'}
-              <button class="btn-ghost -ml-3 mt-3 text-brand" disabled={busyAction === 'resume'} on:click={() => fileInput.click()}>{busyAction === 'resume' ? '正在解析…' : '选择简历'} <ChevronRight size={14} /></button>
+    <section class="setup-grid mt-6 grid grid-cols-2 gap-5">
+      <article class="panel overflow-hidden">
+        <div class="flex items-start justify-between border-b px-6 py-5" style="border-color: var(--line);">
+          <div class="flex gap-3"><span class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-soft text-brand"><UserRoundCheck size={19} /></span><div><p class="eyebrow">步骤 1</p><h3 class="section-title mt-1">登录 BOSS 直聘</h3></div></div>
+          <span class:chip-brand={bossState === 'ready'} class="chip">{#if bossState === 'ready'}<CheckCircle2 size={13} />{:else if bossState === 'running'}<Circle size={12} class="animate-spin" />{:else if bossState === 'failed'}<XCircle size={13} />{/if}{stateLabel[bossState]}</span>
+        </div>
+        <div class="p-6">
+          <p class="text-sm leading-6 body-muted">应用会打开一个独立的 Chrome Profile。登录验证成功或失败后，只会关闭这个专用浏览器，不会影响你的日常 Chrome。</p>
+          <div class="mt-5 rounded-xl border p-4" style={`border-color:${bossState === 'failed' ? 'var(--danger)' : 'var(--line)'}; background:${bossState === 'failed' ? 'var(--danger-soft)' : 'var(--panel-soft)'}`}>
+            {#if bossState === 'ready'}
+              <div class="flex items-start gap-3"><ShieldCheck size={18} class="mt-0.5 shrink-0 text-success" /><div><p class="text-sm font-semibold">BOSS 登录配置已完成</p><p class="mt-1 text-xs leading-5 body-muted">每次抓取前仍会重新检查真实登录状态。</p></div></div>
+            {:else if bossState === 'running'}
+              <div class="flex items-start gap-3"><RefreshCw size={18} class="mt-0.5 shrink-0 animate-spin text-brand" /><div><p class="text-sm font-semibold">正在等待登录验证</p><p class="mt-1 text-xs leading-5 body-muted">{bossMessage || '请在打开的 Chrome 中完成登录。'}</p></div></div>
+            {:else if bossState === 'failed'}
+              <div class="flex items-start gap-3"><XCircle size={18} class="mt-0.5 shrink-0 text-danger" /><div><p class="text-sm font-semibold">本次配置未完成</p><p class="mt-1 text-xs leading-5 body-muted">{bossMessage || '请重试；如果问题持续出现，可重新创建专用 Profile。'}</p></div></div>
             {:else}
-              <a class="btn-ghost -ml-3 mt-3 text-brand" href={item.href}>去连接 <ChevronRight size={14} /></a>
+              <div class="flex items-start gap-3"><LockKeyhole size={18} class="mt-0.5 shrink-0 text-brand" /><div><p class="text-sm font-semibold">需要你手动开始</p><p class="mt-1 text-xs leading-5 body-muted">应用不会在首次打开时自动弹出浏览器。</p></div></div>
             {/if}
-          </article>
-        {/each}
-      </div>
-      <input bind:this={fileInput} class="hidden" type="file" accept=".pdf,.docx,.yaml,.yml" on:change={pickResume} />
-    </section>
-
-    <section class="mt-7 grid grid-cols-[1.35fr_.65fr] gap-5">
-      <article class="panel p-6">
-        <div class="mb-5 flex items-start justify-between">
-          <div><p class="eyebrow">并行入口</p><h3 class="section-title mt-1">开始一轮岗位搜索</h3><p class="mt-1 text-xs body-muted">默认 3 页，自动抓详情、去重并生成市场观察。</p></div>
-          <span class="grid h-10 w-10 place-items-center rounded-xl" style="background: var(--brand-soft); color: var(--brand);"><Search size={19} /></span>
-        </div>
-        <div class="grid grid-cols-[1fr_150px_auto] gap-3">
-          <label><span class="label">关键词</span><input class="input" bind:value={keyword} placeholder="例如：AI Agent" /></label>
-          <label><span class="label">城市</span><input class="input" bind:value={city} placeholder="上海" /></label>
-          <div class="flex items-end"><button class="btn-primary w-full" disabled={busyAction === 'scrape'} on:click={quickScrape}>{#if busyAction === 'scrape'}<Circle class="animate-spin" size={16} /> 等待登录/抓取{:else}<Play size={15} /> 开始抓取{/if}</button></div>
-        </div>
-        <div class="mt-5 flex items-center gap-3 border-t pt-4 text-xs body-muted" style="border-color: var(--line);">
-          <LockKeyhole size={15} class="text-brand" />
-          <span>点击后自动连接 BOSS 专用 Chrome；遇到登录或验证码会暂停并等待你处理。</span>
-        </div>
-      </article>
-
-      <article class="panel p-6">
-        <p class="eyebrow">简历入口</p>
-        <h3 class="section-title mt-1">{ $snapshot.resume ? '主简历已建立' : '把现有简历交给我们'}</h3>
-        {#if $snapshot.resume}
-          <div class="mt-4 flex items-center gap-3 rounded-xl p-3 surface-soft">
-            <span class="grid h-10 w-10 place-items-center rounded-lg bg-panel text-brand"><FileText size={18} /></span>
-            <div class="min-w-0"><p class="truncate text-sm font-semibold">{$snapshot.resume.sourceFileName}</p><p class="text-[11px] body-muted">版本 {$snapshot.resume.version} · {$snapshot.resume.skills.length} 项技能</p></div>
           </div>
-          <a href="/resume" class="btn mt-4 w-full">检查并完善简历 <ArrowRight size={15} /></a>
-        {:else}
-          <button class="mt-4 grid w-full place-items-center rounded-xl border border-dashed p-5 text-center transition hover:border-brand" style="border-color: var(--line-strong);" on:click={() => fileInput.click()}>
-            <Upload size={21} class="mb-2 text-brand" /><span class="text-sm font-semibold">选择 PDF、DOCX 或 YAML</span><span class="mt-1 text-[11px] body-muted">仅扫描件暂不支持</span>
+          {#if configuration?.boss?.lastAttemptAt}<p class="mt-3 text-[11px] body-muted">上次验证：{formatTime(configuration.boss.lastAttemptAt)}</p>{/if}
+          {#if bossFeedback}<p class="mt-3 text-xs leading-5 body-muted">{bossFeedback}</p>{/if}
+          <button class="btn-primary mt-5 w-full" disabled={bossBusy || bossState === 'running'} on:click={() => configureBoss(bossState === 'ready' || bossState === 'failed')}>
+            {#if bossBusy || bossState === 'running'}<RefreshCw size={15} class="animate-spin" />等待配置完成{:else if bossState === 'ready'}<RefreshCw size={15} />重新配置 BOSS{:else}<UserRoundCheck size={15} />打开 Chrome 并登录{/if}
           </button>
-        {/if}
+        </div>
+      </article>
+
+      <article class="panel overflow-hidden">
+        <div class="flex items-start justify-between border-b px-6 py-5" style="border-color: var(--line);">
+          <div class="flex gap-3"><span class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-soft text-brand"><Bot size={19} /></span><div><p class="eyebrow">步骤 2</p><h3 class="section-title mt-1">配置默认模型</h3></div></div>
+          <span class:chip-brand={llmState === 'ready'} class="chip">{#if llmState === 'ready'}<CheckCircle2 size={13} />{:else if llmState === 'running'}<Circle size={12} class="animate-spin" />{:else if llmState === 'failed'}<XCircle size={13} />{/if}{stateLabel[llmState]}</span>
+        </div>
+        <div class="p-6">
+          {#if llmState === 'ready' && defaultProvider}
+            <div class="rounded-xl border p-4" style="border-color: var(--line); background: var(--panel-soft);"><div class="flex items-start gap-3"><CheckCircle2 size={18} class="mt-0.5 shrink-0 text-success" /><div class="min-w-0"><p class="text-sm font-semibold">{defaultProvider.name} 已验证</p><p class="mt-1 truncate text-xs body-muted">{defaultProvider.model} · {defaultProvider.baseUrl}</p></div></div></div>
+            <p class="mt-4 text-xs leading-5 body-muted">只有在你主动使用 AI 功能时，必要的岗位或简历上下文才会发送给当前模型服务商。</p>
+            <a class="btn mt-5 w-full" href="/settings">管理模型配置 <ArrowRight size={15} /></a>
+          {:else if llmDraft}
+            <p class="mb-5 text-sm leading-6 body-muted">填写 API Key 并验证连接。连接成功后 Key 才会保存到系统钥匙串；失败不会保存本次输入。</p>
+            <div class="space-y-4">
+              <label><span class="label">Base URL</span><input class="input" bind:value={llmDraft.baseUrl} placeholder="https://token-plan-sgp.xiaomimimo.com/v1" /></label>
+              <label><span class="label">模型</span><input class="input" bind:value={llmDraft.model} placeholder="mimo-v2.5-pro" /></label>
+              <label><span class="label">API Key</span><div class="relative"><KeyRound size={15} class="absolute left-3 top-3 body-muted" /><input class="input pl-9" type="password" bind:value={apiKey} placeholder={llmDraft.apiKeyRef ? '已安全保存；留空则使用现有 Key' : '粘贴你的 API Key'} /></div></label>
+            </div>
+            {#if llmResult}<div class="mt-4 flex items-start gap-3 rounded-xl border p-3" style={`border-color:${llmResult.ok ? 'var(--success)' : 'var(--danger)'}; background:${llmResult.ok ? 'var(--brand-faint)' : 'var(--danger-soft)'}`}><svelte:component this={llmResult.ok ? CheckCircle2 : XCircle} size={17} class={llmResult.ok ? 'text-success' : 'text-danger'} /><div><p class="text-sm font-semibold">{llmResult.message}</p><p class="mt-0.5 text-[11px] body-muted">延迟 {llmResult.latencyMs} ms · 结构化输出 {llmResult.structuredOutput ? '正常' : '未通过'}</p></div></div>{/if}
+            {#if llmError}<p class="mt-3 text-xs text-danger">{llmError}</p>{/if}
+            <button class="btn-primary mt-5 w-full" disabled={testingLlm || !llmDraft.baseUrl || !llmDraft.model || (!apiKey && !llmDraft.apiKeyRef)} on:click={testAndSaveLlm}>{#if testingLlm}<RefreshCw size={15} class="animate-spin" />正在测试{:else}<ShieldCheck size={15} />测试并保存{/if}</button>
+          {:else}
+            <div class="rounded-xl border p-4" style="border-color: var(--danger); background: var(--danger-soft);"><p class="text-sm font-semibold">没有可用的模型预设</p><p class="mt-1 text-xs leading-5 body-muted">请到设置中创建一个自定义 OpenAI 兼容模型。</p></div>
+            <a class="btn mt-5 w-full" href="/settings">打开模型设置 <ArrowRight size={15} /></a>
+          {/if}
+        </div>
       </article>
     </section>
 
-    {#if topJobs.length > 0}
-      <section class="mt-8">
-        <div class="mb-3 flex items-end justify-between"><div><p class="eyebrow">优先处理</p><h3 class="section-title mt-1">与你最接近的机会</h3></div><a href="/jobs" class="flex items-center gap-1 text-xs font-semibold text-brand">查看全部 <ArrowRight size={14} /></a></div>
-        <div class="grid grid-cols-3 gap-4">
-          {#each topJobs as job}
-            <a href={`/jobs?job=${job.id}`} class="panel-flat group p-4 transition hover:-translate-y-0.5 hover:shadow-panel">
-              <div class="flex gap-3">
-                <FitScore score={job.fit?.overallScore ?? 0} size="sm" />
-                <div class="min-w-0"><h4 class="truncate text-sm font-semibold group-hover:text-brand">{job.title}</h4><p class="mt-0.5 truncate text-xs body-muted">{job.company} · {job.location.split('·')[0]}</p></div>
-              </div>
-              <div class="my-3 divider"></div>
-              <div class="flex items-center justify-between"><span class="text-sm font-semibold" style="color: var(--brand);">{job.salary}</span><span class="text-[11px] body-muted">{job.experience} · {job.degree}</span></div>
-            </a>
-          {/each}
-        </div>
-      </section>
-    {/if}
-
-    {#if latestRun?.reportMarkdown && latestRun.totalSeen > 0}
-      <section class="mt-8 panel p-6">
-        <div class="mb-4 flex items-center justify-between"><div><p class="eyebrow">最近一轮 · {latestRun.city}</p><h3 class="section-title mt-1">岗位市场观察</h3></div><span class="chip"><BriefcaseBusiness size={13} /> {latestRun.totalSeen} 个岗位</span></div>
-        <MarkdownView source={latestRun.reportMarkdown} />
-      </section>
-    {/if}
-
-    {#if !$snapshot.settings.privacyAcknowledged}
-      <section class="mt-7 flex items-start gap-4 rounded-2xl border p-4" style="border-color: var(--line); background: var(--blue-soft);">
-        <span class="mt-0.5 text-[var(--blue)]"><KeyRound size={19} /></span>
-        <div class="flex-1"><p class="text-sm font-semibold">发送给模型之前，我们会明确告诉你</p><p class="mt-1 text-xs leading-5 body-muted">简历与 JD 只会发送到你选择的模型服务。应用不上传本地岗位库，也不启用遥测。</p></div>
-        <a class="btn h-9" href="/settings#privacy">查看隐私设置</a>
-      </section>
-    {/if}
+    <section class="mt-6 panel p-6">
+      <div class="flex items-center justify-between gap-6">
+        <div class="flex min-w-0 items-center gap-4"><span class="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand-soft text-brand"><FileText size={20} /></span><div class="min-w-0"><p class="eyebrow">主简历</p><h3 class="section-title mt-1">{$snapshot.resume ? `${$snapshot.resume.name} · 版本 ${$snapshot.resume.version}` : '导入或建立你的主简历'}</h3><p class="mt-1 truncate text-xs body-muted">{$snapshot.resume ? $snapshot.resume.sourceFileName : '主简历是岗位匹配、面试准备和 AI 修改的事实来源。'}</p></div></div>
+        <a class="btn-primary shrink-0" href="/resume">{$snapshot.resume ? '打开主简历' : '前往导入'} <ArrowRight size={15} /></a>
+      </div>
+    </section>
+    <p class="mt-5 text-center text-xs body-muted">所有岗位、简历和统计数据都保存在本机；初始化不会限制你浏览应用的其他页面。</p>
   {/if}
 </div>
+
+<style>
+  @media (max-width: 980px) { .setup-grid { grid-template-columns: minmax(0, 1fr); } }
+</style>

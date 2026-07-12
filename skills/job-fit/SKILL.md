@@ -7,6 +7,13 @@ description: Evaluate a job posting against a confirmed resume and stated job pr
 
 Evaluate capability and desirability separately. Use only confirmed resume evidence and explicit preferences.
 
+## Language
+
+- Write every user-facing narrative field in Simplified Chinese (`zh-CN`).
+- This includes `recommendation`, `summary`, dimension `label` and `note`, hard-constraint `label` and `note`, every `strengths` item, and every `gaps` item.
+- Technical names and exact evidence quoted from the resume or JD may remain in their original language, but explain their meaning in Simplified Chinese.
+- `verdict`, dimension `key`, and hard-constraint `status` must keep the English enum values from the output contract.
+
 ## Scoring
 
 - Technical skills: weight 30.
@@ -49,6 +56,6 @@ Use verdicts: `strong` for 75+, `good` for 60–74, `moderate` for 45–59, `wea
   "gaps": [""],
   "evidence": [""],
   "generatedAt": "ISO-8601",
-  "skillVersion": "job-fit@1.0.0"
+  "skillVersion": "job-fit@1.1.0"
 }
 ```

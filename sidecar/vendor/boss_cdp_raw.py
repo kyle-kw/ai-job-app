@@ -58,7 +58,7 @@ HOT_CITY_URL = "https://www.zhipin.com/wapi/zpgeek/search/job/hot/city.json"
 CITY_GROUP_URL = "https://www.zhipin.com/wapi/zpCommon/data/cityGroup.json"
 
 # 请求频率保护
-MAX_PAGES = 10          # 单次最大页数
+MAX_PAGES = 5           # 单次最大页数
 MAX_API_REQUESTS = 500  # 单次最大 API 请求数
 
 def get_default_chrome_path():
@@ -174,6 +174,7 @@ CITY_MAP = {
     "青岛": "101120200", "宁波": "101210400", "厦门": "101230200",
     "天津": "101030100", "苏州": "101190400", "郑州": "101180100",
     "东莞": "101281600", "佛山": "101280800", "沈阳": "101070100",
+    "昆明": "101290100", "南昌": "101240100", "石家庄": "101090100",
 }
 
 SCALE_MAP = {
@@ -854,8 +855,10 @@ def load_existing_details(input_path=None, detail_output=None, result_dir=DEFAUL
 # 抓取列表
 # ============================================================
 def scrape_list(keyword, city_input, max_pages, filters, output_path,
-                cdp_port=DEFAULT_CDP_PORT, fmt="json", allow_dom_fallback=False):
+                cdp_port=DEFAULT_CDP_PORT, fmt="json", allow_dom_fallback=False,
+                on_job=None):
     city_name, city_code = resolve_city(city_input)
+    max_pages = max(1, min(int(max_pages or 1), MAX_PAGES))
     cdp = CDPSession(cdp_port)
     all_jobs = []
     seen = set()
@@ -985,6 +988,8 @@ def scrape_list(keyword, city_input, max_pages, filters, output_path,
                     continue
                 seen.add(key)
                 all_jobs.append(j)
+                if on_job:
+                    on_job(j)
                 new += 1
                 salary = j.get('salary','?')
                 scale = j.get('company_scale', '')
@@ -1061,7 +1066,8 @@ def build_detail_record(job, extracted):
 
 
 def scrape_details(list_data, max_details=None, output_path=None,
-                   cdp_port=DEFAULT_CDP_PORT, fmt="json"):
+                   cdp_port=DEFAULT_CDP_PORT, fmt="json", on_detail=None,
+                   on_progress=None):
     jobs = list_data.get("jobs", [])
     if max_details:
         jobs = jobs[:max_details]
@@ -1071,88 +1077,139 @@ def scrape_details(list_data, max_details=None, output_path=None,
     print(f"\n=== 抓取岗位详情 ({len(jobs)} 个) ===\n")
     results = []
     seen_links = set()
+    succeeded = 0
+    skipped = 0
+    failed = 0
+
+    def report_progress(status, idx, title, message):
+        if on_progress:
+            on_progress(
+                status=status,
+                processed=idx + 1,
+                total=len(jobs),
+                succeeded=succeeded,
+                skipped=skipped,
+                failed=failed,
+                title=title,
+                message=message,
+            )
 
     for idx, job in enumerate(jobs):
         link = job.get("job_link", "")
         title = job.get("title", "")
         company = job.get("boss_name", "")
         if not link:
+            skipped += 1
+            message = f"缺少详情链接，已跳过: {company} - {title}"
+            print(f"[{idx+1}/{len(jobs)}] {message}")
+            report_progress("skipped", idx, title, message)
             continue
 
         # 按 link 去重
         if link in seen_links:
-            print(f"[{idx+1}/{len(jobs)}] 跳过重复: {company} - {title}")
+            skipped += 1
+            message = f"跳过重复: {company} - {title}"
+            print(f"[{idx+1}/{len(jobs)}] {message}")
+            report_progress("skipped", idx, title, message)
             continue
         seen_links.add(link)
 
         t0 = time.time()
         print(f"[{idx+1}/{len(jobs)}] {company} - {title}")
-
-        incr_request()
-
-        # 每个详情页用新 session 避免检测
-        ws = CDPSession(cdp_port)
-        r = ws.send("Target.createTarget", {"url": "about:blank"})
-        tid = r["result"]["targetId"]
-        r = ws.send("Target.attachToTarget", {"targetId": tid, "flatten": True})
-        sid = r["result"]["sessionId"]
-
-        detail_url = build_detail_url(job)
-        ws.send("Page.navigate", {"url": detail_url}, sid)
-        print(f"  加载页面...")
-        time.sleep(random.uniform(5, 10))
-
-        # 模拟人类阅读详情页的滚动行为
-        scroll_count = random.randint(3, 7)
-        print(f"  模拟滚动 ({scroll_count} 次)...")
-        for i in range(scroll_count):
-            if random.random() < 0.12:
-                # 偶尔往上回滚（回看内容）
-                delta = -random.randint(80, 200)
-            else:
-                delta = random.randint(200, 600)
-            ws.eval_js(f"window.scrollBy(0,{delta})", sid)
-            # 有时快滚，有时停下来"阅读"
-            if random.random() < 0.35:
-                time.sleep(random.uniform(2.0, 5.0))
-            else:
-                time.sleep(random.uniform(0.8, 1.8))
-
-        # 偶尔模拟鼠标移动
-        if random.random() < 0.5:
-            ws.send("Input.dispatchMouseEvent", {
-                "type": "mouseMoved",
-                "x": random.randint(200, 800),
-                "y": random.randint(200, 600)
-            }, sid)
-            time.sleep(random.uniform(0.5, 1.5))
-
-        print(f"  提取 JD...")
-        val = ws.eval_js(EXTRACT_DETAIL_JS, sid)
+        ws = None
+        tid = None
         try:
-            d = json.loads(val) if isinstance(val, str) else {"jd": "", "tags": []}
-        except (json.JSONDecodeError, ValueError, TypeError):
-            d = {"jd": "", "tags": []}
+            incr_request()
 
-        detail = build_detail_record(job, d)
-        results.append(detail)
+            # 每个详情页用新 session 避免检测。每个岗位独立创建，
+            # 这样单条异常不会污染或中断后续岗位。
+            ws = CDPSession(cdp_port)
+            r = ws.send("Target.createTarget", {"url": "about:blank"})
+            tid = r["result"]["targetId"]
+            r = ws.send("Target.attachToTarget", {"targetId": tid, "flatten": True})
+            sid = r["result"]["sessionId"]
 
-        if d.get("tags"):
-            print(f"  技能: {', '.join(d['tags'])}")
-        print(f"  JD: {len(d.get('jd',''))} 字 ({time.time()-t0:.0f}s)")
+            detail_url = build_detail_url(job)
+            ws.send("Page.navigate", {"url": detail_url}, sid)
+            print("  加载页面...")
+            time.sleep(random.uniform(5, 10))
 
-        # 每抓完一个详情就写入，异常退出也能保留
-        if output_path:
-            os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-            with open(output_path, "w", encoding="utf-8") as f:
-                json.dump(results, f, ensure_ascii=False, indent=2)
+            # 模拟人类阅读详情页的滚动行为
+            scroll_count = random.randint(3, 7)
+            print(f"  模拟滚动 ({scroll_count} 次)...")
+            for _ in range(scroll_count):
+                if random.random() < 0.12:
+                    # 偶尔往上回滚（回看内容）
+                    delta = -random.randint(80, 200)
+                else:
+                    delta = random.randint(200, 600)
+                ws.eval_js(f"window.scrollBy(0,{delta})", sid)
+                # 有时快滚，有时停下来"阅读"
+                if random.random() < 0.35:
+                    time.sleep(random.uniform(2.0, 5.0))
+                else:
+                    time.sleep(random.uniform(0.8, 1.8))
 
-        ws.send("Target.closeTarget", {"targetId": tid})
-        ws.close()
-        # 详情页间隔加大，随机 10-25 秒
-        gap = random.uniform(10, 25)
-        print(f"  等待 {gap:.0f}s 后抓下一个...\n")
-        time.sleep(gap)
+            # 偶尔模拟鼠标移动
+            if random.random() < 0.5:
+                ws.send("Input.dispatchMouseEvent", {
+                    "type": "mouseMoved",
+                    "x": random.randint(200, 800),
+                    "y": random.randint(200, 600)
+                }, sid)
+                time.sleep(random.uniform(0.5, 1.5))
+
+            print("  提取 JD...")
+            val = ws.eval_js(EXTRACT_DETAIL_JS, sid)
+            try:
+                d = json.loads(val) if isinstance(val, str) else {"jd": "", "tags": []}
+            except (json.JSONDecodeError, ValueError, TypeError):
+                d = {"jd": "", "tags": []}
+            if not isinstance(d, dict):
+                d = {"jd": "", "tags": []}
+            d["jd"] = str(d.get("jd") or "").strip()
+            if not d["jd"]:
+                raise RuntimeError("详情页未提取到非空 JD")
+
+            detail = build_detail_record(job, d)
+            results.append(detail)
+
+            # 每抓完一个有效详情立即写入，异常退出也能保留。
+            if output_path:
+                os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+                with open(output_path, "w", encoding="utf-8") as f:
+                    json.dump(results, f, ensure_ascii=False, indent=2)
+
+            if on_detail:
+                on_detail(job, detail)
+            succeeded += 1
+            if d.get("tags"):
+                print(f"  技能: {', '.join(d['tags'])}")
+            print(f"  JD: {len(d['jd'])} 字 ({time.time()-t0:.0f}s)")
+            report_progress("success", idx, title, "详情抓取成功")
+        except Exception as error:
+            failed += 1
+            message = f"详情抓取失败: {company} - {title}: {error}"
+            print(f"  ⚠️ {message}")
+            report_progress("failed", idx, title, message)
+        finally:
+            # 无论导航、提取或回调在哪一步失败，都独立关闭该详情页和 CDP 连接。
+            if ws is not None and tid is not None:
+                try:
+                    ws.send("Target.closeTarget", {"targetId": tid})
+                except Exception as error:
+                    print(f"  ⚠️ 关闭详情页失败: {error}")
+            if ws is not None:
+                try:
+                    ws.close()
+                except Exception as error:
+                    print(f"  ⚠️ 关闭详情连接失败: {error}")
+
+        if idx + 1 < len(jobs):
+            # 详情页间隔加大，随机 10-25 秒
+            gap = random.uniform(10, 25)
+            print(f"  等待 {gap:.0f}s 后抓下一个...\n")
+            time.sleep(gap)
 
     # 最终保存（dirname 为空时回退到当前目录，与循环内/其它写文件处保持一致）
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
@@ -1495,8 +1552,18 @@ def prepare_cdp_profile(copy_login_state=False, reset=False):
     cdp_data_dir = DEFAULT_CDP_DATA_DIR
     cdp_default = os.path.join(cdp_data_dir, "Default")
 
-    if reset and os.path.exists(cdp_data_dir):
-        shutil.rmtree(cdp_data_dir)
+    if reset:
+        # A reset may only remove the scraper's isolated profile after every
+        # Chrome process using this exact --user-data-dir has exited. Ordinary
+        # Chrome profiles are neither selected nor terminated by this helper.
+        stop_cdp_chrome(cdp_data_dir)
+        remaining = chrome_pids_for_user_data_dir(cdp_data_dir)
+        if remaining:
+            raise RuntimeError(
+                f"refusing to reset an in-use BOSS Chrome profile; remaining PIDs: {remaining}"
+            )
+        if os.path.exists(cdp_data_dir):
+            shutil.rmtree(cdp_data_dir)
 
     os.makedirs(cdp_default, exist_ok=True)
 
@@ -1676,8 +1743,14 @@ def stop_cdp_chrome(cdp_data_dir):
             terminate_process(pid, force=True)
         except ProcessLookupError:
             pass
-    time.sleep(0.5)
-    return len(pids)
+    for _ in range(10):
+        time.sleep(0.2)
+        remaining = chrome_pids_for_user_data_dir(cdp_data_dir)
+        if not remaining:
+            return len(pids)
+    raise RuntimeError(
+        f"failed to stop BOSS Chrome profile {cdp_data_dir}; remaining PIDs: {remaining}"
+    )
 
 
 def wait_for_cdp(cdp_port, timeout=30):
@@ -1822,7 +1895,7 @@ def main():
     p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     p.add_argument("--keyword", default="AI Agent", help="搜索关键词")
     p.add_argument("--city", default=DEFAULT_CITY_INPUT, help=f"城市 (中文名或代码，默认 {DEFAULT_CITY_INPUT})")
-    p.add_argument("--pages", type=int, default=3, help=f"抓取页数 (最大 {MAX_PAGES})")
+    p.add_argument("--pages", type=int, default=1, help=f"抓取页数 (默认 1，最大 {MAX_PAGES})")
     p.add_argument("--output", default=None, help="列表数据输出路径")
     p.add_argument("--detail-output", default=None, help="详情数据输出路径")
     p.add_argument("--cdp-port", type=int, default=DEFAULT_CDP_PORT,
@@ -1890,6 +1963,9 @@ def main():
     if args.pages > MAX_PAGES:
         print(f"⚠️ 页数 {args.pages} 超过上限 {MAX_PAGES}，已自动调整为 {MAX_PAGES}")
         args.pages = MAX_PAGES
+    elif args.pages < 1:
+        print(f"⚠️ 页数 {args.pages} 小于下限 1，已自动调整为 1")
+        args.pages = 1
 
     # 收集筛选条件
     filters = {}

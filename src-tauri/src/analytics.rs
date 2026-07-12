@@ -1,4 +1,6 @@
-use crate::models::{Job, JobDataReport, ReportBucket, SalaryByExperience, SalarySummary};
+use crate::models::{
+    Job, JobDataReport, ReportBucket, ReportKeyword, SalaryByExperience, SalarySummary,
+};
 use crate::time;
 use std::collections::{BTreeSet, HashMap};
 
@@ -78,7 +80,10 @@ const SKILL_TAXONOMY: &[(&str, &[&str])] = &[
     ),
 ];
 
-pub fn build_report(jobs: &[Job]) -> JobDataReport {
+pub fn build_report_for_keywords(
+    jobs: &[Job],
+    selected_keywords: Vec<ReportKeyword>,
+) -> JobDataReport {
     let total = jobs.len() as i64;
     let mut companies = BTreeSet::new();
     let mut city_counter = HashMap::new();
@@ -176,10 +181,10 @@ pub fn build_report(jobs: &[Job]) -> JobDataReport {
 
     let mut insights = vec![];
     if total == 0 {
-        insights.push("岗位库暂无数据，完成至少一轮抓取后即可生成全量报告。".to_string());
+        insights.push("当前关键词范围暂无岗位数据，请调整筛选或先完成抓取。".to_string());
     } else {
         insights.push(format!(
-            "当前岗位库按岗位去重后共有 {total} 个岗位，覆盖 {} 家公司、{} 个城市。",
+            "当前关键词范围按岗位去重后共有 {total} 个岗位，覆盖 {} 家公司、{} 个城市。",
             companies.len(),
             city_counter.len()
         ));
@@ -213,6 +218,7 @@ pub fn build_report(jobs: &[Job]) -> JobDataReport {
     last_dates.sort();
     JobDataReport {
         generated_at: time::shanghai_rfc3339(),
+        selected_keywords,
         data_from: first_dates.first().map(|value| date_part(value)),
         data_to: last_dates.last().map(|value| date_part(value)),
         total_jobs: total,
@@ -253,10 +259,23 @@ pub fn render_html(report: &JobDataReport) -> String {
         (Some(from), Some(to)) => format!("{} 至 {}", escape_html(from), escape_html(to)),
         _ => "暂无时间范围".to_string(),
     };
+    let keyword_scope = if report.selected_keywords.is_empty() {
+        "未指定关键词".to_string()
+    } else {
+        report
+            .selected_keywords
+            .iter()
+            .map(|keyword| keyword.label.as_str())
+            .collect::<Vec<_>>()
+            .join("、")
+    };
+    let title = format!("岗位数据报告 · {keyword_scope}");
     format!(
-        r#"<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>全量岗位数据报告</title><style>
+        r#"<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title><style>
 :root{{font-family:Inter,"PingFang SC","Microsoft YaHei",sans-serif;color:#18302a;background:#f4f6f2}}*{{box-sizing:border-box}}body{{margin:0}}main{{max-width:1200px;margin:auto;padding:40px 24px 80px}}header{{padding:34px;border-radius:24px;background:#176b57;color:#fff}}h1{{margin:0 0 10px;font-size:34px}}header p{{margin:0;opacity:.82}}.kpis{{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:20px 0}}.card,.section{{background:#fff;border:1px solid #dfe4de;border-radius:18px}}.card{{padding:18px}}.card strong{{display:block;font-size:27px}}.card span{{color:#68736e;font-size:13px}}.section{{padding:24px;margin-top:18px}}h2{{font-size:20px;margin:0 0 18px}}.grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}}.bars{{display:grid;gap:10px}}.bar{{display:grid;grid-template-columns:150px 1fr 88px;gap:10px;align-items:center;font-size:13px}}.track{{height:9px;background:#edf1ed;border-radius:99px;overflow:hidden}}.fill{{height:100%;background:#2d8b70;border-radius:99px}}.value{{text-align:right;color:#68736e}}ul{{margin:0;padding-left:20px;line-height:1.8}}.meta{{margin-top:10px;font-size:12px;color:#68736e}}@media(max-width:760px){{.kpis,.grid{{grid-template-columns:1fr 1fr}}.bar{{grid-template-columns:110px 1fr 74px}}}}@media(max-width:520px){{.kpis,.grid{{grid-template-columns:1fr}}}}
-</style></head><body><main><header><h1>全量岗位数据报告</h1><p>基于本地 SQLite 中全部去重岗位 · {period}</p></header><section class="kpis"><div class="card"><strong>{jobs}</strong><span>有效岗位样本</span></div><div class="card"><strong>{companies}</strong><span>招聘公司</span></div><div class="card"><strong>{salary}</strong><span>月薪中点中位数</span></div><div class="card"><strong>{coverage:.1}%</strong><span>岗位详情覆盖率</span></div></section><section class="section"><h2>先看结论</h2><ul>{insights}</ul></section><div class="grid"><section class="section"><h2>高频技能</h2>{skills}</section><section class="section"><h2>技能共现组合</h2>{pairs}</section><section class="section"><h2>经验要求</h2>{experience}</section><section class="section"><h2>学历要求</h2>{degree}</section><section class="section"><h2>薪资分布</h2>{salary_bands}</section><section class="section"><h2>岗位方向</h2>{roles}</section><section class="section"><h2>城市分布</h2>{cities}</section><section class="section"><h2>行业分布</h2>{industries}</section><section class="section"><h2>公司规模</h2>{scales}</section><section class="section"><h2>常见福利</h2>{welfare}</section></div><p class="meta">生成时间：{generated}（Asia/Shanghai） · 按岗位去重计数 · 文件编码 UTF-8</p></main></body></html>"#,
+</style></head><body><main><header><h1>{title}</h1><p>关键词范围：{scope} · 基于本地 SQLite 去重岗位 · {period}</p></header><section class="kpis"><div class="card"><strong>{jobs}</strong><span>有效岗位样本</span></div><div class="card"><strong>{companies}</strong><span>招聘公司</span></div><div class="card"><strong>{salary}</strong><span>月薪中点中位数</span></div><div class="card"><strong>{coverage:.1}%</strong><span>岗位详情覆盖率</span></div></section><section class="section"><h2>先看结论</h2><ul>{insights}</ul></section><div class="grid"><section class="section"><h2>高频技能</h2>{skills}</section><section class="section"><h2>技能共现组合</h2>{pairs}</section><section class="section"><h2>经验要求</h2>{experience}</section><section class="section"><h2>学历要求</h2>{degree}</section><section class="section"><h2>薪资分布</h2>{salary_bands}</section><section class="section"><h2>岗位方向</h2>{roles}</section><section class="section"><h2>城市分布</h2>{cities}</section><section class="section"><h2>行业分布</h2>{industries}</section><section class="section"><h2>公司规模</h2>{scales}</section><section class="section"><h2>常见福利</h2>{welfare}</section></div><p class="meta">生成时间：{generated}（Asia/Shanghai） · 按岗位去重计数 · 文件编码 UTF-8</p></main></body></html>"#,
+        title = escape_html(&title),
+        scope = escape_html(&keyword_scope),
         jobs = report.total_jobs,
         companies = report.total_companies,
         salary = report
@@ -277,6 +296,45 @@ pub fn render_html(report: &JobDataReport) -> String {
         welfare = render_bars(&report.welfare),
         generated = escape_html(&report.generated_at),
     )
+}
+
+pub fn append_interview_preparation(
+    html: String,
+    preparation: &crate::models::InterviewPreparation,
+) -> String {
+    let skills = preparation
+        .skills
+        .iter()
+        .map(|skill| {
+            format!(
+                "<li><strong>{}</strong>{}<br>{}</li>",
+                escape_html(&skill.name),
+                skill
+                    .job_count
+                    .map(|count| format!("（{count} 个岗位）"))
+                    .unwrap_or_default(),
+                escape_html(&skill.action)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("");
+    let projects = preparation
+        .project_ideas
+        .iter()
+        .map(|item| format!("<li>{}</li>", escape_html(item)))
+        .collect::<Vec<_>>()
+        .join("");
+    let questions = preparation
+        .practice_questions
+        .iter()
+        .map(|item| format!("<li>{}</li>", escape_html(item)))
+        .collect::<Vec<_>>()
+        .join("");
+    let section = format!(
+        "<section class=\"section\"><h2>AI 面试准备</h2><p>{}</p><h3>优先技能</h3><ul>{skills}</ul><h3>项目案例</h3><ul>{projects}</ul><h3>练习问题</h3><ul>{questions}</ul></section>",
+        escape_html(&preparation.summary)
+    );
+    html.replacen("</main>", &format!("{section}</main>"), 1)
 }
 
 fn detected_skills(job: &Job) -> BTreeSet<String> {
@@ -516,6 +574,7 @@ mod tests {
             fit: None,
             greeting: None,
             patches: vec![],
+            structured_details: None,
         }
     }
 
@@ -530,10 +589,13 @@ mod tests {
 
     #[test]
     fn aggregates_all_jobs_and_skill_pairs() {
-        let report = build_report(&[
-            sample_job("1", "20-30K·15薪", &["Python", "RAG"]),
-            sample_job("2", "30-40K", &["Python", "LangChain"]),
-        ]);
+        let report = build_report_for_keywords(
+            &[
+                sample_job("1", "20-30K·15薪", &["Python", "RAG"]),
+                sample_job("2", "30-40K", &["Python", "LangChain"]),
+            ],
+            vec![],
+        );
         assert_eq!(report.total_jobs, 2);
         assert_eq!(report.total_companies, 2);
         assert_eq!(report.salary.median_mid_k, Some(30.0));
@@ -548,9 +610,12 @@ mod tests {
 
     #[test]
     fn exported_report_is_utf8_and_self_contained() {
-        let html = render_html(&build_report(&[sample_job("1", "20-30K", &["Python"])]));
+        let html = render_html(&build_report_for_keywords(
+            &[sample_job("1", "20-30K", &["Python"])],
+            vec![],
+        ));
         assert!(html.contains("<meta charset=\"utf-8\">"));
-        assert!(html.contains("全量岗位数据报告"));
+        assert!(html.contains("岗位数据报告"));
         assert!(html.contains("上海"));
     }
 

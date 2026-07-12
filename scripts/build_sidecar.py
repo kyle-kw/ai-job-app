@@ -38,6 +38,14 @@ def main() -> int:
     else:
         subprocess.check_call([str(build_python), "-m", "pip", "install", "--disable-pip-version-check", "-r", str(SIDECAR / "requirements-build.txt")])
     name = "job-assistant-sidecar"
+    work_path = SIDECAR / "build"
+    dist_path = SIDECAR / "dist"
+    for directory in (work_path, dist_path):
+        resolved = directory.resolve()
+        if resolved.parent != SIDECAR.resolve():
+            raise RuntimeError(f"Refusing to clean unexpected build path: {resolved}")
+        shutil.rmtree(resolved, ignore_errors=True)
+        resolved.mkdir(parents=True, exist_ok=True)
     subprocess.check_call([
         str(build_python), "-m", "PyInstaller", "--noconfirm", "--clean", "--onefile",
         "--name", name,
@@ -45,10 +53,12 @@ def main() -> int:
         "--collect-all", "rendercv",
         "--collect-all", "rendercv_fonts",
         "--collect-all", "typst",
+        "--collect-all", "pypdfium2",
+        "--collect-all", "PIL",
         "--hidden-import", "vendor.boss_cdp_raw",
-        "--distpath", str(SIDECAR / "dist"),
-        "--workpath", str(SIDECAR / "build"),
-        "--specpath", str(SIDECAR / "build"),
+        "--distpath", str(dist_path),
+        "--workpath", str(work_path),
+        "--specpath", str(work_path),
         str(SIDECAR / "worker.py"),
     ])
     built = SIDECAR / "dist" / f"{name}{suffix}"

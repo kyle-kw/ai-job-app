@@ -8,7 +8,7 @@
   let expanded: string | null = null;
 
   const iconFor = (task: TaskRun) => task.state === 'completed' ? CheckCircle2 : task.state === 'failed' ? XCircle : task.state === 'running' ? CircleDashed : Clock3;
-  const labelFor = (task: TaskRun) => ({ scrape: '岗位抓取', 'resume-import': '简历解析', fit: '匹配分析', tailor: '专岗优化', render: 'PDF 渲染', 'provider-test': '模型测试', 'boss-login': 'BOSS 登录' }[task.kind]);
+  const labelFor = (task: TaskRun) => ({ scrape: '岗位抓取', 'job-detail-extraction': '岗位详情提取', 'resume-import': '简历解析', fit: '匹配分析', tailor: '专岗优化', render: 'PDF 渲染', 'provider-test': '模型测试', 'boss-login': 'BOSS 登录' }[task.kind]);
 </script>
 
 {#if open}
@@ -17,7 +17,7 @@
     <div class="flex h-[74px] items-center justify-between border-b px-5" style="border-color: var(--line);">
       <div>
         <h2 class="text-base font-semibold">任务中心</h2>
-        <p class="mt-0.5 text-xs body-muted">切换页面不会中断正在运行的工作</p>
+        <p class="mt-0.5 text-xs body-muted">切换页面不会中断；岗位抓取期间请勿关闭应用</p>
       </div>
       <button class="btn-icon" on:click={() => open = false} aria-label="关闭"><X size={18} /></button>
     </div>
@@ -42,6 +42,7 @@
                   <div class="min-w-0 flex-1">
                     <div class="flex items-center justify-between gap-3"><p class="truncate text-sm font-semibold">{task.title}</p><span class="text-xs font-semibold text-brand">{task.progress}%</span></div>
                     <p class="mt-1 text-xs body-muted">{task.message}</p>
+                    {#if task.kind === 'scrape'}<p class="mt-2 text-[11px] font-medium text-warning">请勿关闭应用，切换页面不会中断抓取。</p>{/if}
                     <div class="mt-3 h-1.5 overflow-hidden rounded-full surface-soft"><div class="h-full rounded-full transition-all duration-500" style={`width:${task.progress}%; background: var(--brand);`}></div></div>
                   </div>
                 </div>

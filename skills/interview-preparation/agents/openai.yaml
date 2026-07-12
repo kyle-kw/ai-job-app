@@ -1,0 +1,4 @@
+interface:
+  display_name: "AI 面试准备"
+  short_description: "基于本地岗位聚合数据与确认的简历事实生成个性化面试技能准备建议"
+  default_prompt: "Use $interview-preparation to create a focused interview preparation plan from the supplied local job aggregates and confirmed resume facts."

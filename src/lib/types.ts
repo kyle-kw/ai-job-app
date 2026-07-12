@@ -1,4 +1,4 @@
-export type TaskKind = 'scrape' | 'resume-import' | 'fit' | 'tailor' | 'render' | 'provider-test' | 'boss-login';
+export type TaskKind = 'scrape' | 'job-detail-extraction' | 'resume-import' | 'fit' | 'tailor' | 'render' | 'provider-test' | 'boss-login';
 export type TaskState = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
 
 export interface TaskRun {
@@ -51,6 +51,26 @@ export interface Job {
   fit?: FitReport | null;
   greeting?: string | null;
   patches?: ResumePatch[];
+  structuredDetails?: JobStructuredDetails | null;
+}
+
+export interface BusinessInformation {
+  companyName: string;
+  legalRepresentative: string;
+  establishedDate: string;
+  companyType: string;
+  operatingStatus: string;
+  registeredCapital: string;
+}
+
+export interface JobStructuredDetails {
+  jobDescription: string;
+  responsibilities: string[];
+  requirements: string[];
+  companyIntroduction: string;
+  businessInformation: BusinessInformation;
+  extractedAt: string;
+  extractorVersion: string;
 }
 
 export type FitDimensionKey = 'technical' | 'experience' | 'behavior' | 'career';
@@ -83,11 +103,17 @@ export interface FitReport {
   evidence: string[];
   generatedAt: string;
   skillVersion: string;
+  inputHash?: string;
+  analysisSource?: 'llm' | 'local' | 'legacy';
+  fallbackReason?: 'provider_missing' | 'llm_failed' | 'invalid_output' | null;
+  cacheStatus?: 'fresh' | 'stale' | 'legacy';
 }
+
+export type ResumeFactCategory = 'identity' | 'experience' | 'education' | 'skill' | 'project' | 'certification' | 'other';
 
 export interface ResumeFact {
   id: string;
-  category: 'identity' | 'experience' | 'education' | 'skill' | 'project' | 'other';
+  category: ResumeFactCategory;
   value: string;
   source: string;
   confidence: number;
@@ -95,6 +121,7 @@ export interface ResumeFact {
 }
 
 export interface ResumeExperience {
+  id: string;
   company: string;
   position: string;
   location: string;
@@ -103,13 +130,41 @@ export interface ResumeExperience {
   highlights: string[];
 }
 
+export type ResumeDegree = '' | '本科' | '硕士' | '博士' | '其他';
+
 export interface ResumeEducation {
+  id: string;
   institution: string;
   area: string;
-  degree: string;
+  degree: ResumeDegree;
+  degreeDetail: string;
   startDate: string;
   endDate: string;
   highlights: string[];
+}
+
+export type ResumeTemplateId = 'general' | 'ai-engineering' | 'data-analysis' | 'finance-accounting';
+
+export interface ProfessionalSkillGroup {
+  id: string;
+  label: string;
+  items: string[];
+}
+
+export interface ResumeProject {
+  id: string;
+  name: string;
+  summary: string;
+  startDate: string;
+  endDate: string;
+  highlights: string[];
+}
+
+export interface ResumeCertification {
+  id: string;
+  name: string;
+  issuer: string;
+  date: string;
 }
 
 export interface JobPreferences {
@@ -130,9 +185,12 @@ export interface ResumeProfile {
   location: string;
   website: string;
   summary: string;
-  skills: string[];
+  templateId: ResumeTemplateId;
+  professionalSkills: ProfessionalSkillGroup[];
   experiences: ResumeExperience[];
   education: ResumeEducation[];
+  projects: ResumeProject[];
+  certifications: ResumeCertification[];
   facts: ResumeFact[];
   preferences: JobPreferences;
   sourceFileName: string;
@@ -151,7 +209,7 @@ export interface ResumePatch {
   status: 'pending' | 'accepted' | 'rejected';
 }
 
-export type ProviderKind = 'xiaomi' | 'openrouter' | 'custom';
+export type ProviderKind = 'xiaomi' | 'custom';
 
 export interface AiProviderConfig {
   id: string;
@@ -163,7 +221,9 @@ export interface AiProviderConfig {
   apiKeyRef?: string;
   isDefault: boolean;
   verified: boolean;
+  visionVerified: boolean;
   lastTestedAt?: string | null;
+  lastTestError?: string | null;
 }
 
 export interface ScrapeRun {
@@ -184,6 +244,19 @@ export interface Readiness {
   boss: boolean;
 }
 
+export type ConfigurationState = 'needs_setup' | 'running' | 'ready' | 'failed';
+
+export interface ConfigurationItem {
+  state: ConfigurationState;
+  message: string;
+  lastAttemptAt?: string | null;
+}
+
+export interface ConfigurationSnapshot {
+  boss: ConfigurationItem;
+  llm: ConfigurationItem;
+}
+
 export interface AppSettings {
   locale: 'zh-CN' | 'en';
   theme: 'light' | 'dark' | 'system';
@@ -194,6 +267,7 @@ export interface AppSettings {
 
 export interface BootstrapSnapshot {
   readiness: Readiness;
+  configuration: ConfigurationSnapshot;
   jobs: Job[];
   resume: ResumeProfile | null;
   providers: AiProviderConfig[];
@@ -207,6 +281,15 @@ export interface ProviderTestResult {
   message: string;
   latencyMs: number;
   structuredOutput: boolean;
+  visionSupported: boolean;
+  visionMessage: string;
+}
+
+export interface FitAnalysisResult {
+  job: Job;
+  cacheHit: boolean;
+  source: 'llm' | 'local';
+  warning?: string | null;
 }
 
 export interface ImportResumePayload {
@@ -219,10 +302,21 @@ export interface RenderResult {
   fileName: string;
 }
 
+export interface RenderResumeRequest {
+  outputPath: string;
+}
+
 export interface ReportBucket {
   label: string;
   count: number;
   percentage: number;
+}
+
+export interface ReportKeyword {
+  key: string;
+  label: string;
+  jobCount: number;
+  lastSeen: string;
 }
 
 export interface SalarySummary {
@@ -242,6 +336,7 @@ export interface SalaryByExperience {
 
 export interface JobDataReport {
   generatedAt: string;
+  selectedKeywords: ReportKeyword[];
   dataFrom?: string | null;
   dataTo?: string | null;
   totalJobs: number;
@@ -261,4 +356,101 @@ export interface JobDataReport {
   welfare: ReportBucket[];
   salaryByExperience: SalaryByExperience[];
   insights: string[];
+}
+
+export interface InterviewPreparationSkill {
+  name: string;
+  gap?: string;
+  action: string;
+  jobCount?: number;
+}
+
+export interface InterviewPreparation {
+  summary: string;
+  skills: InterviewPreparationSkill[];
+  projectIdeas: string[];
+  practiceQuestions: string[];
+}
+
+export interface InterviewPreparationState {
+  status: 'missing' | 'fresh' | 'stale';
+  reason?: 'no_provider' | 'no_resume' | 'no_jobs' | string | null;
+  hasProvider: boolean;
+  hasResume: boolean;
+  generatedAt?: string | null;
+  preparation?: InterviewPreparation | null;
+}
+
+export interface ResumeChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface ResumeFactCandidate {
+  id: string;
+  category: ResumeFact['category'];
+  value: string;
+  sourceMessageId?: string | null;
+}
+
+export interface ResumeFieldEdit {
+  id: string;
+  path: string;
+  label: string;
+  operation: 'replace';
+  before: unknown;
+  after: unknown;
+  rationale: string;
+  evidenceFactIds: string[];
+  requiredFactCandidateIds: string[];
+}
+
+export interface ResumeChatProposal {
+  proposalId: string;
+  resumeId: string;
+  baseVersion: number;
+  job?: { id: string; title: string; company: string } | null;
+  assistantMessage: string;
+  edits: ResumeFieldEdit[];
+  factCandidates: ResumeFactCandidate[];
+  warnings: string[];
+}
+
+export interface ResumeChatRequest {
+  resumeId: string;
+  expectedVersion: number;
+  jobId?: string | null;
+  messages: ResumeChatMessage[];
+}
+
+export interface ApplyResumeEditsRequest {
+  proposal: ResumeChatProposal;
+  selectedEditIds: string[];
+  confirmedFactCandidateIds: string[];
+  expectedVersion: number;
+}
+
+export type ResumeVersionSource = 'legacy' | 'import' | 'template' | 'manual' | 'ai-chat' | 'rollback';
+
+export interface ResumeVersionSummary {
+  id: string;
+  resumeId: string;
+  version: number;
+  parentVersion?: number | null;
+  createdAt: string;
+  source: ResumeVersionSource;
+  summary: string;
+  jobId?: string | null;
+  proposalId?: string | null;
+  restoredFromVersion?: number | null;
+}
+
+export interface ResumeVersionDetail extends ResumeVersionSummary {
+  profile: ResumeProfile;
+}
+
+export interface ResumeCommitResult {
+  resume: ResumeProfile;
+  version: ResumeVersionSummary;
 }
