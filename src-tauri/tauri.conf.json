@@ -28,6 +28,18 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "wix": {
+        "language": "zh-CN"
+      }
+    },
     "category": "Productivity",
     "shortDescription": "本地优先的 AI 求职助手",
     "longDescription": "抓取岗位、优化简历、评估匹配度并生成专岗求职材料。"

@@ -1,17 +1,68 @@
-name: build
+name: build-and-release
 
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
+  quality:
+    name: Quality checks
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Verify release version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $packageVersion = (Get-Content -Raw -Encoding UTF8 package.json | ConvertFrom-Json).version
+          $tauriVersion = (Get-Content -Raw -Encoding UTF8 src-tauri/tauri.conf.json | ConvertFrom-Json).version
+          $cargoVersionMatch = Select-String -Path src-tauri/Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1
+          if (-not $cargoVersionMatch) {
+            throw 'Unable to read the package version from src-tauri/Cargo.toml'
+          }
+          $cargoVersion = $cargoVersionMatch.Matches[0].Groups[1].Value
+          $expectedTag = "v$packageVersion"
+          if ($env:GITHUB_REF_NAME -ne $expectedTag) {
+            throw "Release tag $env:GITHUB_REF_NAME does not match package version $expectedTag"
+          }
+          if ($tauriVersion -ne $packageVersion -or $cargoVersion -ne $packageVersion) {
+            throw "Version mismatch: package.json=$packageVersion, tauri.conf.json=$tauriVersion, Cargo.toml=$cargoVersion"
+          }
+      - name: Check frontend
+        run: npm run check
+      - name: Test frontend
+        run: npm test
+      - name: Test Rust backend
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
   desktop:
+    name: Build ${{ matrix.artifact }}
+    needs: quality
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest]
+        include:
+          - os: windows-latest
+            artifact: windows-x86_64
+          - os: macos-15-intel
+            artifact: macos-x86_64
+          - os: macos-15
+            artifact: macos-aarch64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -22,16 +73,74 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
+          cache: pip
+          cache-dependency-path: sidecar/requirements-build.txt
       - uses: dtolnay/rust-toolchain@stable
       - name: Install frontend dependencies
         run: npm ci
-      - name: Check and test
-        run: |
-          npm run check
-          npm test
       - name: Build desktop bundle
-        run: npm run tauri:bundle -- --ci
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ startsWith(matrix.os, 'macos-') && '-' || '' }}
+        run: npm run tauri:bundle
+      - name: Prepare release assets
+        shell: pwsh
+        run: |
+          $version = (Get-Content -Raw -Encoding UTF8 package.json | ConvertFrom-Json).version
+          $releaseDirectory = Join-Path $PWD 'release-assets'
+          New-Item -ItemType Directory -Force -Path $releaseDirectory | Out-Null
+
+          if ($env:RUNNER_OS -eq 'Windows') {
+            $msi = Get-ChildItem 'src-tauri/target/release/bundle/msi' -Filter '*.msi' | Select-Object -First 1
+            $installer = Get-ChildItem 'src-tauri/target/release/bundle/nsis' -Filter '*.exe' | Select-Object -First 1
+            if (-not $msi -or -not $installer) {
+              throw 'Expected both MSI and NSIS installers'
+            }
+            Copy-Item $msi.FullName (Join-Path $releaseDirectory "ai-job-app-v$version-windows-x86_64.msi")
+            Copy-Item $installer.FullName (Join-Path $releaseDirectory "ai-job-app-v$version-windows-x86_64-setup.exe")
+          } else {
+            $dmg = Get-ChildItem 'src-tauri/target/release/bundle/dmg' -Filter '*.dmg' | Select-Object -First 1
+            if (-not $dmg) {
+              throw 'Expected a macOS DMG installer'
+            }
+            Copy-Item $dmg.FullName (Join-Path $releaseDirectory "ai-job-app-v$version-${{ matrix.artifact }}.dmg")
+          }
       - uses: actions/upload-artifact@v4
         with:
-          name: desktop-${{ matrix.os }}
-          path: src-tauri/target/release/bundle/**
+          name: desktop-${{ matrix.artifact }}
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    needs: desktop
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: desktop-*
+          path: release-assets
+          merge-multiple: true
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mapfile -d '' assets < <(find release-assets -maxdepth 1 -type f -print0 | sort -z)
+          if [ "${#assets[@]}" -ne 4 ]; then
+            echo "Expected 4 release assets, found ${#assets[@]}" >&2
+            exit 1
+          fi
+
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --title "AI Job App $GITHUB_REF_NAME" \
+              --generate-notes
+          fi
