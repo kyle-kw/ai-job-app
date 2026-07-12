@@ -95,7 +95,7 @@ const baseJobs: Job[] = [
 export const mockJobs = baseJobs.map((job) => ({ ...job, fit: deterministicFit(job, mockResume) }));
 
 export const defaultProviders: AiProviderConfig[] = [
-  { id: 'provider-xiaomi', kind: 'xiaomi', name: '默认模型 · 小米 MiMo', baseUrl: 'https://token-plan-sgp.xiaomimimo.com/v1', model: 'mimo-v2.5-pro', isDefault: true, verified: false, visionVerified: false },
+  { id: 'provider-xiaomi', kind: 'xiaomi', name: '默认模型 · 小米 MiMo', baseUrl: 'https://token-plan-sgp.xiaomimimo.com/v1', model: 'mimo-v2.5', isDefault: true, verified: false, visionVerified: false },
   { id: 'provider-custom', kind: 'custom', name: '自定义 OpenAI 兼容服务', baseUrl: '', model: '', isDefault: false, verified: false, visionVerified: false }
 ];
 

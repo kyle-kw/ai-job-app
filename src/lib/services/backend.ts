@@ -351,7 +351,7 @@ export const backend = {
 
   async renderResume(request: RenderResumeRequest): Promise<RenderResult> {
     if (browserMode()) return { path: request.outputPath || 'browser-demo://resume.pdf', fileName: request.outputPath.split(/[\\/]/).at(-1) || '主简历_demo.pdf' };
-    return invoke('render_resume', { outputPath: request.outputPath });
+    return invoke('render_resume', { outputPath: request.outputPath, colorTheme: request.colorTheme });
   },
 
   async proposeResumeChatEdits(request: ResumeChatRequest): Promise<ResumeChatProposal> {

@@ -193,13 +193,21 @@ impl Database {
             .find(|provider| provider.id == "provider-xiaomi")
             .cloned()
             .unwrap_or_else(default_xiaomi_provider);
+        let mut connection_changed = false;
         if !already_applied
             && (xiaomi.base_url.trim().is_empty()
                 || xiaomi.base_url == "https://api.xiaomimimo.com/v1")
         {
             xiaomi.base_url = "https://token-plan-sgp.xiaomimimo.com/v1".into();
-            xiaomi.model = "mimo-v2.5-pro".into();
+            connection_changed = true;
+        }
+        if xiaomi.model == "mimo-v2.5-pro" {
+            xiaomi.model = "mimo-v2.5".into();
+            connection_changed = true;
+        }
+        if connection_changed {
             xiaomi.verified = false;
+            xiaomi.vision_verified = false;
             xiaomi.last_tested_at = None;
             xiaomi.last_test_error = None;
         }
@@ -1144,7 +1152,7 @@ fn default_xiaomi_provider() -> AiProviderConfig {
         kind: "xiaomi".into(),
         name: "默认模型 · 小米 MiMo".into(),
         base_url: "https://token-plan-sgp.xiaomimimo.com/v1".into(),
-        model: "mimo-v2.5-pro".into(),
+        model: "mimo-v2.5".into(),
         api_key: None,
         api_key_ref: None,
         is_default: true,
@@ -1772,5 +1780,26 @@ mod tests {
                 .summary,
             "财务"
         );
+    }
+
+    #[test]
+    fn xiaomi_provider_defaults_and_migrates_to_mimo_v2_5() {
+        let dir = tempdir().unwrap();
+        let db = Database::new(dir.path().join("test.db"));
+        db.initialize().unwrap();
+
+        let mut provider = db.provider_by_id("provider-xiaomi").unwrap().unwrap();
+        assert_eq!(provider.model, "mimo-v2.5");
+
+        provider.model = "mimo-v2.5-pro".into();
+        provider.verified = true;
+        provider.vision_verified = true;
+        db.save_provider(&provider).unwrap();
+        db.initialize().unwrap();
+
+        let migrated = db.provider_by_id("provider-xiaomi").unwrap().unwrap();
+        assert_eq!(migrated.model, "mimo-v2.5");
+        assert!(!migrated.verified);
+        assert!(!migrated.vision_verified);
     }
 }

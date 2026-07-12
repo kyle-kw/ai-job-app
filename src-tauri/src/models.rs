@@ -272,6 +272,14 @@ fn default_resume_template_id() -> String {
     "ai-engineering".into()
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ResumeColorTheme {
+    Pine,
+    Navy,
+    Graphite,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct JobPreferences {
@@ -395,6 +403,22 @@ mod tests {
             "model":"model", "isDefault":true, "verified":true
         })).unwrap();
         assert!(!provider.vision_verified);
+    }
+
+    #[test]
+    fn resume_color_themes_use_the_frontend_wire_values() {
+        assert_eq!(
+            serde_json::to_value(ResumeColorTheme::Pine).unwrap(),
+            "pine"
+        );
+        assert_eq!(
+            serde_json::to_value(ResumeColorTheme::Navy).unwrap(),
+            "navy"
+        );
+        assert_eq!(
+            serde_json::to_value(ResumeColorTheme::Graphite).unwrap(),
+            "graphite"
+        );
     }
 }
 

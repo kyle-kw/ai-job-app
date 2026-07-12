@@ -129,7 +129,7 @@
             <p class="mb-5 text-sm leading-6 body-muted">填写 API Key 并验证连接。连接成功后 Key 才会保存到系统钥匙串；失败不会保存本次输入。</p>
             <div class="space-y-4">
               <label><span class="label">Base URL</span><input class="input" bind:value={llmDraft.baseUrl} placeholder="https://token-plan-sgp.xiaomimimo.com/v1" /></label>
-              <label><span class="label">模型</span><input class="input" bind:value={llmDraft.model} placeholder="mimo-v2.5-pro" /></label>
+              <label><span class="label">模型</span><input class="input" bind:value={llmDraft.model} placeholder="mimo-v2.5" /></label>
               <label><span class="label">API Key</span><div class="relative"><KeyRound size={15} class="absolute left-3 top-3 body-muted" /><input class="input pl-9" type="password" bind:value={apiKey} placeholder={llmDraft.apiKeyRef ? '已安全保存；留空则使用现有 Key' : '粘贴你的 API Key'} /></div></label>
             </div>
             {#if llmResult}<div class="mt-4 flex items-start gap-3 rounded-xl border p-3" style={`border-color:${llmResult.ok ? 'var(--success)' : 'var(--danger)'}; background:${llmResult.ok ? 'var(--brand-faint)' : 'var(--danger-soft)'}`}><svelte:component this={llmResult.ok ? CheckCircle2 : XCircle} size={17} class={llmResult.ok ? 'text-success' : 'text-danger'} /><div><p class="text-sm font-semibold">{llmResult.message}</p><p class="mt-0.5 text-[11px] body-muted">延迟 {llmResult.latencyMs} ms · 结构化输出 {llmResult.structuredOutput ? '正常' : '未通过'}</p></div></div>{/if}

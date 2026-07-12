@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount } from 'svelte';
   import { page } from '$app/stores';
   import { downloadDir, join } from '@tauri-apps/api/path';
   import { save as saveDialog } from '@tauri-apps/plugin-dialog';
@@ -13,7 +13,7 @@
   import { safeResumeFileName } from '$lib/resume-format';
   import type { ResumeTemplateDefinition } from '$lib/resume-templates';
   import { importResume, refresh, savePreferences, snapshot } from '$lib/stores/app';
-  import type { JobPreferences, ResumeCommitResult, ResumeProfile, ResumeTemplateId } from '$lib/types';
+  import type { JobPreferences, ResumeColorTheme, ResumeCommitResult, ResumeProfile, ResumeTemplateId } from '$lib/types';
 
   let activeSection: 'content' | 'preferences' | 'facts' = 'content';
   let draft: ResumeProfile | null = null;
@@ -34,8 +34,12 @@
   let constraintsText = '';
   let previewTemplate: ResumeTemplateDefinition | null = null;
   let exportDialogOpen = false;
-  let exportTemplateId: ResumeTemplateId = 'ai-engineering';
-  const exportTemplates = RESUME_TEMPLATES.filter((template) => template.id !== 'general');
+  let exportColorTheme: ResumeColorTheme = 'navy';
+  const exportColorThemes: ReadonlyArray<{ id: ResumeColorTheme; label: string; description: string; accent: string }> = [
+    { id: 'navy', label: '经典蓝', description: '参考简历原始配色，专业清晰', accent: '#1F407A' },
+    { id: 'pine', label: '松柏绿', description: '清晰自然，适合技术与产品岗位', accent: '#176B57' },
+    { id: 'graphite', label: '石墨黑', description: '克制简洁，强调黑白打印效果', accent: '#24292F' }
+  ];
 
   $: if ($snapshot.resume && $snapshot.resume.id !== draftId) {
     draft = structuredClone($snapshot.resume);
@@ -97,7 +101,7 @@
 
   function renderPdf() {
     if (!draft) return;
-    exportTemplateId = draft.templateId === 'general' ? 'ai-engineering' : draft.templateId;
+    exportColorTheme = 'navy';
     exportDialogOpen = true;
   }
 
@@ -116,11 +120,11 @@
         filters: [{ name: 'PDF 简历', extensions: ['pdf'] }]
       }) : defaultPath;
       if (!outputPath) return;
-      draft = { ...draft, templateId: exportTemplateId };
-      await tick();
-      if (!await save()) return;
-      resumeWasSaved = true;
-      const result = await backend.renderResume({ outputPath });
+      if (hasUnsavedChanges) {
+        if (!await save()) return;
+        resumeWasSaved = true;
+      }
+      const result = await backend.renderResume({ outputPath, colorTheme: exportColorTheme });
       showToast(`已导出 ${result.fileName}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -308,15 +312,15 @@
 </div>
 
 {#if exportDialogOpen}
-  <button class="fixed inset-0 z-[75] bg-black/35 backdrop-blur-sm" on:click={() => exportDialogOpen = false} aria-label="关闭导出模板选择"></button>
-  <div class="fixed left-1/2 top-1/2 z-[76] w-[760px] max-w-[calc(100vw-32px)] -translate-x-1/2 -translate-y-1/2 panel p-6" role="dialog" aria-modal="true" aria-labelledby="export-template-title">
-    <div class="flex items-start justify-between gap-4"><div><p class="eyebrow">PDF 导出</p><h3 id="export-template-title" class="mt-1 text-xl font-semibold">选择简历模板</h3><p class="mt-1 text-xs body-muted">选中的模板将同步到主简历，并与当前修改一起保存。</p></div><button class="btn-icon" on:click={() => exportDialogOpen = false} aria-label="关闭">×</button></div>
+  <button class="fixed inset-0 z-[75] bg-black/35 backdrop-blur-sm" on:click={() => exportDialogOpen = false} aria-label="关闭导出颜色选择"></button>
+  <div class="fixed left-1/2 top-1/2 z-[76] w-[760px] max-w-[calc(100vw-32px)] -translate-x-1/2 -translate-y-1/2 panel p-6" role="dialog" aria-modal="true" aria-labelledby="export-color-title">
+    <div class="flex items-start justify-between gap-4"><div><p class="eyebrow">PDF 导出</p><h3 id="export-color-title" class="mt-1 text-xl font-semibold">选择颜色主题</h3><p class="mt-1 text-xs body-muted">PDF 将沿用右侧预览版式；颜色只影响本次导出，不会修改主简历或章节顺序。</p></div><button class="btn-icon" on:click={() => exportDialogOpen = false} aria-label="关闭">×</button></div>
     <div class="mt-6 grid grid-cols-3 gap-4">
-      {#each exportTemplates as template}
-        <button type="button" class:selected-export={exportTemplateId === template.id} class="export-template-card rounded-2xl border p-4 text-left transition" on:click={() => exportTemplateId = template.id}>
-          <span class={`export-swatch swatch-${template.id}`}><span></span><span></span><span></span></span>
-          <span class="mt-4 block text-sm font-semibold">{template.label}</span>
-          <span class="mt-1 block text-xs leading-5 body-muted">{template.id === 'ai-engineering' ? '黑白紧凑、ATS 友好' : template.id === 'data-analysis' ? '青绿现代、突出分析结果' : '黑白居中、正式稳重'}</span>
+      {#each exportColorThemes as theme}
+        <button type="button" aria-pressed={exportColorTheme === theme.id} class:selected-export={exportColorTheme === theme.id} class="export-theme-card rounded-2xl border p-4 text-left transition" style={`--swatch-accent: ${theme.accent};`} on:click={() => exportColorTheme = theme.id}>
+          <span class="export-swatch"><span></span><span></span><span></span></span>
+          <span class="mt-4 flex items-center gap-2 text-sm font-semibold"><span class="h-3 w-3 rounded-full" style={`background: ${theme.accent};`}></span>{theme.label}</span>
+          <span class="mt-1 block text-xs leading-5 body-muted">{theme.description}</span>
         </button>
       {/each}
     </div>
@@ -364,14 +368,11 @@
   .tab { position: relative; padding: 0 0 13px; font-size: 13px; font-weight: 600; color: var(--muted); }
   .tab.active { color: var(--ink); }
   .tab.active::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--brand); }
-  .export-template-card { border-color: var(--line); background: var(--panel-soft); }
-  .export-template-card:hover, .export-template-card.selected-export { border-color: var(--brand); transform: translateY(-2px); }
-  .export-template-card.selected-export { box-shadow: 0 0 0 2px var(--focus); }
+  .export-theme-card { border-color: var(--line); background: var(--panel-soft); }
+  .export-theme-card:hover, .export-theme-card.selected-export { border-color: var(--swatch-accent); transform: translateY(-2px); }
+  .export-theme-card.selected-export { box-shadow: 0 0 0 2px color-mix(in srgb, var(--swatch-accent) 24%, transparent); }
   .export-swatch { display: flex; height: 104px; flex-direction: column; gap: 9px; border-radius: 10px; background: white; padding: 18px 16px; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08); }
   .export-swatch span { display: block; height: 5px; border-radius: 999px; background: #cbd3cf; }
-  .export-swatch span:first-child { width: 58%; height: 9px; background: #1b2421; }
-  .swatch-data-analysis span:first-child { margin-inline: auto; background: #00645a; }
-  .swatch-data-analysis span { background: #a7d0ca; }
-  .swatch-finance-accounting span:first-child { margin-inline: auto; background: #222; }
-  .swatch-finance-accounting span { margin-inline: auto; background: #c5c5c5; }
+  .export-swatch span:first-child { width: 58%; height: 9px; background: var(--swatch-accent); }
+  .export-swatch span:nth-child(2) { background: var(--swatch-accent); opacity: .72; }
 </style>

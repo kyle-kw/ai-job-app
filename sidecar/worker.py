@@ -634,7 +634,111 @@ def extract_resume(params: dict[str, Any]) -> dict[str, Any]:
     return {"profile": profile, "rawText": text, "pages": pages}
 
 
-def profile_to_rendercv(profile: dict[str, Any]) -> dict[str, Any]:
+RESUME_COLOR_THEMES = {
+    "pine": {"accent": "#176B57", "links": "#0B7A67"},
+    "navy": {"accent": "#1F407A", "links": "#005CB8"},
+    "graphite": {"accent": "#24292F", "links": "#24292F"},
+}
+
+RESUME_BOLD_KEYWORDS = [
+    "Dify", "FastAPI", "Docker", "Docker Compose", "PostgreSQL", "vLLM", "SGLang",
+    "llama.cpp", "MinerU", "Milvus", "OpenAI", "Linux", "Prometheus", "Grafana",
+    "Triton", "PP-OCRv6", "PP-StructureV3", "PaddleOCR-VL-1.6",
+]
+
+
+def resume_design(color_theme: str) -> dict[str, Any]:
+    colors = RESUME_COLOR_THEMES.get(color_theme)
+    if colors is None:
+        raise ValueError("不支持的简历颜色主题。")
+    accent = colors["accent"]
+    return {
+        "theme": "classic",
+        "page": {
+            "size": "a4",
+            "top_margin": "1.2cm",
+            "bottom_margin": "1.2cm",
+            "left_margin": "1.35cm",
+            "right_margin": "1.35cm",
+            "show_footer": False,
+            "show_top_note": False,
+        },
+        "colors": {
+            "name": accent,
+            "headline": accent,
+            "connections": accent,
+            "section_titles": accent,
+            "links": colors["links"],
+        },
+        "typography": {
+            "line_spacing": "0.72em",
+            "alignment": "left",
+            "font_family": {
+                "body": "Microsoft YaHei",
+                "name": "Microsoft YaHei",
+                "headline": "Microsoft YaHei",
+                "connections": "Microsoft YaHei",
+                "section_titles": "Microsoft YaHei",
+            },
+            "font_size": {
+                "body": "10.2pt",
+                "name": "25pt",
+                "headline": "10.6pt",
+                "connections": "9.8pt",
+                "section_titles": "1.28em",
+            },
+        },
+        "header": {
+            "alignment": "center",
+            "space_below_name": "0.22cm",
+            "space_below_headline": "0.24cm",
+            "space_below_connections": "0.32cm",
+            "connections": {
+                "phone_number_format": "international",
+                "show_icons": False,
+                "separator": "|",
+                "space_between_connections": "0.32cm",
+            },
+        },
+        "section_titles": {
+            "type": "with_full_line",
+            "space_above": "0.42cm",
+            "space_below": "0.22cm",
+        },
+        "sections": {
+            "space_between_regular_entries": "0.42cm",
+            "space_between_text_based_entries": "0.14cm",
+            "show_time_spans_in": [],
+        },
+        "entries": {
+            "date_and_location_width": "4.6cm",
+            "side_space": "0cm",
+            "space_between_columns": "0.24cm",
+            "allow_page_break": False,
+            "short_second_row": False,
+            "summary": {"space_above": "0.06cm"},
+            "highlights": {
+                "space_left": "0.05cm",
+                "space_above": "0.08cm",
+                "space_between_items": "0.06cm",
+                "space_between_bullet_and_text": "0.32em",
+            },
+        },
+        "templates": {
+            "experience_entry": {
+                "main_column": "**COMPANY**, POSITION\nSUMMARY\nHIGHLIGHTS",
+                "date_and_location_column": "LOCATION · DATE",
+            },
+            "education_entry": {
+                "main_column": "**INSTITUTION**, AREA\nSUMMARY\nHIGHLIGHTS",
+                "degree_column": "**DEGREE**",
+                "date_and_location_column": "LOCATION · DATE",
+            },
+        },
+    }
+
+
+def profile_to_rendercv(profile: dict[str, Any], color_theme: str = "navy") -> dict[str, Any]:
     section_values: dict[str, tuple[str, Any]] = {}
     if profile.get("summary"):
         section_values["summary"] = ("个人简介", [profile["summary"]])
@@ -699,12 +803,9 @@ def profile_to_rendercv(profile: dict[str, Any]) -> dict[str, Any]:
             "phone": rendercv_phone(profile.get("phone")), "website": profile.get("website") or None,
             "sections": sections,
         },
-        "design": {"theme": {
-            "ai-engineering": "engineeringresumes",
-            "data-analysis": "opal",
-            "finance-accounting": "harvard",
-        }.get(str(profile.get("templateId") or "ai-engineering"), "engineeringresumes")},
+        "design": resume_design(color_theme),
         "locale": {"language": "mandarin_chinese"},
+        "settings": {"bold_keywords": RESUME_BOLD_KEYWORDS},
     }
 
 
@@ -719,7 +820,7 @@ def render_resume(params: dict[str, Any]) -> dict[str, Any]:
 
     output_path = pathlib.Path(str(params["outputPath"])).resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    data = profile_to_rendercv(dict(params["profile"]))
+    data = profile_to_rendercv(dict(params["profile"]), str(params.get("colorTheme") or "navy"))
     yaml_text = yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
     with tempfile.TemporaryDirectory(prefix="resume-render-") as temporary:
         temporary_path = pathlib.Path(temporary)

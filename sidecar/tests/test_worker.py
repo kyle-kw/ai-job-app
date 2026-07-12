@@ -85,18 +85,46 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(worker.rendercv_date("2024.12"), "2024-12")
         self.assertEqual(worker.rendercv_date("至今", end_date=True), "present")
 
-    def test_role_templates_map_to_distinct_rendercv_themes(self):
+    def test_color_themes_share_one_layout_and_only_change_accent_colors(self):
         profile = worker.base_profile("resume.pdf", "测试", "", "", "", "", "", "", [], [], [])
         expected = {
-            "ai-engineering": "engineeringresumes",
-            "data-analysis": "opal",
-            "finance-accounting": "harvard",
+            "pine": "#176B57",
+            "navy": "#1F407A",
+            "graphite": "#24292F",
         }
-        for template_id, theme in expected.items():
-            profile["templateId"] = template_id
-            self.assertEqual(worker.profile_to_rendercv(profile)["design"]["theme"], theme)
+        layouts = []
+        for color_theme, accent in expected.items():
+            design = worker.profile_to_rendercv(profile, color_theme)["design"]
+            self.assertEqual(design["theme"], "classic")
+            self.assertEqual(design["colors"]["name"], accent)
+            self.assertEqual(design["colors"]["section_titles"], accent)
+            neutral_colors = {**design["colors"]}
+            for key in ("name", "headline", "connections", "section_titles", "links"):
+                neutral_colors[key] = None
+            layouts.append({**design, "colors": neutral_colors})
+        self.assertTrue(all(layout == layouts[0] for layout in layouts[1:]))
 
-    def test_all_role_templates_generate_pdf_files(self):
+    def test_unknown_resume_color_theme_is_rejected(self):
+        profile = worker.base_profile("resume.pdf", "测试", "", "", "", "", "", "", [], [], [])
+        with self.assertRaisesRegex(ValueError, "不支持的简历颜色主题"):
+            worker.profile_to_rendercv(profile, "unknown")
+
+    def test_resume_design_matches_the_reference_rendercv_style(self):
+        profile = worker.base_profile("resume.pdf", "测试", "", "", "", "", "", "", [], [], [])
+        data = worker.profile_to_rendercv(profile)
+        design = data["design"]
+
+        self.assertEqual(design["page"]["top_margin"], "1.2cm")
+        self.assertEqual(design["page"]["left_margin"], "1.35cm")
+        self.assertEqual(design["typography"]["font_family"]["body"], "Microsoft YaHei")
+        self.assertEqual(design["header"]["alignment"], "center")
+        self.assertFalse(design["header"]["connections"]["show_icons"])
+        self.assertEqual(design["header"]["connections"]["separator"], "|")
+        self.assertEqual(design["entries"]["date_and_location_width"], "4.6cm")
+        self.assertEqual(design["templates"]["experience_entry"]["date_and_location_column"], "LOCATION · DATE")
+        self.assertIn("Dify", data["settings"]["bold_keywords"])
+
+    def test_all_color_themes_generate_pdf_files(self):
         profile = worker.base_profile(
             "resume.pdf", "Candidate", "candidate@example.com", "", "Shanghai", "", "Engineer", "Summary",
             [{"id": "skills", "label": "Core", "items": ["Python"]}],
@@ -104,9 +132,12 @@ class WorkerTests(unittest.TestCase):
             [{"id": "education", "institution": "Example University", "area": "Computer Science", "degree": "Bachelor", "degreeDetail": "", "startDate": "2018.09", "endDate": "2022.06", "highlights": []}],
         )
         with tempfile.TemporaryDirectory() as temporary:
-            for template_id in ("ai-engineering", "data-analysis", "finance-accounting"):
-                profile["templateId"] = template_id
-                result = worker.render_resume({"profile": profile, "outputPath": str(pathlib.Path(temporary) / f"{template_id}.pdf")})
+            for color_theme in worker.RESUME_COLOR_THEMES:
+                result = worker.render_resume({
+                    "profile": profile,
+                    "colorTheme": color_theme,
+                    "outputPath": str(pathlib.Path(temporary) / f"{color_theme}.pdf"),
+                })
                 output = pathlib.Path(result["path"])
                 self.assertTrue(output.exists())
                 self.assertGreater(output.stat().st_size, 1_000)

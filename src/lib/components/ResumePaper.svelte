@@ -1,37 +1,51 @@
 <script lang="ts">
-  import { Mail, MapPin, Phone } from 'lucide-svelte';
-  import type { ResumeProfile } from '$lib/types';
+  import type { ResumeColorTheme, ResumeProfile } from '$lib/types';
   import type { ResumeSectionKey, ResumeTemplateSample } from '$lib/resume-templates';
   import { formatDateRange } from '$lib/resume-format';
+  import ResumeKeywordText from './ResumeKeywordText.svelte';
 
   export let resume: ResumeProfile | ResumeTemplateSample;
   export let sections: readonly ResumeSectionKey[];
   export let sample = false;
+  export let colorTheme: ResumeColorTheme = 'navy';
 
-  $: themeClass = resume.templateId === 'data-analysis' ? 'theme-data' : resume.templateId === 'finance-accounting' ? 'theme-finance' : 'theme-it';
+  const themeAccents: Record<ResumeColorTheme, string> = {
+    pine: '#176B57',
+    navy: '#1F407A',
+    graphite: '#24292F'
+  };
+  const themeLinks: Record<ResumeColorTheme, string> = {
+    pine: '#0B7A67',
+    navy: '#005CB8',
+    graphite: '#24292F'
+  };
+  $: accent = themeAccents[colorTheme];
+  $: linkColor = themeLinks[colorTheme];
+  $: websiteLabel = resume.website.replace(/^https?:\/\//, '').replace(/\/$/, '');
   const degreeLabel = (education: { degree: string; degreeDetail?: string }) => education.degree === '其他' ? education.degreeDetail?.trim() || '其他' : education.degree;
 </script>
 
-<article class={`resume-paper ${themeClass} relative mx-auto min-h-[900px] max-w-[620px] overflow-hidden bg-white px-12 py-11 text-[#17201d] shadow-xl`}>
+<article class="resume-paper relative mx-auto min-h-[900px] max-w-[620px] overflow-hidden bg-white px-10 py-9 text-[#111] shadow-xl" style={`--resume-accent: ${accent}; --resume-link: ${linkColor};`} data-color-theme={colorTheme}>
   {#if sample}<div class="sample-watermark" aria-hidden="true">示例内容</div>{/if}
-  <header class="relative border-b-2 border-[#176b57] pb-5">
-    <h1 class="text-[32px] font-bold tracking-[-0.04em] text-[#176b57]">{resume.name}</h1>
-    <p class="mt-1 text-[15px] font-semibold">{resume.headline}</p>
-    <div class="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[9px] text-[#5c6863]">
-      <span class="flex items-center gap-1"><Mail size={10} />{resume.email}</span>
-      <span class="flex items-center gap-1"><Phone size={10} />{resume.phone}</span>
-      <span class="flex items-center gap-1"><MapPin size={10} />{resume.location}</span>
+  <header class="relative pb-1 text-center">
+    <h1 class="text-[30px] font-bold leading-none tracking-[-0.035em]">{resume.name}</h1>
+    <p class="mt-2 text-[13px] font-medium leading-tight">{resume.headline}</p>
+    <div class="resume-contact mt-2 flex flex-wrap justify-center text-[9px] leading-tight">
+      {#if resume.location}<span>{resume.location}</span>{/if}
+      {#if resume.email}<a href={`mailto:${resume.email}`}>{resume.email}</a>{/if}
+      {#if resume.phone}<a href={`tel:${resume.phone}`}>{resume.phone}</a>{/if}
+      {#if resume.website}<a href={resume.website.startsWith('http') ? resume.website : `https://${resume.website}`} target="_blank" rel="noreferrer">{websiteLabel}</a>{/if}
     </div>
   </header>
   {#each sections as section}
     {#if section === 'summary'}
-      <section class="resume-section"><h2>个人简介</h2><p>{resume.summary}</p></section>
+      <section class="resume-section"><h2>个人简介</h2><p><ResumeKeywordText text={resume.summary} /></p></section>
     {:else if section === 'professionalSkills'}
-      <section class="resume-section"><h2>专业技能</h2>{#each resume.professionalSkills as group}<p class="mt-1"><strong>{group.label}：</strong>{group.items.filter(Boolean).join('、')}</p>{/each}</section>
+      <section class="resume-section"><h2>专业技能</h2>{#each resume.professionalSkills as group}<p class="mt-1"><strong>{group.label}：</strong><ResumeKeywordText text={group.items.filter(Boolean).join(', ')} /></p>{/each}</section>
     {:else if section === 'experiences'}
-      <section class="resume-section"><h2>工作经历</h2>{#each resume.experiences as experience}<div class="mb-4"><div class="flex items-baseline justify-between gap-3"><strong>{experience.position} · {experience.company}</strong><span>{formatDateRange(experience.startDate, experience.endDate)}</span></div><ul>{#each experience.highlights as highlight}<li>{highlight}</li>{/each}</ul></div>{/each}</section>
+      <section class="resume-section"><h2>工作经历</h2>{#each resume.experiences as experience}<div class="mb-4"><div class="flex items-baseline justify-between gap-3"><span><strong>{experience.company}</strong>{experience.position ? `，${experience.position}` : ''}</span><span>{experience.location ? `${experience.location} · ` : ''}{formatDateRange(experience.startDate, experience.endDate)}</span></div><ul>{#each experience.highlights as highlight}<li><ResumeKeywordText text={highlight} /></li>{/each}</ul></div>{/each}</section>
     {:else if section === 'projects' && resume.projects.length}
-      <section class="resume-section"><h2>项目经历</h2>{#each resume.projects as project}<div class="mb-4"><div class="flex items-baseline justify-between gap-3"><strong>{project.name}</strong><span>{formatDateRange(project.startDate, project.endDate)}</span></div><p>{project.summary}</p><ul>{#each project.highlights as highlight}<li>{highlight}</li>{/each}</ul></div>{/each}</section>
+      <section class="resume-section"><h2>项目经历</h2>{#each resume.projects as project}<div class="mb-4"><div class="flex items-baseline justify-between gap-3"><strong>{project.name}</strong><span>{formatDateRange(project.startDate, project.endDate)}</span></div><p><ResumeKeywordText text={project.summary} /></p><ul>{#each project.highlights as highlight}<li><ResumeKeywordText text={highlight} /></li>{/each}</ul></div>{/each}</section>
     {:else if section === 'certifications' && resume.certifications.length}
       <section class="resume-section"><h2>证书 / 专业资质</h2>{#each resume.certifications as certification}<p><strong>{certification.name}</strong>{certification.issuer ? ` · ${certification.issuer}` : ''}{certification.date ? ` · ${certification.date}` : ''}</p>{/each}</section>
     {:else if section === 'education'}
@@ -41,23 +55,14 @@
 </article>
 
 <style>
-  .resume-paper { font-family: "Source Sans 3", "PingFang SC", sans-serif; }
-  .resume-section { position: relative; margin-top: 20px; font-size: 10px; line-height: 1.55; }
-  .resume-section h2 { margin-bottom: 8px; border-bottom: 1px solid #aab7b1; padding-bottom: 3px; color: #176b57; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
-  .resume-section ul { margin-top: 5px; list-style: disc; padding-left: 16px; }
+  .resume-paper { font-family: "Microsoft YaHei", "PingFang SC", sans-serif; }
+  .resume-paper header h1, .resume-paper header p { color: var(--resume-accent); }
+  .resume-contact { color: var(--resume-accent); }
+  .resume-contact > :not(:last-child)::after { margin: 0 7px; content: '|'; color: var(--resume-accent); }
+  .resume-section { position: relative; margin-top: 16px; font-size: 10.2px; line-height: 1.58; }
+  .resume-section h2 { margin-bottom: 7px; border-bottom: 1px solid var(--resume-accent); padding-bottom: 2px; color: var(--resume-accent); font-size: 13px; font-weight: 700; letter-spacing: .01em; }
+  .resume-section ul { margin-top: 5px; list-style: disc; padding-left: 15px; }
   .resume-section li { margin-top: 2px; }
-  .theme-it { font-family: "XCharter", "Source Sans 3", "PingFang SC", sans-serif; }
-  .theme-it header { border-color: #111; }
-  .theme-it header h1, .theme-it .resume-section h2 { color: #111; }
-  .theme-data { font-family: "Lato", "Source Sans 3", "PingFang SC", sans-serif; }
-  .theme-data header { border-color: #00645a; text-align: center; }
-  .theme-data header h1, .theme-data .resume-section h2 { color: #00645a; }
-  .theme-data header div { justify-content: center; }
-  .theme-data .resume-section h2 { border-bottom: 0; text-align: center; letter-spacing: .08em; }
-  .theme-finance { font-family: "XCharter", "Source Sans 3", "Songti SC", serif; }
-  .theme-finance header { border-color: #222; text-align: center; }
-  .theme-finance header h1, .theme-finance .resume-section h2 { color: #111; }
-  .theme-finance header div { justify-content: center; }
-  .theme-finance .resume-section h2 { border-bottom: 0; text-align: center; }
-  .sample-watermark { position: absolute; left: 50%; top: 48%; transform: translate(-50%, -50%) rotate(-24deg); color: rgba(23, 107, 87, .08); font-size: 72px; font-weight: 800; letter-spacing: .12em; white-space: nowrap; }
+  .resume-paper a { color: var(--resume-link); }
+  .sample-watermark { position: absolute; left: 50%; top: 48%; transform: translate(-50%, -50%) rotate(-24deg); color: color-mix(in srgb, var(--resume-accent) 8%, transparent); font-size: 72px; font-weight: 800; letter-spacing: .12em; white-space: nowrap; }
 </style>

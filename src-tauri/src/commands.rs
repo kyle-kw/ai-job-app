@@ -1066,6 +1066,7 @@ pub async fn generate_greeting(
 pub async fn render_resume(
     state: State<'_, AppState>,
     output_path: String,
+    color_theme: ResumeColorTheme,
 ) -> Result<RenderResult, String> {
     let resume = state
         .db
@@ -1079,7 +1080,7 @@ pub async fn render_resume(
         std::fs::create_dir_all(parent).map_err(|error| format!("无法创建导出目录：{error}"))?;
     }
     let value = sidecar::request(
-        json!({"op":"render_resume","params":{"profile":resume,"outputPath":output_path}}),
+        json!({"op":"render_resume","params":{"profile":resume,"outputPath":output_path,"colorTheme":color_theme}}),
     )
     .await?;
     let rendered_path = value

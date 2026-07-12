@@ -302,8 +302,11 @@ export interface RenderResult {
   fileName: string;
 }
 
+export type ResumeColorTheme = 'pine' | 'navy' | 'graphite';
+
 export interface RenderResumeRequest {
   outputPath: string;
+  colorTheme: ResumeColorTheme;
 }
 
 export interface ReportBucket {
