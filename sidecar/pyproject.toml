@@ -3,7 +3,7 @@ name = "ai-job-app-sidecar"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-  "requests>=2.32,<3",
+  "requests>=2.34.2,<3",
   "websocket-client>=1.8,<2",
   "pypdf>=5,<7",
   "python-docx>=1.1,<2",
