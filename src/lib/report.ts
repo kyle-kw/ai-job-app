@@ -36,13 +36,13 @@ function median(values: number[]): number | null {
   return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
-function roleOf(title: string): string {
+export function classifyJobRole(title: string): string {
   const value = title.toLocaleLowerCase();
   if (/架构|专家|负责人|lead/.test(value)) return '架构 / 专家';
   if (/产品|product/.test(value)) return '产品';
   if (/测试|质量|qa/.test(value)) return '测试 / 质量';
   if (/全栈|前端|frontend|full.?stack/.test(value)) return '前端 / 全栈';
-  if (/agent|智能体|大模型|llm|rag|人工智能|ai /.test(value)) return 'AI / Agent 开发';
+  if (/agent|智能体|大模型|llm|rag|人工智能/.test(value) || /(^|[^a-z])ai([^a-z]|$)/i.test(value)) return 'AI / Agent 开发';
   if (/算法|数据科学|机器学习|nlp|数据分析/.test(value)) return '算法 / 数据';
   if (/后端|java|golang|rust|服务端/.test(value)) return '后端开发';
   return '其他岗位';
@@ -73,7 +73,7 @@ export function buildClientJobDataReport(jobs: Job[], selectedKeywords: ReportKe
     if (job.company.trim()) companies.add(job.company.trim());
     increment(counters.experience, fallback(job.experience));
     increment(counters.degree, fallback(job.degree));
-    increment(counters.roles, roleOf(job.title));
+    increment(counters.roles, classifyJobRole(job.title));
     increment(counters.cities, cityOf(job.location));
     increment(counters.industries, fallback(job.industry));
     increment(counters.scales, fallback(job.companyScale));

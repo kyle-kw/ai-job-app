@@ -9,6 +9,7 @@
     resumeFactGuidance
   } from '$lib/resume-facts';
   import type { ResumeFact, ResumeFactCategory, ResumeProfile } from '$lib/types';
+  import { modalFocus } from '$lib/modal-focus';
 
   export let resume: ResumeProfile;
   export let saving = false;
@@ -151,8 +152,8 @@
 </div>
 
 {#if editorOpen}
-  <button class="fixed inset-0 z-[80] bg-black/30 backdrop-blur-sm" on:click={() => editorOpen = false} aria-label="关闭事实编辑器"></button>
-  <div class="fixed left-1/2 top-1/2 z-[81] w-[560px] max-w-[calc(100vw-32px)] -translate-x-1/2 -translate-y-1/2 panel p-6" role="dialog" aria-modal="true" aria-labelledby="fact-editor-title">
+  <button class="fixed inset-0 z-[80] bg-black/30 backdrop-blur-sm" tabindex="-1" on:click={() => editorOpen = false} aria-label="关闭事实编辑器"></button>
+  <div class="fixed left-1/2 top-1/2 z-[81] w-[560px] max-w-[calc(100vw-32px)] -translate-x-1/2 -translate-y-1/2 panel p-6" role="dialog" aria-modal="true" aria-labelledby="fact-editor-title" tabindex="-1" use:modalFocus={{ close: () => editorOpen = false }}>
     <div class="flex items-start justify-between gap-4"><div><p class="eyebrow">事实清单</p><h3 id="fact-editor-title" class="mt-1 text-xl font-semibold">{editingFact ? '编辑事实' : '新增事实'}</h3></div><button class="btn-icon" on:click={() => editorOpen = false} aria-label="关闭"><X size={16} /></button></div>
     <div class="mt-5 space-y-4">
       <label><span class="label">类别</span><select class="select" value={formCategory} on:change={(event) => updateCategory(event.currentTarget.value as ResumeFactCategory)}>{#each RESUME_FACT_CATEGORIES as category}<option value={category.value}>{category.label}</option>{/each}</select></label>

@@ -57,8 +57,9 @@
     llmResult = null;
     llmError = '';
     try {
-      llmResult = await backend.testProvider({ ...llmDraft, apiKey: apiKey || undefined });
-      if (llmResult.ok) {
+      const saved = await backend.saveProvider({ ...llmDraft, apiKey: apiKey || undefined });
+      llmResult = saved.testResult;
+      if (saved.testResult.ok) {
         await refresh();
         const verified = $snapshot.providers.find((provider) => provider.id === llmDraft?.id);
         if (verified) llmDraft = structuredClone(verified);

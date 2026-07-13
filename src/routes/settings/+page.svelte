@@ -54,10 +54,7 @@
     try {
       result = await backend.testProvider({ ...draft, apiKey: apiKey || undefined });
       if (result.ok) {
-        await refresh();
-        syncDraft();
-        apiKey = '';
-        showToast('模型连接已验证');
+        showToast('连接测试通过，配置尚未保存');
       }
     } catch (error) {
       errorMessage = error instanceof Error ? error.message : String(error);
@@ -69,14 +66,15 @@
   async function saveProvider() {
     if (!draft) return;
     saving = true;
+    result = null;
     errorMessage = '';
     try {
-      await backend.saveProvider({ ...draft, apiKey: apiKey || undefined });
+      const saved = await backend.saveProvider({ ...draft, apiKey: apiKey || undefined });
+      result = saved.testResult;
       await refresh();
       syncDraft();
       apiKey = '';
-      result = null;
-      showToast('模型配置已保存，请重新测试连接');
+      showToast('模型配置已验证并保存');
     } catch (error) {
       errorMessage = error instanceof Error ? error.message : String(error);
     } finally {
@@ -141,10 +139,10 @@
             <label><span class="label">Base URL</span><input class="input" bind:value={draft.baseUrl} placeholder="https://token-plan-sgp.xiaomimimo.com/v1" /><p class="mt-1.5 text-[11px] body-muted">请求发送到 <code>{draft.baseUrl || 'Base URL'}/chat/completions</code></p></label>
             <div class="grid grid-cols-2 gap-4"><label><span class="label">模型</span><input class="input" bind:value={draft.model} placeholder="mimo-v2.5" /></label><label><span class="label">设为默认</span><select class="select" bind:value={draft.isDefault}><option value={true}>是</option><option value={false}>否</option></select></label></div>
 
-            {#if result}<div class="flex items-start gap-3 rounded-xl border p-3" style={`border-color:${result.ok ? 'var(--success)' : 'var(--danger)'}; background:${result.ok ? 'var(--brand-faint)' : 'var(--danger-soft)'}`}><svelte:component this={result.ok ? CheckCircle2 : XCircle} size={17} class={result.ok ? 'text-success' : 'text-danger'} /><div><p class="text-sm font-semibold">{result.message}</p><p class="mt-0.5 text-[11px] body-muted">延迟 {result.latencyMs} ms · 结构化输出 {result.structuredOutput ? '正常' : '未通过'} · {result.visionMessage}</p></div></div>{/if}
+            {#if result}<div class="flex items-start gap-3 rounded-xl border p-3" style={`border-color:${result.ok ? 'var(--success)' : 'var(--danger)'}; background:${result.ok ? 'var(--brand-faint)' : 'var(--danger-soft)'}`}><svelte:component this={result.ok ? CheckCircle2 : XCircle} size={17} class={result.ok ? 'text-success' : 'text-danger'} /><div><p class="text-sm font-semibold">{result.message}</p><p class="mt-0.5 text-[11px] body-muted">延迟 {result.latencyMs} ms · 结构化输出 {result.structuredOutput ? '正常' : '未通过'} · {result.visionMessage}</p>{#if result.ok}<p class="mt-1 text-[11px] text-warning">本次仅测试连接；点击“验证并保存”后配置才会生效。</p>{/if}</div></div>{/if}
             {#if errorMessage}<div class="rounded-xl border p-3 text-xs leading-5 text-danger" style="border-color: var(--danger); background: var(--danger-soft);">{errorMessage}</div>{/if}
 
-            <div class="flex justify-end gap-2"><button class="btn" disabled={testing || !draft.baseUrl || !draft.model || (!apiKey && !draft.apiKeyRef)} on:click={test}><TestTube2 size={15} />{testing ? '正在测试…' : '测试连接'}</button><button class="btn-primary" disabled={saving || !draft.baseUrl || !draft.model} on:click={saveProvider}><Save size={15} />{saving ? '正在保存…' : '保存配置'}</button></div>
+            <div class="flex justify-end gap-2"><button class="btn" disabled={testing || saving || !draft.baseUrl || !draft.model || (!apiKey && !draft.apiKeyRef)} on:click={test}><TestTube2 size={15} />{testing ? '正在测试…' : '测试连接'}</button><button class="btn-primary" disabled={saving || testing || !draft.baseUrl || !draft.model || (!apiKey && !draft.apiKeyRef)} on:click={saveProvider}><Save size={15} />{saving ? '正在验证并保存…' : '验证并保存'}</button></div>
           </div>
         </div>
       {/if}

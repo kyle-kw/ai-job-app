@@ -11,13 +11,16 @@
   import { backend } from '$lib/services/backend';
   import { RESUME_TEMPLATES, resumeTemplate, suggestedProfessionalSkillGroups } from '$lib/resume-templates';
   import { safeResumeFileName } from '$lib/resume-format';
+  import { readResumeAsBase64 } from '$lib/resume-import';
+  import { modalFocus } from '$lib/modal-focus';
   import type { ResumeTemplateDefinition } from '$lib/resume-templates';
   import { importResume, refresh, savePreferences, snapshot } from '$lib/stores/app';
   import type { JobPreferences, ResumeColorTheme, ResumeCommitResult, ResumeProfile, ResumeTemplateId } from '$lib/types';
 
   let activeSection: 'content' | 'preferences' | 'facts' = 'content';
   let draft: ResumeProfile | null = null;
-  let draftId = '';
+  let baselineResume: ResumeProfile | null = null;
+  let pendingExternalResume: ResumeProfile | null = null;
   let saving = false;
   let importing = false;
   let rendering = false;
@@ -41,11 +44,6 @@
     { id: 'graphite', label: '石墨黑', description: '克制简洁，强调黑白打印效果', accent: '#24292F' }
   ];
 
-  $: if ($snapshot.resume && $snapshot.resume.id !== draftId) {
-    draft = structuredClone($snapshot.resume);
-    draftId = $snapshot.resume.id;
-    syncPreferenceTexts($snapshot.resume.preferences);
-  }
   $: draftPreferences = draft ? {
     ...draft.preferences,
     targetRoles: split(targetRolesText),
@@ -55,7 +53,14 @@
     hardConstraints: split(constraintsText)
   } : null;
   $: effectiveDraft = draft && draftPreferences ? { ...draft, preferences: draftPreferences } : null;
-  $: hasUnsavedChanges = Boolean(effectiveDraft && $snapshot.resume && JSON.stringify(effectiveDraft) !== JSON.stringify($snapshot.resume));
+  $: hasUnsavedChanges = Boolean(effectiveDraft && baselineResume && JSON.stringify(effectiveDraft) !== JSON.stringify(baselineResume));
+  $: if ($snapshot.resume) {
+    const incoming = $snapshot.resume;
+    const isNewResume = !baselineResume || incoming.id !== baselineResume.id;
+    const isNewVersion = Boolean(baselineResume && incoming.id === baselineResume.id && incoming.version > baselineResume.version);
+    if (isNewResume || (isNewVersion && !hasUnsavedChanges)) adoptResume(incoming);
+    else if (isNewVersion && hasUnsavedChanges) pendingExternalResume = structuredClone(incoming);
+  }
   $: aiReady = Boolean($snapshot.readiness.ai && $snapshot.providers.some((provider) => provider.isDefault && provider.verified));
   $: previewSections = draft ? resumeTemplate(draft.templateId).sectionOrder : [];
 
@@ -68,12 +73,17 @@
 
   function adoptResume(resume: ResumeProfile) {
     draft = structuredClone(resume);
-    draftId = resume.id;
+    baselineResume = structuredClone(resume);
+    pendingExternalResume = null;
     syncPreferenceTexts(resume.preferences);
   }
 
   async function save(): Promise<boolean> {
     if (!effectiveDraft) return false;
+    if (pendingExternalResume) {
+      showToast('主简历已有新版本，请先载入最新版本再继续保存');
+      return false;
+    }
     saving = true;
     try {
       const saved = await backend.saveResume(structuredClone(effectiveDraft));
@@ -90,13 +100,44 @@
   async function savePrefs() {
     if (!draft) return;
     const preferences: JobPreferences = { ...draft.preferences, targetRoles: split(targetRolesText), cities: split(citiesText), energizingTasks: split(energizingText), drainingTasks: split(drainingText), hardConstraints: split(constraintsText) };
-    await savePreferences(preferences); draft.preferences = preferences; showToast('求职偏好已保存，匹配置信度将更新');
+    try {
+      await savePreferences(preferences);
+      draft.preferences = preferences;
+      if (baselineResume) baselineResume = { ...baselineResume, preferences: structuredClone(preferences) };
+      showToast('求职偏好已保存，匹配置信度将更新');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    }
   }
 
   async function pickResume(event: Event) {
     const file = (event.currentTarget as HTMLInputElement).files?.[0]; if (!file) return;
     importing = true;
-    try { const bytes = new Uint8Array(await file.arrayBuffer()); let binary = ''; for (const byte of bytes) binary += String.fromCharCode(byte); await importResume({ fileName: file.name, contentBase64: btoa(binary) }); showToast('正在后台解析新简历'); } finally { importing = false; }
+    try {
+      const contentBase64 = await readResumeAsBase64(file);
+      await importResume({ fileName: file.name, contentBase64 });
+      showToast('正在后台解析新简历');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      importing = false;
+      (event.currentTarget as HTMLInputElement).value = '';
+    }
+  }
+
+  async function requestImport() {
+    assistantOpen = false;
+    if (hasUnsavedChanges) {
+      const shouldSave = window.confirm('检测到未保存的简历修改。点击“确定”先保存；点击“取消”可选择放弃修改或终止导入。');
+      if (shouldSave) {
+        if (!await save()) return;
+      } else {
+        const shouldDiscard = window.confirm('放弃当前未保存修改并重新导入？点击“取消”返回继续编辑。');
+        if (!shouldDiscard) return;
+        if ($snapshot.resume) adoptResume($snapshot.resume);
+      }
+    }
+    fileInput?.click();
   }
 
   function renderPdf() {
@@ -156,11 +197,6 @@
     adoptResume(event.detail.resume);
     await refresh();
     showToast(action === 'applied' ? `AI 修改已应用，已创建版本 ${event.detail.resume.version}` : `已恢复并创建版本 ${event.detail.resume.version}`);
-  }
-
-  function requestImport() {
-    assistantOpen = false;
-    fileInput?.click();
   }
 
   async function createFromTemplate(templateId: ResumeTemplateId) {
@@ -238,17 +274,24 @@
     <div><p class="eyebrow">MASTER RESUME</p><h2 class="page-title mt-1">一份可信的主简历</h2><p class="mt-1 text-sm body-muted">结构化内容是唯一真源；手工修改和 AI 修改都会保存为可恢复的本地版本。</p></div>
     <div class="flex flex-wrap justify-end gap-2">
       <input bind:this={fileInput} class="hidden" type="file" accept=".pdf,.docx,.yaml,.yml" on:change={pickResume} />
-      <button class="btn" disabled={importing} on:click={() => fileInput.click()}><Upload size={15} />{importing ? '正在解析…' : draft ? '重新导入' : '导入简历'}</button>
+      <button class="btn" disabled={importing} on:click={requestImport}><Upload size={15} />{importing ? '正在解析…' : draft ? '重新导入' : '导入简历'}</button>
       <button class="btn" on:click={openVersionHistory}><History size={15} />版本历史</button>
       <button class="btn" on:click={() => openAssistant(null)}><Sparkles size={15} />AI 对话</button>
       <button class="btn" disabled={!draft || rendering} on:click={renderPdf}><Download size={15} />{rendering ? '正在渲染…' : '导出 PDF'}</button>
-      <button class="btn-primary" disabled={!draft || saving || !hasUnsavedChanges} on:click={save}><Save size={15} />{saving ? '正在保存…' : hasUnsavedChanges ? '保存修改' : '已保存'}</button>
+      <button class="btn-primary" disabled={!draft || saving || !hasUnsavedChanges || Boolean(pendingExternalResume)} on:click={save}><Save size={15} />{saving ? '正在保存…' : hasUnsavedChanges ? '保存修改' : '已保存'}</button>
     </div>
   </div>
 
+  {#if pendingExternalResume}
+    <div class="mb-4 flex items-center justify-between gap-4 rounded-xl border px-4 py-3" role="alert" style="border-color: var(--warning); background: var(--warning-soft);">
+      <div><p class="text-sm font-semibold">检测到新的简历版本 {pendingExternalResume.version}</p><p class="mt-1 text-xs body-muted">当前本地修改尚未覆盖；载入新版本会放弃这些未保存修改。</p></div>
+      <button class="btn shrink-0" on:click={() => pendingExternalResume && adoptResume(pendingExternalResume)}>载入最新版本</button>
+    </div>
+  {/if}
+
   {#if !draft}
     <div class="panel min-h-[520px] p-8">
-      <div class="mx-auto max-w-4xl text-center"><span class="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-2xl bg-brand-soft text-brand"><FileText size={27} /></span><h3 class="text-xl font-semibold">导入现有简历，或从可信空白模板开始</h3><p class="mt-2 text-sm leading-6 body-muted">模板只提供章节顺序与专业技能分组，不会预填或虚构个人经历。</p><button class="btn-primary mt-5" on:click={() => fileInput.click()}><Upload size={16} />选择简历文件</button></div>
+      <div class="mx-auto max-w-4xl text-center"><span class="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-2xl bg-brand-soft text-brand"><FileText size={27} /></span><h3 class="text-xl font-semibold">导入现有简历，或从可信空白模板开始</h3><p class="mt-2 text-sm leading-6 body-muted">模板只提供章节顺序与专业技能分组，不会预填或虚构个人经历。</p><button class="btn-primary mt-5" on:click={requestImport}><Upload size={16} />选择简历文件</button></div>
       <div class="mx-auto mt-8 grid max-w-5xl grid-cols-4 gap-4">
         {#each RESUME_TEMPLATES as template}
           <article class="flex min-h-[170px] flex-col rounded-2xl border p-5 text-left transition hover:-translate-y-0.5" style="border-color: var(--line); background: var(--panel-soft);">
@@ -312,8 +355,8 @@
 </div>
 
 {#if exportDialogOpen}
-  <button class="fixed inset-0 z-[75] bg-black/35 backdrop-blur-sm" on:click={() => exportDialogOpen = false} aria-label="关闭导出颜色选择"></button>
-  <div class="fixed left-1/2 top-1/2 z-[76] w-[760px] max-w-[calc(100vw-32px)] -translate-x-1/2 -translate-y-1/2 panel p-6" role="dialog" aria-modal="true" aria-labelledby="export-color-title">
+  <button class="fixed inset-0 z-[75] bg-black/35 backdrop-blur-sm" tabindex="-1" on:click={() => exportDialogOpen = false} aria-label="关闭导出颜色选择"></button>
+  <div class="fixed left-1/2 top-1/2 z-[76] w-[760px] max-w-[calc(100vw-32px)] -translate-x-1/2 -translate-y-1/2 panel p-6" role="dialog" aria-modal="true" aria-labelledby="export-color-title" tabindex="-1" use:modalFocus={{ close: () => exportDialogOpen = false, canClose: !rendering }}>
     <div class="flex items-start justify-between gap-4"><div><p class="eyebrow">PDF 导出</p><h3 id="export-color-title" class="mt-1 text-xl font-semibold">选择颜色主题</h3><p class="mt-1 text-xs body-muted">PDF 将沿用右侧预览版式；颜色只影响本次导出，不会修改主简历或章节顺序。</p></div><button class="btn-icon" on:click={() => exportDialogOpen = false} aria-label="关闭">×</button></div>
     <div class="mt-6 grid grid-cols-3 gap-4">
       {#each exportColorThemes as theme}
@@ -345,8 +388,8 @@
 />
 
 {#if previewTemplate?.sample}
-  <button class="fixed inset-0 z-[70] bg-black/35 backdrop-blur-sm" on:click={() => previewTemplate = null} aria-label="关闭模板示例"></button>
-  <div class="fixed inset-y-5 left-1/2 z-[71] flex w-[760px] max-w-[calc(100vw-32px)] -translate-x-1/2 flex-col overflow-hidden panel" role="dialog" aria-modal="true" aria-labelledby="template-preview-title">
+  <button class="fixed inset-0 z-[70] bg-black/35 backdrop-blur-sm" tabindex="-1" on:click={() => previewTemplate = null} aria-label="关闭模板示例"></button>
+  <div class="fixed inset-y-5 left-1/2 z-[71] flex w-[760px] max-w-[calc(100vw-32px)] -translate-x-1/2 flex-col overflow-hidden panel" role="dialog" aria-modal="true" aria-labelledby="template-preview-title" tabindex="-1" use:modalFocus={{ close: () => previewTemplate = null }}>
     <div class="flex shrink-0 items-start justify-between gap-4 border-b px-6 py-5" style="border-color: var(--line);">
       <div><p class="eyebrow">完整示例</p><h3 id="template-preview-title" class="mt-1 text-xl font-semibold">{previewTemplate.label}简历</h3><p class="mt-1 text-xs body-muted">3–5 年社招候选人写法参考</p></div>
       <button class="btn-icon" on:click={() => previewTemplate = null} aria-label="关闭">×</button>

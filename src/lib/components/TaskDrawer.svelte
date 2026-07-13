@@ -2,6 +2,7 @@
   import { CheckCircle2, ChevronDown, ChevronRight, CircleDashed, Clock3, TerminalSquare, X, XCircle } from 'lucide-svelte';
   import { completedTasks, runningTasks, snapshot } from '$lib/stores/app';
   import AdvancedLog from './AdvancedLog.svelte';
+  import { modalFocus } from '$lib/modal-focus';
   import type { TaskRun } from '$lib/types';
 
   export let open = false;
@@ -12,11 +13,11 @@
 </script>
 
 {#if open}
-  <button class="fixed inset-0 z-40 bg-black/20 backdrop-blur-[1px]" on:click={() => open = false} aria-label="关闭任务中心"></button>
-  <aside class="fixed bottom-0 right-0 top-0 z-50 flex w-[430px] flex-col border-l bg-panel shadow-2xl" style="border-color: var(--line); animation: slide-in .22s ease-out;">
+  <button class="fixed inset-0 z-40 bg-black/20 backdrop-blur-[1px]" tabindex="-1" on:click={() => open = false} aria-label="关闭任务中心"></button>
+  <div class="fixed bottom-0 right-0 top-0 z-50 flex w-[430px] flex-col border-l bg-panel shadow-2xl" style="border-color: var(--line); animation: slide-in .22s ease-out;" role="dialog" aria-modal="true" aria-labelledby="task-drawer-title" tabindex="-1" use:modalFocus={{ close: () => open = false }}>
     <div class="flex h-[74px] items-center justify-between border-b px-5" style="border-color: var(--line);">
       <div>
-        <h2 class="text-base font-semibold">任务中心</h2>
+        <h2 id="task-drawer-title" class="text-base font-semibold">任务中心</h2>
         <p class="mt-0.5 text-xs body-muted">切换页面不会中断；岗位抓取期间请勿关闭应用</p>
       </div>
       <button class="btn-icon" on:click={() => open = false} aria-label="关闭"><X size={18} /></button>
@@ -77,5 +78,5 @@
         {/if}
       {/if}
     </div>
-  </aside>
+  </div>
 {/if}

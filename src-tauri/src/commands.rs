@@ -43,6 +43,19 @@ const SUPPORTED_SCRAPE_CITIES: [&str; 25] = [
     "福州",
 ];
 
+const MAX_RESUME_FILE_BYTES: usize = 25 * 1024 * 1024;
+const MAX_RESUME_BASE64_BYTES: usize = MAX_RESUME_FILE_BYTES.div_ceil(3) * 4;
+
+fn validate_resume_import_size(encoded_bytes: usize, decoded_bytes: Option<usize>) -> Result<(), String> {
+    if encoded_bytes > MAX_RESUME_BASE64_BYTES
+        || decoded_bytes.is_some_and(|size| size > MAX_RESUME_FILE_BYTES)
+    {
+        Err("简历文件不能超过 25 MiB。".into())
+    } else {
+        Ok(())
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ResumeExtractionOutput {
@@ -746,9 +759,11 @@ pub async fn import_resume(
     if !["pdf", "docx", "yaml", "yml"].contains(&extension.as_str()) {
         return Err("仅支持 PDF、DOCX、YAML 和 YML 文件。".into());
     }
+    validate_resume_import_size(payload.content_base64.len(), None)?;
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(payload.content_base64.as_bytes())
         .map_err(|error| format!("简历文件编码无效：{error}"))?;
+    validate_resume_import_size(payload.content_base64.len(), Some(bytes.len()))?;
     let imports = state.data_dir.join("imports");
     std::fs::create_dir_all(&imports).map_err(|error| error.to_string())?;
     let input_path = imports.join(format!("{}.{}", Uuid::new_v4(), extension));
@@ -1095,82 +1110,6 @@ pub async fn render_resume(
 }
 
 #[tauri::command]
-pub fn save_provider(
-    state: State<'_, AppState>,
-    mut provider: AiProviderConfig,
-) -> Result<Vec<AiProviderConfig>, String> {
-    let existing = state.db.provider_by_id(&provider.id)?;
-    if provider.kind == "openrouter" {
-        return Err("OpenRouter 预设已移除，请使用自定义模型。".into());
-    }
-    let changed_connection = existing
-        .as_ref()
-        .is_none_or(|old| old.base_url != provider.base_url || old.model != provider.model);
-    if let Some(key) = provider.api_key.take().filter(|key| !key.trim().is_empty()) {
-        provider.api_key_ref = Some(llm::store_secret(&provider.id, &key)?);
-        provider.verified = false;
-        provider.vision_verified = false;
-        provider.last_test_error = None;
-        provider.last_tested_at = None;
-    } else if let Some(existing) = &existing {
-        provider.api_key_ref = existing.api_key_ref.clone();
-    }
-    if changed_connection {
-        provider.verified = false;
-        provider.vision_verified = false;
-        provider.last_tested_at = None;
-        provider.last_test_error = None;
-    }
-    state.db.save_provider(&provider)?;
-    state.db.list_providers()
-}
-
-#[tauri::command]
-pub async fn test_provider(
-    state: State<'_, AppState>,
-    mut provider: AiProviderConfig,
-) -> Result<ProviderTestResult, String> {
-    let existing = state.db.provider_by_id(&provider.id)?;
-    if provider
-        .api_key
-        .as_deref()
-        .is_none_or(|key| key.trim().is_empty())
-    {
-        provider.api_key_ref = existing.as_ref().and_then(|item| item.api_key_ref.clone());
-    }
-    let now = time::shanghai_rfc3339();
-    let result = match llm::test(&provider).await {
-        Ok(result) => result,
-        Err(error) => ProviderTestResult {
-            ok: false,
-            message: redact(&error),
-            latency_ms: 0,
-            structured_output: false,
-            vision_supported: false,
-            vision_message: "未进行图片能力测试".into(),
-        },
-    };
-    if result.ok {
-        if let Some(key) = provider.api_key.take().filter(|key| !key.trim().is_empty()) {
-            provider.api_key_ref = Some(llm::store_secret(&provider.id, &key)?);
-        }
-        provider.verified = true;
-        provider.vision_verified = result.vision_supported;
-        provider.last_tested_at = Some(now);
-        provider.last_test_error = None;
-    } else {
-        provider.api_key = None;
-        provider.api_key_ref = existing.and_then(|item| item.api_key_ref);
-        provider.verified = false;
-        provider.vision_verified = false;
-        provider.last_tested_at = Some(now);
-        provider.last_test_error = Some(result.message.clone());
-    }
-    state.db.save_provider(&provider)?;
-    Ok(result)
-}
-
-#[tauri::command]
 pub fn save_settings(
     state: State<'_, AppState>,
     mut settings: AppSettings,
@@ -1400,6 +1339,13 @@ fn redact(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resume_import_size_limit_checks_encoded_and_decoded_payloads() {
+        assert!(validate_resume_import_size(MAX_RESUME_BASE64_BYTES, Some(MAX_RESUME_FILE_BYTES)).is_ok());
+        assert!(validate_resume_import_size(MAX_RESUME_BASE64_BYTES + 1, None).is_err());
+        assert!(validate_resume_import_size(4, Some(MAX_RESUME_FILE_BYTES + 1)).is_err());
+    }
 
     #[test]
     fn profile_fact_merge_covers_data_and_finance_sections_without_duplicates() {

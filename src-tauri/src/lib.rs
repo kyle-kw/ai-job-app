@@ -4,6 +4,7 @@ mod commands;
 mod db;
 mod llm;
 mod models;
+mod providers;
 mod scoring;
 mod sidecar;
 mod skills;
@@ -55,8 +56,8 @@ pub fn run() {
             assistant::restore_resume_version,
             commands::generate_greeting,
             commands::render_resume,
-            commands::save_provider,
-            commands::test_provider,
+            providers::save_provider,
+            providers::test_provider,
             commands::save_settings,
         ])
         .run(tauri::generate_context!())

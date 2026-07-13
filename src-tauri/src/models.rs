@@ -583,6 +583,13 @@ pub struct ProviderTestResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ProviderSaveResult {
+    pub providers: Vec<AiProviderConfig>,
+    pub test_result: ProviderTestResult,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FitAnalysisResult {
     pub job: Job,
     pub cache_hit: bool,

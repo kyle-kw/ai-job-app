@@ -28,6 +28,9 @@
     {#each nav as item}
       <a
         href={item.href}
+        aria-label={$t(item.label)}
+        aria-current={active(item.href) ? 'page' : undefined}
+        title={$t(item.label)}
         class:active={active(item.href)}
         class="nav-item flex h-11 items-center gap-3 rounded-xl px-3 text-sm font-medium transition"
       >
@@ -45,7 +48,7 @@
       </div>
       <p class="text-[11px] leading-5 body-muted">岗位与简历保存在本机，仅主动使用 AI 时发送必要上下文。</p>
     </div>
-    <a href="/settings" class:active={active('/settings')} class="nav-item flex h-11 items-center gap-3 rounded-xl px-3 text-sm font-medium transition">
+    <a href="/settings" aria-label={$t('nav.settings')} aria-current={active('/settings') ? 'page' : undefined} title={$t('nav.settings')} class:active={active('/settings')} class="nav-item flex h-11 items-center gap-3 rounded-xl px-3 text-sm font-medium transition">
       <Settings2 size={18} strokeWidth={active('/settings') ? 2.25 : 1.8} />
       <span class="nav-copy">{$t('nav.settings')}</span>
     </a>

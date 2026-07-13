@@ -4,6 +4,7 @@
   import { backend } from '$lib/services/backend';
   import { resumeTemplate } from '$lib/resume-templates';
   import { displayDegree, formatDateRange } from '$lib/resume-format';
+  import { modalFocus } from '$lib/modal-focus';
   import type { ResumeCommitResult, ResumeProfile, ResumeVersionDetail, ResumeVersionSource, ResumeVersionSummary } from '$lib/types';
 
   export let open = false;
@@ -43,10 +44,6 @@
   function close() {
     if (restoring) return;
     open = false;
-  }
-
-  function handleKeydown(event: KeyboardEvent) {
-    if (open && event.key === 'Escape') close();
   }
 
   async function loadVersions(preferredId = '') {
@@ -103,11 +100,9 @@
   }
 </script>
 
-<svelte:window on:keydown={handleKeydown} />
-
 {#if open}
-  <button class="fixed inset-0 z-[70] bg-black/25 backdrop-blur-[1px]" aria-label="关闭简历版本历史" on:click={close}></button>
-  <aside class="fixed bottom-0 right-0 top-0 z-[80] flex w-[min(900px,calc(100vw-28px))] flex-col border-l bg-panel shadow-2xl" style="border-color: var(--line); animation: slide-in .22s ease-out;" aria-labelledby="resume-version-title">
+  <button class="fixed inset-0 z-[70] bg-black/25 backdrop-blur-[1px]" tabindex="-1" aria-label="关闭简历版本历史" on:click={close}></button>
+  <div class="fixed bottom-0 right-0 top-0 z-[80] flex w-[min(900px,calc(100vw-28px))] flex-col border-l bg-panel shadow-2xl" style="border-color: var(--line); animation: slide-in .22s ease-out;" role="dialog" aria-modal="true" aria-labelledby="resume-version-title" tabindex="-1" use:modalFocus={{ close, canClose: !restoring }}>
     <header class="flex h-[74px] shrink-0 items-center justify-between border-b px-6" style="border-color: var(--line);">
       <div><h2 id="resume-version-title" class="text-base font-semibold">主简历版本历史</h2><p class="mt-0.5 text-xs body-muted">每次保存、导入、AI 应用和恢复都会创建不可变版本。</p></div>
       <button class="btn-icon" aria-label="关闭" disabled={restoring} on:click={close}><X size={18} /></button>
@@ -183,7 +178,7 @@
     {#if error}
       <div class="absolute bottom-5 left-[320px] right-5 flex gap-2 rounded-xl border p-3 text-xs shadow-lg" style="border-color: var(--line); background: var(--danger-soft);"><AlertCircle size={14} class="shrink-0 text-danger" /><span><strong>版本操作失败：</strong>{error}</span></div>
     {/if}
-  </aside>
+  </div>
 {/if}
 
 <style>

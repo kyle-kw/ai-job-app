@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { ArrowUpRight, BriefcaseBusiness, Check, CheckCircle2, ChevronDown, Clipboard, Filter, Info, MapPin, MessageCircle, RefreshCw, Search, Sparkles, X, XCircle } from 'lucide-svelte';
+  import { ArrowUpRight, BriefcaseBusiness, Check, CheckCircle2, ChevronDown, Clipboard, Filter, Info, MapPin, MessageCircle, Search, Sparkles, X, XCircle } from 'lucide-svelte';
   import { page } from '$app/stores';
   import FitScore from '$lib/components/FitScore.svelte';
+  import JobSearchDialog from '$lib/components/JobSearchDialog.svelte';
   import {
     COMPANY_SCALE_FILTER_OPTIONS,
     SALARY_FILTER_OPTIONS,
@@ -13,12 +14,6 @@
   import { latestSuccessfulScrapeKeyword } from '$lib/scrape-history';
   import { refresh, snapshot, startScrape } from '$lib/stores/app';
   import type { Job, SearchSpec } from '$lib/types';
-
-  const SCRAPE_CITIES = [
-    '北京', '上海', '广州', '深圳', '杭州', '天津', '西安', '苏州', '武汉', '厦门', '长沙', '成都', '郑州',
-    '重庆', '佛山', '合肥', '济南', '青岛', '南京', '东莞', '昆明', '南昌', '石家庄', '宁波', '福州'
-  ] as const;
-  const SCRAPE_PAGE_OPTIONS = [1, 2, 3, 4, 5] as const;
 
   let selectedId = '';
   let query = '';
@@ -59,9 +54,7 @@
   $: detailExtractionRunning = extractionStarting || $snapshot.tasks.some((task) => task.kind === 'job-detail-extraction' && (task.state === 'queued' || task.state === 'running'));
   $: fitBatchRunning = batchStarting || $snapshot.tasks.some((task) => task.kind === 'fit' && (task.state === 'queued' || task.state === 'running'));
   $: scrapeTaskRunning = scraping || $snapshot.tasks.some((task) => task.kind === 'scrape' && (task.state === 'queued' || task.state === 'running'));
-  $: scrapeDuration = searchSpec.pages === 3 ? '60 分钟（约 1 小时）' : `${searchSpec.pages * 20} 分钟`;
   $: hasActiveFilters = Boolean(query.trim() || minScore || onlyNew || salaryFilter || companyScaleFilter);
-  $: keywordMissing = !searchSpec.keyword.trim();
 
   function showToast(message: string) {
     toast = message;
@@ -335,24 +328,7 @@
   </section>
 </div>
 
-{#if searchDialogOpen}
-  <button class="fixed inset-0 z-40 bg-black/25 backdrop-blur-sm" on:click={() => searchDialogOpen = false} aria-label="关闭"></button>
-  <div class="fixed left-1/2 top-1/2 z-50 w-[640px] -translate-x-1/2 -translate-y-1/2 panel p-6">
-    <div class="mb-5 flex items-start justify-between"><div><p class="eyebrow">BOSS 直聘</p><h3 class="mt-1 text-xl font-semibold">抓取新岗位</h3><p class="mt-1 text-xs body-muted">自动连接专用 Chrome、确认登录、抓详情并去重保存。</p></div><button class="btn-icon" on:click={() => searchDialogOpen = false}><X size={17} /></button></div>
-    <div class="grid grid-cols-2 gap-4">
-      <label><span class="label">关键词</span><input class="input" bind:value={searchSpec.keyword} placeholder="例如：数据分析、财务会计" required aria-required="true" /><span class="mt-1 block min-h-[16px] text-[11px] text-warning">{keywordMissing ? '请输入岗位关键词后开始抓取。' : ''}</span></label>
-      <label><span class="label">城市</span><select class="select" bind:value={searchSpec.city}>{#each SCRAPE_CITIES as city}<option value={city}>{city}</option>{/each}</select></label>
-      <label><span class="label">抓取页数</span><select class="select" bind:value={searchSpec.pages}>{#each SCRAPE_PAGE_OPTIONS as pages}<option value={pages}>{pages} 页{pages === 1 ? '（推荐）' : ''}</option>{/each}</select></label>
-      <label><span class="label">经验要求</span><select class="select" bind:value={searchSpec.experience}><option value="">不限</option><option value="104">1–3 年</option><option value="105">3–5 年</option><option value="106">5–10 年</option></select></label>
-      <label><span class="label">薪资范围</span><select class="select" bind:value={searchSpec.salary}>{#each SALARY_FILTER_OPTIONS as option}<option value={option.value}>{option.label}</option>{/each}</select></label>
-      <label><span class="label">公司规模</span><select class="select" bind:value={searchSpec.companyScale}>{#each COMPANY_SCALE_FILTER_OPTIONS as option}<option value={option.value}>{option.label}</option>{/each}</select></label>
-    </div>
-    <div class="mt-5 rounded-xl border px-4 py-3" style="border-color: color-mix(in srgb, #b7791f 35%, var(--line)); background: var(--warning-soft);">
-      <div class="flex items-start gap-2"><Info size={16} class="mt-0.5 shrink-0 text-warning" /><div><p class="text-sm font-semibold">预计耗时：{scrapeDuration}</p><p class="mt-1 text-xs leading-5 body-muted">抓取期间请勿关闭应用；可以切换页面，任务不会中断。实际耗时受网络和岗位数量影响。</p></div></div>
-    </div>
-    <div class="mt-5 flex items-center justify-between gap-4"><p class="flex items-center gap-2 text-xs body-muted"><Info size={14} />每次抓取都会检查登录；失效时请在自动打开的窗口登录。</p><button class="btn-primary shrink-0" disabled={scrapeTaskRunning || keywordMissing} on:click={runScrape}>{#if scraping}<RefreshCw size={15} class="animate-spin" />正在启动{:else if scrapeTaskRunning}<RefreshCw size={15} class="animate-spin" />已有任务运行{:else}<Search size={15} />开始抓取{/if}</button></div>
-  </div>
-{/if}
+<JobSearchDialog bind:open={searchDialogOpen} bind:searchSpec {scraping} {scrapeTaskRunning} onStart={runScrape} />
 
 {#if toast}<div class="fixed bottom-6 left-1/2 z-[60] -translate-x-1/2 rounded-xl bg-[#1d2824] px-4 py-2.5 text-sm font-medium text-white shadow-xl animate-lift">{toast}</div>{/if}
 

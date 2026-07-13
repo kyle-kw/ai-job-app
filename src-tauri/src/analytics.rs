@@ -418,8 +418,9 @@ fn classify_role(title: &str) -> String {
         "前端 / 全栈".to_string()
     } else if contains_any(
         &value,
-        &["agent", "智能体", "大模型", "llm", "rag", "人工智能", "ai "],
-    ) {
+        &["agent", "智能体", "大模型", "llm", "rag", "人工智能"],
+    ) || has_ascii_ai_marker(&value)
+    {
         "AI / Agent 开发".to_string()
     } else if contains_any(&value, &["算法", "数据科学", "机器学习", "nlp", "数据分析"])
     {
@@ -432,6 +433,15 @@ fn classify_role(title: &str) -> String {
     } else {
         "其他岗位".to_string()
     }
+}
+
+fn has_ascii_ai_marker(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.windows(2).enumerate().any(|(index, pair)| {
+        pair.eq_ignore_ascii_case(b"ai")
+            && (index == 0 || !bytes[index - 1].is_ascii_alphabetic())
+            && (index + 2 == bytes.len() || !bytes[index + 2].is_ascii_alphabetic())
+    })
 }
 
 fn contains_any(value: &str, items: &[&str]) -> bool {
@@ -489,7 +499,7 @@ fn median(values: &[f64]) -> Option<f64> {
     let mut values = values.to_vec();
     values.sort_by(f64::total_cmp);
     let middle = values.len() / 2;
-    Some(if values.len() % 2 == 0 {
+    Some(if values.len().is_multiple_of(2) {
         (values[middle - 1] + values[middle]) / 2.0
     } else {
         values[middle]
@@ -547,6 +557,14 @@ fn render_bars(rows: &[ReportBucket]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ai_role_marker_supports_chinese_titles_without_matching_substrings() {
+        assert_eq!(classify_role("AI工程师"), "AI / Agent 开发");
+        assert_eq!(classify_role("AI 应用开发"), "AI / Agent 开发");
+        assert_eq!(classify_role("Paid Media Specialist"), "其他岗位");
+        assert_eq!(classify_role("Rail Platform Engineer"), "其他岗位");
+    }
 
     fn sample_job(id: &str, salary: &str, skills: &[&str]) -> Job {
         Job {

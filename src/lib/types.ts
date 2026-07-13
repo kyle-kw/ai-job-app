@@ -285,6 +285,11 @@ export interface ProviderTestResult {
   visionMessage: string;
 }
 
+export interface ProviderSaveResult {
+  providers: AiProviderConfig[];
+  testResult: ProviderTestResult;
+}
+
 export interface FitAnalysisResult {
   job: Job;
   cacheHit: boolean;

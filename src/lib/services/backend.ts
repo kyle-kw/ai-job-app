@@ -16,6 +16,7 @@ import type {
   JobDataReport,
   JobPreferences,
   ProviderTestResult,
+  ProviderSaveResult,
   ReportKeyword,
   RenderResult,
   RenderResumeRequest,
@@ -432,14 +433,21 @@ export const backend = {
     return invoke('restore_resume_version', { versionId, expectedVersion });
   },
 
-  async saveProvider(provider: AiProviderConfig): Promise<AiProviderConfig[]> {
+  async saveProvider(provider: AiProviderConfig): Promise<ProviderSaveResult> {
     if (browserMode()) {
+      const existing = mockState.providers.find((item) => item.id === provider.id);
+      const ok = Boolean((provider.apiKey || existing?.apiKeyRef) && provider.baseUrl && provider.model);
+      if (!ok) throw new Error('请填写 API Key、Base URL 和模型名');
+      const testResult: ProviderTestResult = {
+        ok: true, message: '连接成功，结构化输出正常', latencyMs: 684,
+        structuredOutput: true, visionSupported: true, visionMessage: '图片识别能力正常'
+      };
       mockState.providers = mockState.providers.map((item) => item.id === provider.id
-        ? { ...provider, apiKey: undefined, apiKeyRef: provider.apiKey ? `keychain://${provider.id}` : item.apiKeyRef, verified: false, visionVerified: false }
+        ? { ...provider, apiKey: undefined, apiKeyRef: provider.apiKey ? `keychain://${provider.id}` : item.apiKeyRef, verified: true, visionVerified: true, lastTestedAt: new Date().toISOString(), lastTestError: null }
         : provider.isDefault ? { ...item, isDefault: false } : item);
-      mockState.readiness.ai = false;
-      mockState.configuration.llm = { state: 'needs_setup', message: '模型配置已变化，请重新测试。' };
-      return structuredClone(mockState.providers);
+      mockState.readiness.ai = true;
+      mockState.configuration.llm = { state: 'ready', message: '默认模型已验证。', lastAttemptAt: new Date().toISOString() };
+      return structuredClone({ providers: mockState.providers, testResult });
     }
     return invoke('save_provider', { provider });
   },
@@ -447,15 +455,8 @@ export const backend = {
   async testProvider(provider: AiProviderConfig): Promise<ProviderTestResult> {
     if (browserMode()) {
       await new Promise((resolve) => window.setTimeout(resolve, 700));
-      const ok = Boolean(provider.apiKey && provider.baseUrl && provider.model);
-      if (ok) {
-        mockState.providers = mockState.providers.map((item) => item.id === provider.id ? { ...item, ...provider, apiKey: undefined, verified: true, visionVerified: true, lastTestedAt: new Date().toISOString() } : item);
-        mockState.readiness.ai = true;
-        mockState.configuration.llm = { state: 'ready', message: '默认模型已验证。', lastAttemptAt: new Date().toISOString() };
-      } else {
-        mockState.readiness.ai = false;
-        mockState.configuration.llm = { state: 'failed', message: '请填写 API Key、Base URL 和模型名', lastAttemptAt: new Date().toISOString() };
-      }
+      const existing = mockState.providers.find((item) => item.id === provider.id);
+      const ok = Boolean((provider.apiKey || existing?.apiKeyRef) && provider.baseUrl && provider.model);
       return { ok, message: ok ? '连接成功，结构化输出正常' : '请填写 API Key、Base URL 和模型名', latencyMs: 684, structuredOutput: ok, visionSupported: ok, visionMessage: ok ? '图片识别能力正常' : '未通过图片识别测试' };
     }
     return invoke('test_provider', { provider });

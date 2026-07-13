@@ -217,7 +217,7 @@ fn parse_json_content(content: &str) -> Result<Value, String> {
     serde_json::from_str(&trimmed[start..=end]).map_err(|error| format!("模型 JSON 无效：{error}"))
 }
 
-fn redact(value: &str) -> String {
+pub(crate) fn redact(value: &str) -> String {
     let mut output = String::with_capacity(value.len());
     for token in value.split_whitespace() {
         if token.starts_with("sk-") || token.starts_with("tp-") {

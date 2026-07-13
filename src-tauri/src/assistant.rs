@@ -330,10 +330,10 @@ pub async fn generate_interview_preparation(
         resume.as_ref(),
         &provider_fingerprint,
     );
-    if !force.unwrap_or(false) {
-        if state.db.interview_preparation_by_key(&cache_key)?.is_some() {
-            return interview_preparation_state(&state.db, &keyword_keys);
-        }
+    if !force.unwrap_or(false)
+        && state.db.interview_preparation_by_key(&cache_key)?.is_some()
+    {
+        return interview_preparation_state(&state.db, &keyword_keys);
     }
     let input = json!({
         "report": {

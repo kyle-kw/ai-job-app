@@ -2,6 +2,7 @@
   import { createEventDispatcher } from 'svelte';
   import { AlertCircle, BriefcaseBusiness, Check, LoaderCircle, Send, Sparkles, X } from 'lucide-svelte';
   import { backend } from '$lib/services/backend';
+  import { modalFocus } from '$lib/modal-focus';
   import type {
     Job,
     ResumeChatMessage,
@@ -48,10 +49,6 @@
   function close() {
     if (sending || applying) return;
     open = false;
-  }
-
-  function handleKeydown(event: KeyboardEvent) {
-    if (open && event.key === 'Escape') close();
   }
 
   function formatValue(value: unknown) {
@@ -158,11 +155,9 @@
   }
 </script>
 
-<svelte:window on:keydown={handleKeydown} />
-
 {#if open}
-  <button class="fixed inset-0 z-[70] bg-black/30 backdrop-blur-sm" aria-label="关闭简历 AI 对话" on:click={close}></button>
-  <div class="fixed bottom-5 right-5 top-5 z-[80] flex w-[min(720px,calc(100vw-40px))] flex-col overflow-hidden rounded-2xl border bg-panel shadow-2xl" style="border-color: var(--line);" role="dialog" aria-modal="true" aria-labelledby="resume-chat-title">
+  <button class="fixed inset-0 z-[70] bg-black/30 backdrop-blur-sm" tabindex="-1" aria-label="关闭简历 AI 对话" on:click={close}></button>
+  <div class="fixed bottom-5 right-5 top-5 z-[80] flex w-[min(720px,calc(100vw-40px))] flex-col overflow-hidden rounded-2xl border bg-panel shadow-2xl" style="border-color: var(--line);" role="dialog" aria-modal="true" aria-labelledby="resume-chat-title" tabindex="-1" use:modalFocus={{ close, canClose: !sending && !applying }}>
     <header class="flex shrink-0 items-start justify-between gap-5 border-b px-6 py-5" style="border-color: var(--line);">
       <div>
         <div class="flex items-center gap-2 text-brand"><Sparkles size={17} /><p class="eyebrow">RESUME ASSISTANT</p></div>
