@@ -10,6 +10,7 @@ import type {
   ApplyResumeEditsRequest,
   AppSettings,
   BootstrapSnapshot,
+  DeleteJobsResult,
   FitAnalysisResult,
   ImportResumePayload,
   InterviewPreparationState,
@@ -52,6 +53,9 @@ const mockJobsForKeywords = (keywordKeys: string[]) => {
   const ids = new Set(keywordKeys.flatMap((key) => mockKeywordJobs[key] ?? []));
   return mockJobsState.filter((job) => ids.has(job.id));
 };
+const currentMockReportKeywords = () => mockReportKeywords
+  .map((keyword) => ({ ...keyword, jobCount: mockJobsForKeywords([keyword.key]).length }))
+  .filter((keyword) => keyword.jobCount > 0);
 const mockListeners = new Set<(event: TaskEvent) => void>();
 let mockPreparationState: InterviewPreparationState = {
   status: 'missing', hasProvider: false, hasResume: true, preparation: null
@@ -126,6 +130,13 @@ export const backend = {
     return invoke('list_job_options', { query });
   },
 
+  async listJobCities(): Promise<string[]> {
+    if (browserMode()) {
+      return [...new Set(mockJobsState.map((job) => job.location.split('·', 1)[0]?.trim()).filter(Boolean) as string[])].sort((left, right) => left.localeCompare(right, 'zh-CN'));
+    }
+    return invoke('list_job_cities');
+  },
+
   async getJob(jobId: string): Promise<Job> {
     if (browserMode()) {
       const job = mockJobsState.find((item) => item.id === jobId);
@@ -135,22 +146,48 @@ export const backend = {
     return invoke('get_job', { jobId });
   },
 
+  async deleteJob(jobId: string): Promise<DeleteJobsResult> {
+    if (browserMode()) {
+      const before = mockJobsState.length;
+      mockJobsState = mockJobsState.filter((job) => job.id !== jobId);
+      const deletedCount = before - mockJobsState.length;
+      if (!deletedCount) throw new Error('岗位不存在或已被删除。');
+      return { deletedCount };
+    }
+    return invoke('delete_job', { jobId });
+  },
+
+  async deleteMissingDescriptionJobs(query: JobQuery): Promise<DeleteJobsResult> {
+    if (browserMode()) {
+      const { cursor: _cursor, ...filters } = query;
+      const ids = new Set(filterJobs(mockJobsState, { ...filters, missingDescription: true }).map((job) => job.id));
+      mockJobsState = mockJobsState.filter((job) => !ids.has(job.id));
+      return { deletedCount: ids.size };
+    }
+    return invoke('delete_missing_description_jobs', { query });
+  },
+
   async listReportKeywords(): Promise<ReportKeyword[]> {
-    if (browserMode()) return structuredClone(mockReportKeywords);
+    if (browserMode()) return structuredClone(currentMockReportKeywords());
     return invoke('list_report_keywords');
   },
 
   async getJobDataReport(keywordKeys: string[]): Promise<JobDataReport> {
     if (browserMode()) {
-      const selected = mockReportKeywords.filter((keyword) => keywordKeys.includes(keyword.key));
+      const selected = currentMockReportKeywords().filter((keyword) => keywordKeys.includes(keyword.key));
       return buildClientJobDataReport(mockJobsForKeywords(keywordKeys), selected);
     }
     return invoke('get_job_data_report', { keywordKeys });
   },
 
-  async exportJobDataReport(keywordKeys: string[]): Promise<RenderResult> {
-    if (browserMode()) return { path: 'browser-demo://岗位数据报告.html', fileName: '岗位数据报告_demo.html' };
-    return invoke('export_job_data_report', { keywordKeys });
+  async exportJobsJson(outputPath: string): Promise<RenderResult> {
+    if (browserMode()) return { path: outputPath || 'browser-demo://岗位数据.json', fileName: outputPath.split(/[\\/]/).at(-1) || '岗位数据_demo.json' };
+    return invoke('export_jobs_json', { outputPath });
+  },
+
+  async exportJobDataReport(keywordKeys: string[], outputPath: string): Promise<RenderResult> {
+    if (browserMode()) return { path: outputPath || 'browser-demo://岗位数据报告.html', fileName: outputPath.split(/[\\/]/).at(-1) || '岗位数据报告_demo.html' };
+    return invoke('export_job_data_report', { keywordKeys, outputPath });
   },
 
   async getInterviewPreparationState(keywordKeys: string[]): Promise<InterviewPreparationState> {
@@ -171,7 +208,7 @@ export const backend = {
       if (!scopedJobs.length) throw new Error('所选关键词暂无岗位数据');
       if (!mockState.readiness.ai) throw new Error('请先配置并验证默认模型');
       if (!force && mockPreparationState.status === 'fresh') return structuredClone(mockPreparationState);
-      const report = buildClientJobDataReport(scopedJobs, mockReportKeywords.filter((keyword) => keywordKeys.includes(keyword.key)));
+      const report = buildClientJobDataReport(scopedJobs, currentMockReportKeywords().filter((keyword) => keywordKeys.includes(keyword.key)));
       mockPreparationState = {
         status: 'fresh', hasProvider: true, hasResume: Boolean(mockState.resume),
         reason: mockState.resume ? null : 'no_resume', generatedAt: new Date().toISOString(),

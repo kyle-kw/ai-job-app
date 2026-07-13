@@ -16,10 +16,6 @@ pub fn shanghai_clock() -> String {
     shanghai_now().format("%H:%M:%S").to_string()
 }
 
-pub fn shanghai_file_stamp() -> String {
-    shanghai_now().format("%Y%m%d_%H%M%S").to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

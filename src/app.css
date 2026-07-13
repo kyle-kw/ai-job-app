@@ -77,6 +77,8 @@ a { color: inherit; text-decoration: none; }
   .btn:focus-visible, .input:focus-visible, .select:focus-visible, .textarea:focus-visible { outline: 3px solid var(--focus); outline-offset: 1px; }
   .btn-primary { @apply btn border-transparent text-white; background: var(--brand); }
   .btn-primary:hover:not(:disabled) { background: var(--brand-hover); color: #fff; border-color: transparent; }
+  .btn-danger { @apply btn; border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); color: var(--danger); background: var(--danger-soft); }
+  .btn-danger:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
   .btn-ghost { @apply inline-flex h-9 items-center justify-center gap-2 rounded-xl px-3 text-sm font-medium transition; }
   .btn-ghost:hover { background: var(--panel-soft); }
   .btn-icon { @apply inline-flex h-10 w-10 items-center justify-center rounded-xl border transition; border-color: var(--line); background: var(--panel); }

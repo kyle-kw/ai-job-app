@@ -280,6 +280,8 @@ export interface JobQuery {
   onlyNew: boolean;
   salary: '' | '402' | '403' | '404' | '405' | '406' | '407';
   companyScale: '' | '301' | '302' | '303' | '304' | '305' | '306';
+  city: string;
+  missingDescription: boolean;
   cursor?: string | null;
 }
 
@@ -326,6 +328,10 @@ export interface ImportResumePayload {
 export interface RenderResult {
   path: string;
   fileName: string;
+}
+
+export interface DeleteJobsResult {
+  deletedCount: number;
 }
 
 export type ResumeColorTheme = 'pine' | 'navy' | 'graphite';

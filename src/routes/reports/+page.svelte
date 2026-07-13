@@ -20,6 +20,7 @@
     WalletCards
   } from 'lucide-svelte';
   import ReportBars from '$lib/components/ReportBars.svelte';
+  import { chooseLocalExportPath, localExportStamp } from '$lib/export-file';
   import { backend } from '$lib/services/backend';
   import type { InterviewPreparationState, JobDataReport, RenderResult } from '$lib/types';
 
@@ -34,7 +35,7 @@
   type KeywordReportBackend = {
     listReportKeywords: () => Promise<ReportKeyword[]>;
     getJobDataReport: (keywordKeys: string[]) => Promise<JobDataReport>;
-    exportJobDataReport: (keywordKeys: string[]) => Promise<RenderResult>;
+    exportJobDataReport: (keywordKeys: string[], outputPath: string) => Promise<RenderResult>;
     getInterviewPreparationState: (keywordKeys: string[]) => Promise<InterviewPreparationState>;
     generateInterviewPreparation: (keywordKeys: string[], force?: boolean) => Promise<InterviewPreparationState>;
   };
@@ -196,7 +197,15 @@
     exporting = true;
     exportMessage = '';
     try {
-      const result = await reportBackend.exportJobDataReport([...selectedKeywordKeys]);
+      const fileName = `岗位数据报告_${localExportStamp()}.html`;
+      const outputPath = await chooseLocalExportPath({
+        title: '导出岗位数据报告',
+        fileName,
+        filterName: 'HTML 报告',
+        extension: 'html'
+      });
+      if (!outputPath) return;
+      const result = await reportBackend.exportJobDataReport([...selectedKeywordKeys], outputPath);
       exportMessage = `已导出：${result.path}`;
     } catch (reason) {
       exportMessage = reason instanceof Error ? reason.message : String(reason);

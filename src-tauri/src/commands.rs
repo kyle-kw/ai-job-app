@@ -217,11 +217,35 @@ pub fn list_job_options(
 }
 
 #[tauri::command]
+pub fn list_job_cities(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    state.db.list_job_cities()
+}
+
+#[tauri::command]
 pub fn get_job(state: State<'_, AppState>, job_id: String) -> Result<Job, String> {
     state
         .db
         .get_job(&job_id)?
         .ok_or_else(|| "Job does not exist.".to_string())
+}
+
+#[tauri::command]
+pub fn delete_job(state: State<'_, AppState>, job_id: String) -> Result<DeleteJobsResult, String> {
+    let deleted_count = state.db.delete_job(&job_id)?;
+    if deleted_count == 0 {
+        return Err("岗位不存在或已被删除。".into());
+    }
+    Ok(DeleteJobsResult { deleted_count })
+}
+
+#[tauri::command]
+pub fn delete_missing_description_jobs(
+    state: State<'_, AppState>,
+    query: JobQuery,
+) -> Result<DeleteJobsResult, String> {
+    Ok(DeleteJobsResult {
+        deleted_count: state.db.delete_missing_description_jobs(&query)?,
+    })
 }
 
 #[tauri::command]
@@ -238,18 +262,35 @@ pub fn get_job_data_report(
 }
 
 #[tauri::command]
+pub fn export_jobs_json(
+    state: State<'_, AppState>,
+    output_path: String,
+) -> Result<RenderResult, String> {
+    let jobs = state.db.list_jobs()?;
+    if jobs.is_empty() {
+        return Err("暂无岗位可导出。".into());
+    }
+    let output_path = validate_export_path(output_path, "json", "岗位 JSON")?;
+    let payload = serialize_jobs_json(&jobs)?;
+    std::fs::write(&output_path, payload).map_err(|error| format!("无法导出岗位 JSON：{error}"))?;
+    render_result(output_path)
+}
+
+fn serialize_jobs_json(jobs: &[Job]) -> Result<Vec<u8>, String> {
+    serde_json::to_vec_pretty(jobs).map_err(|error| format!("无法生成岗位 JSON：{error}"))
+}
+
+#[tauri::command]
 pub fn export_job_data_report(
     state: State<'_, AppState>,
     keyword_keys: Vec<String>,
+    output_path: String,
 ) -> Result<RenderResult, String> {
     let report = selected_job_data_report(&state.db, &keyword_keys)?;
     if report.total_jobs == 0 {
         return Err("所选关键词暂无岗位，请调整筛选或先完成抓取。".into());
     }
-    let exports = state.data_dir.join("exports");
-    std::fs::create_dir_all(&exports).map_err(|error| error.to_string())?;
-    let file_name = format!("岗位数据报告_{}.html", time::shanghai_file_stamp());
-    let output_path = exports.join(&file_name);
+    let output_path = validate_export_path(output_path, "html", "岗位数据报告")?;
     let mut html = analytics::render_html(&report);
     if let Some(preparation) =
         crate::assistant::fresh_interview_preparation(&state.db, &keyword_keys)?
@@ -258,6 +299,40 @@ pub fn export_job_data_report(
     }
     std::fs::write(&output_path, html.as_bytes())
         .map_err(|error| format!("无法导出岗位数据报告：{error}"))?;
+    render_result(output_path)
+}
+
+fn validate_export_path(
+    output_path: String,
+    expected_extension: &str,
+    label: &str,
+) -> Result<PathBuf, String> {
+    if output_path.trim().is_empty() {
+        return Err(format!("请选择{label}的保存位置。"));
+    }
+    let output_path = PathBuf::from(output_path);
+    let extension_matches = output_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.eq_ignore_ascii_case(expected_extension));
+    if !extension_matches {
+        return Err(format!("{label}必须保存为 .{expected_extension} 文件。"));
+    }
+    if let Some(parent) = output_path
+        .parent()
+        .filter(|value| !value.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    Ok(output_path)
+}
+
+fn render_result(output_path: PathBuf) -> Result<RenderResult, String> {
+    let file_name = output_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| "导出文件名无效。".to_string())?
+        .to_string();
     Ok(RenderResult {
         path: output_path.to_string_lossy().to_string(),
         file_name,
@@ -1504,6 +1579,48 @@ mod tests {
         drop(ImportArtifacts::new(input.clone()));
         assert!(!input.exists());
         assert!(!pages.exists());
+    }
+
+    #[test]
+    fn job_json_export_is_pretty_utf8_camel_case_and_validates_extensions() {
+        let job: Job = serde_json::from_value(json!({
+            "id":"job-1","source":"boss","externalId":"external-1","title":"AI 工程师",
+            "company":"示例公司","salary":"20-30K","location":"上海·浦东新区",
+            "experience":"3-5年","degree":"本科","companyScale":"100-499人",
+            "companyStage":"B轮","industry":"人工智能","skills":["Python"],"welfare":[],
+            "description":"负责 AI 平台研发","sourceUrl":"https://example.com/job",
+            "firstSeen":"2026-01-01","lastSeen":"2026-01-02","isNew":true
+        }))
+        .unwrap();
+        let bytes = serialize_jobs_json(&[job]).unwrap();
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(text.starts_with("[\n"));
+        assert!(text.contains("AI 工程师"));
+        let value: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value[0]["externalId"], "external-1");
+        assert!(value[0].get("external_id").is_none());
+
+        let directory = tempfile::tempdir().unwrap();
+        assert!(validate_export_path(
+            directory
+                .path()
+                .join("jobs.JSON")
+                .to_string_lossy()
+                .to_string(),
+            "json",
+            "岗位 JSON"
+        )
+        .is_ok());
+        assert!(validate_export_path(
+            directory
+                .path()
+                .join("jobs.html")
+                .to_string_lossy()
+                .to_string(),
+            "json",
+            "岗位 JSON"
+        )
+        .is_err());
     }
 
     #[test]

@@ -176,6 +176,10 @@ pub struct JobQuery {
     #[serde(default)]
     pub company_scale: String,
     #[serde(default)]
+    pub city: String,
+    #[serde(default)]
+    pub missing_description: bool,
+    #[serde(default)]
     pub cursor: Option<String>,
 }
 
@@ -625,6 +629,12 @@ pub struct FitAnalysisResult {
 pub struct RenderResult {
     pub path: String,
     pub file_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteJobsResult {
+    pub deleted_count: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

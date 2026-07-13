@@ -46,6 +46,8 @@ export interface LocalJobFilters {
   onlyNew: boolean;
   salary: SalaryFilterCode;
   companyScale: CompanyScaleFilterCode;
+  city: string;
+  missingDescription: boolean;
 }
 
 export interface FilterableJob {
@@ -54,8 +56,14 @@ export interface FilterableJob {
   skills: string[];
   salary: string;
   companyScale: string;
+  location: string;
+  description: string;
   isNew: boolean;
   fit?: { overallScore: number } | null;
+}
+
+export function jobCity(location: string): string {
+  return location.split('·', 1)[0]?.trim() ?? '';
 }
 
 export function parseSalaryRange(value: string): NumericRange | null {
@@ -119,6 +127,8 @@ export function filterJobs<T extends FilterableJob>(jobs: T[], filters: LocalJob
       && (job.fit?.overallScore ?? 0) >= filters.minScore
       && (!filters.onlyNew || job.isNew)
       && matchesSalaryFilter(job.salary, filters.salary)
-      && matchesCompanyScaleFilter(job.companyScale, filters.companyScale);
+      && matchesCompanyScaleFilter(job.companyScale, filters.companyScale)
+      && (!filters.city || jobCity(job.location) === filters.city)
+      && (!filters.missingDescription || !job.description.trim());
   });
 }

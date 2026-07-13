@@ -57,6 +57,7 @@ struct JobQueryMetadata {
     salary_min: Option<f64>,
     salary_max: Option<f64>,
     company_scale_code: String,
+    city: String,
     is_new: i64,
     fit_score: Option<i64>,
     has_description: i64,
@@ -74,6 +75,7 @@ impl JobQueryMetadata {
             salary_min,
             salary_max,
             company_scale_code: normalize_company_scale_code(&job.company_scale),
+            city: job_city(&job.location),
             is_new: i64::from(job.is_new),
             fit_score: job.fit.as_ref().map(|fit| fit.overall_score),
             has_description: i64::from(!job.description.trim().is_empty()),
@@ -200,6 +202,7 @@ impl Database {
         self.migrate_v2()?;
         self.migrate_v3()?;
         self.migrate_v4()?;
+        self.migrate_v5()?;
         self.recover_interrupted_tasks()?;
         Ok(())
     }
@@ -535,6 +538,70 @@ impl Database {
         Ok(())
     }
 
+    fn migrate_v5(&self) -> Result<(), String> {
+        let connection = self.connect()?;
+        let already_applied = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version=5)",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(|error| error.to_string())?;
+        if already_applied {
+            return Ok(());
+        }
+        let has_city = {
+            let mut statement = connection
+                .prepare("PRAGMA table_info(jobs)")
+                .map_err(|error| error.to_string())?;
+            let found = statement
+                .query_map([], |row| row.get::<_, String>(1))
+                .map_err(|error| error.to_string())?
+                .filter_map(Result::ok)
+                .any(|name| name == "city");
+            found
+        };
+        if !has_city {
+            connection
+                .execute(
+                    "ALTER TABLE jobs ADD COLUMN city TEXT NOT NULL DEFAULT ''",
+                    [],
+                )
+                .map_err(|error| error.to_string())?;
+        }
+        let locations = {
+            let mut statement = connection
+                .prepare("SELECT id,location FROM jobs")
+                .map_err(|error| error.to_string())?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(|error| error.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| error.to_string())?;
+            rows
+        };
+        for (id, location) in locations {
+            connection
+                .execute(
+                    "UPDATE jobs SET city=?1 WHERE id=?2",
+                    params![job_city(&location), id],
+                )
+                .map_err(|error| error.to_string())?;
+        }
+        connection
+            .execute("CREATE INDEX IF NOT EXISTS idx_jobs_city ON jobs(city)", [])
+            .map_err(|error| error.to_string())?;
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (5, datetime('now'))",
+                [],
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
     pub fn list_jobs(&self) -> Result<Vec<Job>, String> {
         let connection = self.connect()?;
         let mut statement = connection
@@ -641,6 +708,18 @@ impl Database {
             .map_err(|error| error.to_string())
     }
 
+    pub fn list_job_cities(&self) -> Result<Vec<String>, String> {
+        let connection = self.connect()?;
+        let mut statement = connection
+            .prepare("SELECT DISTINCT city FROM jobs WHERE city<>'' ORDER BY city COLLATE NOCASE")
+            .map_err(|error| error.to_string())?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|error| error.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())
+    }
+
     pub fn job_ids_for_query(&self, query: &JobQuery) -> Result<Vec<String>, String> {
         let mut query = query.clone();
         query.cursor = None;
@@ -662,6 +741,29 @@ impl Database {
         self.list_json(
             "SELECT payload_json FROM jobs WHERE has_description=1 AND has_structured_details=0 ORDER BY last_seen DESC",
         )
+    }
+
+    pub fn delete_job(&self, job_id: &str) -> Result<i64, String> {
+        let connection = self.connect()?;
+        let changed = connection
+            .execute("DELETE FROM jobs WHERE id=?1", [job_id])
+            .map_err(|error| error.to_string())?;
+        Ok(changed as i64)
+    }
+
+    pub fn delete_missing_description_jobs(&self, query: &JobQuery) -> Result<i64, String> {
+        let mut query = query.clone();
+        query.cursor = None;
+        query.missing_description = true;
+        let (where_clause, values) = job_query_where(&query, false)?;
+        let connection = self.connect()?;
+        let changed = connection
+            .execute(
+                &format!("DELETE FROM jobs WHERE {where_clause}"),
+                params_from_iter(values.iter()),
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(changed as i64)
     }
 
     pub fn list_report_keywords(&self) -> Result<Vec<ReportKeyword>, String> {
@@ -813,8 +915,8 @@ impl Database {
         let meta = JobQueryMetadata::from_job(job);
         let changed = connection
             .execute(
-                "UPDATE jobs SET payload_json=?1,last_seen=?2,search_text=?3,salary_min=?4,salary_max=?5,company_scale_code=?6,query_is_new=?7,fit_score=?8,has_description=?9,has_structured_details=?10 WHERE id=?11",
-                params![payload, job.last_seen, meta.search_text, meta.salary_min, meta.salary_max, meta.company_scale_code, meta.is_new, meta.fit_score, meta.has_description, meta.has_structured_details, job.id],
+                "UPDATE jobs SET payload_json=?1,last_seen=?2,search_text=?3,salary_min=?4,salary_max=?5,company_scale_code=?6,city=?7,query_is_new=?8,fit_score=?9,has_description=?10,has_structured_details=?11 WHERE id=?12",
+                params![payload, job.last_seen, meta.search_text, meta.salary_min, meta.salary_max, meta.company_scale_code, meta.city, meta.is_new, meta.fit_score, meta.has_description, meta.has_structured_details, job.id],
             )
             .map_err(|error| error.to_string())?;
         if changed == 0 {
@@ -1262,16 +1364,16 @@ fn upsert_job_in_transaction(
     let meta = JobQueryMetadata::from_job(&job);
     transaction
         .execute(
-            r#"INSERT INTO jobs(id,source,external_key,fingerprint,title,company,location,first_seen,last_seen,payload_json,search_text,salary_min,salary_max,company_scale_code,query_is_new,fit_score,has_description,has_structured_details)
-               VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)
+            r#"INSERT INTO jobs(id,source,external_key,fingerprint,title,company,location,first_seen,last_seen,payload_json,search_text,salary_min,salary_max,company_scale_code,city,query_is_new,fit_score,has_description,has_structured_details)
+               VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19)
                ON CONFLICT(source, external_key) DO UPDATE SET
                  fingerprint=excluded.fingerprint, title=excluded.title, company=excluded.company,
                  location=excluded.location,last_seen=excluded.last_seen,payload_json=excluded.payload_json,
                  search_text=excluded.search_text,salary_min=excluded.salary_min,salary_max=excluded.salary_max,
-                 company_scale_code=excluded.company_scale_code,query_is_new=excluded.query_is_new,
+                 company_scale_code=excluded.company_scale_code,city=excluded.city,query_is_new=excluded.query_is_new,
                  fit_score=excluded.fit_score,has_description=excluded.has_description,
                  has_structured_details=excluded.has_structured_details"#,
-            params![job.id,job.source,external_key,fingerprint,job.title,job.company,job.location,job.first_seen,job.last_seen,payload,meta.search_text,meta.salary_min,meta.salary_max,meta.company_scale_code,meta.is_new,meta.fit_score,meta.has_description,meta.has_structured_details],
+            params![job.id,job.source,external_key,fingerprint,job.title,job.company,job.location,job.first_seen,job.last_seen,payload,meta.search_text,meta.salary_min,meta.salary_max,meta.company_scale_code,meta.city,meta.is_new,meta.fit_score,meta.has_description,meta.has_structured_details],
         )
         .map_err(|error| error.to_string())?;
     if let Some(keyword) = keyword {
@@ -1339,6 +1441,15 @@ fn escaped_like_pattern(value: &str) -> String {
     )
 }
 
+fn job_city(location: &str) -> String {
+    location
+        .split('·')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_string()
+}
+
 fn push_job_condition(
     conditions: &mut Vec<String>,
     values: &mut Vec<SqlValue>,
@@ -1382,6 +1493,17 @@ fn job_query_where(
             "company_scale_code=?",
             query.company_scale.trim().to_string().into(),
         );
+    }
+    if !query.city.trim().is_empty() {
+        push_job_condition(
+            &mut conditions,
+            &mut values,
+            "city=?",
+            query.city.trim().to_string().into(),
+        );
+    }
+    if query.missing_description {
+        conditions.push("has_description=0".into());
     }
     if let Some((minimum, maximum)) = salary_filter_range(query.salary.trim()) {
         if maximum.is_finite() {
@@ -2256,6 +2378,75 @@ mod tests {
         };
         assert!(db.reserve_task(&task).unwrap());
         assert!(!db.reserve_task(&competing).unwrap());
+    }
+
+    #[test]
+    fn city_filter_migration_and_missing_description_deletion_are_safe() {
+        let dir = tempdir().unwrap();
+        let db = Database::new(dir.path().join("test.db"));
+        db.initialize().unwrap();
+
+        let mut missing_shanghai = job("missing-shanghai", "20-30K");
+        missing_shanghai.location = "上海·浦东新区".into();
+        let missing_shanghai_id = missing_shanghai.id.clone();
+        db.upsert_scrape_list_job(missing_shanghai, "AI Agent")
+            .unwrap();
+
+        let mut detailed_shanghai = job("detailed-shanghai", "20-30K");
+        detailed_shanghai.location = "上海·徐汇区".into();
+        detailed_shanghai.description = "负责 AI 平台研发".into();
+        let detailed_shanghai_id = detailed_shanghai.id.clone();
+        db.upsert_scrape_list_job(detailed_shanghai, "AI Agent")
+            .unwrap();
+
+        let mut missing_hangzhou = job("missing-hangzhou", "20-30K");
+        missing_hangzhou.location = "杭州·余杭区".into();
+        let missing_hangzhou_id = missing_hangzhou.id.clone();
+        db.upsert_scrape_list_job(missing_hangzhou, "AI Agent")
+            .unwrap();
+
+        let connection = db.connect().unwrap();
+        connection.execute("UPDATE jobs SET city=''", []).unwrap();
+        connection
+            .execute("DELETE FROM schema_migrations WHERE version=5", [])
+            .unwrap();
+        drop(connection);
+        db.initialize().unwrap();
+
+        let cities = db
+            .list_job_cities()
+            .unwrap()
+            .into_iter()
+            .collect::<HashSet<_>>();
+        assert_eq!(
+            cities,
+            HashSet::from(["上海".to_string(), "杭州".to_string()])
+        );
+
+        let query = JobQuery {
+            city: "上海".into(),
+            missing_description: true,
+            ..JobQuery::default()
+        };
+        let page = db.list_jobs_page(&query).unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items[0].id, missing_shanghai_id);
+
+        let deleted = db
+            .delete_missing_description_jobs(&JobQuery {
+                city: "上海".into(),
+                ..JobQuery::default()
+            })
+            .unwrap();
+        assert_eq!(deleted, 1);
+        assert!(db.get_job(&detailed_shanghai_id).unwrap().is_some());
+        assert!(db.get_job(&missing_hangzhou_id).unwrap().is_some());
+        assert_eq!(db.list_report_keywords().unwrap()[0].job_count, 2);
+
+        assert_eq!(db.delete_job(&missing_hangzhou_id).unwrap(), 1);
+        assert_eq!(db.list_report_keywords().unwrap()[0].job_count, 1);
+        assert_eq!(db.delete_job(&detailed_shanghai_id).unwrap(), 1);
+        assert!(db.list_report_keywords().unwrap().is_empty());
     }
 
     #[test]

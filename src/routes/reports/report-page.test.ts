@@ -6,6 +6,12 @@ import { backend } from '$lib/services/backend';
 import type { InterviewPreparationState, JobDataReport, RenderResult } from '$lib/types';
 import ReportPage from './+page.svelte';
 
+const exportFileMocks = vi.hoisted(() => ({ choosePath: vi.fn<() => Promise<string | null>>() }));
+vi.mock('$lib/export-file', () => ({
+  chooseLocalExportPath: exportFileMocks.choosePath,
+  localExportStamp: () => '20260713_120000'
+}));
+
 const localReport = buildClientJobDataReport(mockJobs);
 const reportKeywords = [
   { key: '__historical_unclassified__', label: '历史未分类', jobCount: 5, lastSeen: '2026-07-12T08:00:00.000Z' },
@@ -49,7 +55,7 @@ const staleState: InterviewPreparationState = {
 
 const listReportKeywords = vi.fn<() => Promise<typeof reportKeywords>>();
 const getJobDataReport = vi.fn<(keywordKeys: string[]) => Promise<JobDataReport>>();
-const exportJobDataReport = vi.fn<(keywordKeys: string[]) => Promise<RenderResult>>();
+const exportJobDataReport = vi.fn<(keywordKeys: string[], outputPath: string) => Promise<RenderResult>>();
 const getInterviewPreparationState = vi.fn<(keywordKeys: string[]) => Promise<InterviewPreparationState>>();
 const generateInterviewPreparation = vi.fn<(keywordKeys: string[], force?: boolean) => Promise<InterviewPreparationState>>();
 
@@ -59,6 +65,7 @@ describe('full job data report page', () => {
     listReportKeywords.mockReset().mockResolvedValue(reportKeywords);
     getJobDataReport.mockReset().mockResolvedValue(localReport);
     exportJobDataReport.mockReset().mockResolvedValue({ path: 'C:\\tmp\\report.html', fileName: 'report.html' });
+    exportFileMocks.choosePath.mockReset().mockResolvedValue('C:\\tmp\\report.html');
     getInterviewPreparationState.mockReset().mockResolvedValue(missingGeneralState);
     generateInterviewPreparation.mockReset().mockResolvedValue(freshState);
   });
@@ -148,7 +155,18 @@ describe('full job data report page', () => {
     await waitFor(() => expect(generateInterviewPreparation).toHaveBeenCalledWith(['ai-agent', 'data-analysis'], false));
 
     await fireEvent.click(screen.getByRole('button', { name: '导出 HTML' }));
-    await waitFor(() => expect(exportJobDataReport).toHaveBeenCalledWith(['ai-agent', 'data-analysis']));
+    await waitFor(() => expect(exportJobDataReport).toHaveBeenCalledWith(['ai-agent', 'data-analysis'], 'C:\\tmp\\report.html'));
+  });
+
+  it('does not invoke report export when the save dialog is cancelled', async () => {
+    exportFileMocks.choosePath.mockResolvedValueOnce(null);
+    render(ReportPage);
+    await screen.findByText('技能需求与共现组合');
+
+    await fireEvent.click(screen.getByRole('button', { name: '导出 HTML' }));
+
+    await waitFor(() => expect(exportFileMocks.choosePath).toHaveBeenCalled());
+    expect(exportJobDataReport).not.toHaveBeenCalled();
   });
 
   it('does not generate a report when no keyword is selected', async () => {

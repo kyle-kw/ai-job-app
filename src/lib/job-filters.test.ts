@@ -35,12 +35,13 @@ describe('company scale filters', () => {
 
 describe('combined local job filtering', () => {
   const jobs = [
-    { title: 'AI Agent 工程师', company: '甲公司', skills: ['RAG'], salary: '25-40K', companyScale: '100-499人', isNew: true, fit: { overallScore: 82 } },
-    { title: 'Java 工程师', company: '乙公司', skills: ['Java'], salary: '15-20K', companyScale: '1000-9999人', isNew: false, fit: { overallScore: 70 } }
+    { title: 'AI Agent 工程师', company: '甲公司', skills: ['RAG'], salary: '25-40K', companyScale: '100-499人', location: '上海·浦东新区', description: '', isNew: true, fit: { overallScore: 82 } },
+    { title: 'Java 工程师', company: '乙公司', skills: ['Java'], salary: '15-20K', companyScale: '1000-9999人', location: '杭州·余杭区', description: '负责 Java 服务开发', isNew: false, fit: { overallScore: 70 } }
   ];
 
-  it('combines text, score, freshness, salary, and company scale conditions', () => {
-    expect(filterJobs(jobs, { query: 'rag', minScore: 80, onlyNew: true, salary: '406', companyScale: '303' })).toEqual([jobs[0]]);
-    expect(filterJobs(jobs, { query: '', minScore: 0, onlyNew: false, salary: '407', companyScale: '' })).toEqual([]);
+  it('combines text, score, freshness, salary, company scale, city, and missing description conditions', () => {
+    expect(filterJobs(jobs, { query: 'rag', minScore: 80, onlyNew: true, salary: '406', companyScale: '303', city: '上海', missingDescription: true })).toEqual([jobs[0]]);
+    expect(filterJobs(jobs, { query: '', minScore: 0, onlyNew: false, salary: '', companyScale: '', city: '杭州', missingDescription: true })).toEqual([]);
+    expect(filterJobs(jobs, { query: '', minScore: 0, onlyNew: false, salary: '407', companyScale: '', city: '', missingDescription: false })).toEqual([]);
   });
 });

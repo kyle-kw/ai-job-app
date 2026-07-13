@@ -1,9 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { ArrowUpRight, BriefcaseBusiness, Check, CheckCircle2, ChevronDown, Clipboard, Filter, Info, MapPin, MessageCircle, Search, Sparkles, X, XCircle } from 'lucide-svelte';
+  import { ArrowUpRight, BriefcaseBusiness, Check, CheckCircle2, ChevronDown, Clipboard, Download, Filter, Info, MapPin, MessageCircle, Search, Sparkles, Trash2, X, XCircle } from 'lucide-svelte';
   import { page } from '$app/stores';
+  import DeleteJobDialog from '$lib/components/DeleteJobDialog.svelte';
   import FitScore from '$lib/components/FitScore.svelte';
   import JobSearchDialog from '$lib/components/JobSearchDialog.svelte';
+  import { chooseLocalExportPath, localExportStamp } from '$lib/export-file';
   import {
     COMPANY_SCALE_FILTER_OPTIONS,
     SALARY_FILTER_OPTIONS,
@@ -21,11 +23,18 @@
   let onlyNew = false;
   let salaryFilter: SalaryFilterCode = '';
   let companyScaleFilter: CompanyScaleFilterCode = '';
+  let cityFilter = '';
+  let missingDescription = false;
+  let cities: string[] = [];
   let activeTab: 'description' | 'fit' = 'description';
   let scraping = false;
   let extractionStarting = false;
   let batchStarting = false;
   let analyzingJobId = '';
+  let exportingJobs = false;
+  let deletingJobId = '';
+  let bulkDeleting = false;
+  let deleteConfirmation: { mode: 'single'; job: Job } | { mode: 'bulk'; count: number; query: JobQuery } | null = null;
   let searchDialogOpen = false;
   let searchSpec: SearchSpec = { keyword: '', city: '上海', pages: 1, salary: '', companyScale: '' };
   let greetingBusy = false;
@@ -42,7 +51,7 @@
   let lastFilterKey = '';
   let lastTerminalTaskKey = '';
 
-  $: filterKey = JSON.stringify([query.trim(), minScore, onlyNew, salaryFilter, companyScaleFilter]);
+  $: filterKey = JSON.stringify([query.trim(), minScore, onlyNew, salaryFilter, companyScaleFilter, cityFilter, missingDescription]);
   $: if (mounted && filterKey !== lastFilterKey) {
     lastFilterKey = filterKey;
     window.clearTimeout(filterTimer);
@@ -55,6 +64,7 @@
   $: if (mounted && terminalTaskKey && terminalTaskKey !== lastTerminalTaskKey) {
     lastTerminalTaskKey = terminalTaskKey;
     void reloadJobs();
+    void reloadCities();
   }
   $: requestedId = $page.url?.searchParams.get('job') ?? null;
   $: {
@@ -71,10 +81,20 @@
   $: detailExtractionRunning = extractionStarting || $snapshot.tasks.some((task) => task.kind === 'job-detail-extraction' && (task.state === 'queued' || task.state === 'running'));
   $: fitBatchRunning = batchStarting || $snapshot.tasks.some((task) => task.kind === 'fit' && (task.state === 'queued' || task.state === 'running'));
   $: scrapeTaskRunning = scraping || $snapshot.tasks.some((task) => task.kind === 'scrape' && (task.state === 'queued' || task.state === 'running'));
-  $: hasActiveFilters = Boolean(query.trim() || minScore || onlyNew || salaryFilter || companyScaleFilter);
+  $: hasActiveFilters = Boolean(query.trim() || minScore || onlyNew || salaryFilter || companyScaleFilter || cityFilter || missingDescription);
 
   function currentJobQuery(cursor: string | null = null): JobQuery {
-    return { query, minScore, onlyNew, salary: salaryFilter, companyScale: companyScaleFilter, cursor };
+    return { query, minScore, onlyNew, salary: salaryFilter, companyScale: companyScaleFilter, city: cityFilter, missingDescription, cursor };
+  }
+
+  async function reloadCities() {
+    try {
+      const nextCities = await backend.listJobCities();
+      cities = nextCities;
+      if (cityFilter && !nextCities.includes(cityFilter)) cityFilter = '';
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    }
   }
 
   async function reloadJobs() {
@@ -132,6 +152,7 @@
     lastFilterKey = filterKey;
     lastTerminalTaskKey = terminalTaskKey;
     void reloadJobs();
+    void reloadCities();
     return () => window.clearTimeout(filterTimer);
   });
 
@@ -194,6 +215,8 @@
     onlyNew = false;
     salaryFilter = '';
     companyScaleFilter = '';
+    cityFilter = '';
+    missingDescription = false;
   }
 
   async function openSource() {
@@ -242,6 +265,62 @@
     }
   }
 
+  async function exportAllJobs() {
+    if (exportingJobs) return;
+    exportingJobs = true;
+    try {
+      const fileName = `岗位数据_${localExportStamp()}.json`;
+      const outputPath = await chooseLocalExportPath({
+        title: '导出全部岗位 JSON',
+        fileName,
+        filterName: '岗位 JSON',
+        extension: 'json'
+      });
+      if (!outputPath) return;
+      const result = await backend.exportJobsJson(outputPath);
+      showToast(`已导出：${result.path}`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      exportingJobs = false;
+    }
+  }
+
+  function requestDeleteSelectedJob() {
+    if (selected && !deletingJobId) deleteConfirmation = { mode: 'single', job: selected };
+  }
+
+  function requestDeleteFilteredMissingJobs() {
+    if (!missingDescription || bulkDeleting || totalJobs === 0) return;
+    deleteConfirmation = { mode: 'bulk', count: totalJobs, query: currentJobQuery() };
+  }
+
+  function closeDeleteConfirmation() {
+    if (!deletingJobId && !bulkDeleting) deleteConfirmation = null;
+  }
+
+  async function confirmDeleteJobs() {
+    const confirmation = deleteConfirmation;
+    if (!confirmation) return;
+    if (confirmation.mode === 'single') deletingJobId = confirmation.job.id;
+    else bulkDeleting = true;
+    try {
+      const result = confirmation.mode === 'single'
+        ? await backend.deleteJob(confirmation.job.id)
+        : await backend.deleteMissingDescriptionJobs(confirmation.query);
+      selectedId = '';
+      await reloadCities();
+      await reloadJobs();
+      deleteConfirmation = null;
+      showToast(confirmation.mode === 'single' ? '岗位已删除' : `已删除 ${result.deletedCount} 个无原始详情岗位`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      deletingJobId = '';
+      bulkDeleting = false;
+    }
+  }
+
   const verdictLabel = (verdict?: string) => ({ strong: '高度匹配', good: '值得申请', moderate: '谨慎评估', weak: '匹配偏弱', poor: '不建议' }[verdict ?? ''] ?? '待分析');
   const constraintTone = (status: string) => status === 'pass' ? 'var(--success)' : status === 'fail' ? 'var(--danger)' : 'var(--warning)';
   const analysisSourceLabel = (source?: string) => ({ llm: 'AI 分析', local: '本地基础匹配', legacy: '历史分析' }[source ?? ''] ?? '历史分析');
@@ -256,16 +335,22 @@
   <aside class="filter-sidebar scrollbar-thin w-[250px] shrink-0 overflow-y-auto border-r p-4" style="border-color: var(--line); background: color-mix(in srgb, var(--canvas) 72%, var(--panel));">
     <button class="btn-primary mb-2 w-full" type="button" on:click|stopPropagation={openSearchDialog} disabled={scrapeTaskRunning}><Search size={16} />{scrapeTaskRunning ? '岗位抓取中…' : '抓取新岗位'}</button>
     <button class="btn mb-2 w-full" on:click={extractJobDetails} disabled={detailExtractionRunning || pendingDetailCount === 0}><Sparkles size={15} />{detailExtractionRunning ? '正在批量提取…' : pendingDetailCount ? `批量提取详情（${pendingDetailCount}）` : '岗位详情已提取'}</button>
-    <button class="btn mb-4 w-full" on:click={analyzeFilteredJobs} disabled={fitBatchRunning || totalJobs === 0}><CheckCircle2 size={15} />{fitBatchRunning ? '正在批量分析…' : `批量分析全部结果（${totalJobs}）`}</button>
+    <button class="btn mb-2 w-full" on:click={analyzeFilteredJobs} disabled={fitBatchRunning || totalJobs === 0}><CheckCircle2 size={15} />{fitBatchRunning ? '正在批量分析…' : `批量分析全部结果（${totalJobs}）`}</button>
+    <button class="btn mb-4 w-full" on:click={exportAllJobs} disabled={exportingJobs}><Download size={15} />{exportingJobs ? '正在导出…' : '导出全部岗位 JSON'}</button>
     <label class="relative block">
       <Search size={15} class="pointer-events-none absolute left-3 top-3 body-muted" />
       <input class="input pl-9" bind:value={query} placeholder="搜索岗位或公司" />
     </label>
     <div class="mt-5 flex items-center justify-between"><span class="eyebrow flex items-center gap-1.5"><Filter size={13} />筛选条件</span>{#if hasActiveFilters}<button class="text-xs text-brand" on:click={clearFilters}>清除筛选</button>{/if}</div>
     <label class="mt-4 block"><span class="label flex justify-between"><span>最低匹配度</span><span class="text-brand">{minScore}%</span></span><input class="w-full accent-[var(--brand)]" type="range" min="0" max="90" step="10" bind:value={minScore} /></label>
+    <label class="mt-4 block"><span class="label">城市</span><select class="select" bind:value={cityFilter}><option value="">不限</option>{#each cities as city}<option value={city}>{city}</option>{/each}</select></label>
     <label class="mt-4 block"><span class="label">薪资范围</span><select class="select" bind:value={salaryFilter}>{#each SALARY_FILTER_OPTIONS as option}<option value={option.value}>{option.label}</option>{/each}</select></label>
     <label class="mt-4 block"><span class="label">公司规模</span><select class="select" bind:value={companyScaleFilter}>{#each COMPANY_SCALE_FILTER_OPTIONS as option}<option value={option.value}>{option.label}</option>{/each}</select></label>
     <label class="mt-4 flex cursor-pointer items-center gap-2 text-sm"><input class="h-4 w-4 accent-[var(--brand)]" type="checkbox" bind:checked={onlyNew} />只看本次新增</label>
+    <label class="mt-3 flex cursor-pointer items-center gap-2 text-sm"><input class="h-4 w-4 accent-[var(--brand)]" type="checkbox" bind:checked={missingDescription} />只看无原始详情</label>
+    {#if missingDescription && totalJobs > 0}
+      <button class="btn-danger mt-4 w-full" on:click={requestDeleteFilteredMissingJobs} disabled={bulkDeleting}><Trash2 size={15} />{bulkDeleting ? '正在删除…' : `删除无详情岗位（${totalJobs}）`}</button>
+    {/if}
     <div class="my-5 divider"></div>
     <div class="space-y-2 text-xs body-muted">
       <div class="flex justify-between"><span>岗位数量</span><strong class="text-ink">{totalJobs}</strong></div>
@@ -318,6 +403,7 @@
             {:else}
               <button class="btn" disabled={greetingBusy} on:click={greeting}><MessageCircle size={15} />{greetingBusy ? '正在生成…' : '生成一句招呼语'}</button>
             {/if}
+            <button class="btn-danger" on:click={requestDeleteSelectedJob} disabled={deletingJobId === selected.id}><Trash2 size={14} />{deletingJobId === selected.id ? '正在删除…' : '删除岗位'}</button>
             <button class="btn" on:click={openSource}>查看原岗位 <ArrowUpRight size={15} /></button>
             <a class="btn-primary" href={`/resume?job=${encodeURIComponent(selected.id)}&assistant=1`}><Sparkles size={15} />用此岗位优化主简历</a>
           </div>
@@ -369,7 +455,7 @@
                   <details class="border-t pt-5 text-xs body-muted" style="border-color: var(--line);"><summary class="cursor-pointer font-medium text-ink">查看抓取原文</summary><div class="mt-4 whitespace-pre-line leading-6">{selected.description}</div></details>
                 </div>
               {:else}
-                <div class="whitespace-pre-line text-sm leading-7">{selected.description}</div>
+                <div class="whitespace-pre-line text-sm leading-7">{selected.description || '暂无原始职位详情。'}</div>
               {/if}
               {#if selected.skills.length}<div class="mt-6"><p class="label">岗位技能</p><div class="flex flex-wrap gap-2">{#each selected.skills as skill}<span class="chip-brand">{skill}</span>{/each}</div></div>{/if}
               {#if selected.welfare.length}<div class="mt-6"><p class="label">福利待遇</p><div class="flex flex-wrap gap-2">{#each selected.welfare as item}<span class="chip">{item}</span>{/each}</div></div>{/if}
@@ -415,6 +501,17 @@
 </div>
 
 <JobSearchDialog bind:open={searchDialogOpen} bind:searchSpec {scraping} {scrapeTaskRunning} onStart={runScrape} />
+
+<DeleteJobDialog
+  open={Boolean(deleteConfirmation)}
+  mode={deleteConfirmation?.mode ?? 'single'}
+  jobTitle={deleteConfirmation?.mode === 'single' ? deleteConfirmation.job.title : ''}
+  company={deleteConfirmation?.mode === 'single' ? deleteConfirmation.job.company : ''}
+  count={deleteConfirmation?.mode === 'bulk' ? deleteConfirmation.count : 0}
+  busy={Boolean(deletingJobId || bulkDeleting)}
+  onCancel={closeDeleteConfirmation}
+  onConfirm={confirmDeleteJobs}
+/>
 
 {#if toast}<div class="fixed bottom-6 left-1/2 z-[60] -translate-x-1/2 rounded-xl bg-[#1d2824] px-4 py-2.5 text-sm font-medium text-white shadow-xl animate-lift">{toast}</div>{/if}
 
