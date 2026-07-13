@@ -52,6 +52,7 @@ requests = None
 DEFAULT_CDP_PORT = 9222
 
 # API 基础路径（便于统一修改）
+BOSS_ORIGIN = "https://www.zhipin.com"
 API_JOB_LIST_PATH = "/wapi/zpgeek/search/joblist.json"
 
 # 请求频率保护
@@ -456,28 +457,62 @@ def build_login_probe_url(query, city_code):
         "page": 1,
         "pageSize": LOGIN_PROBE_PAGE_SIZE,
     }
-    return f"{API_JOB_LIST_PATH}?{urlencode(params)}"
+    return f"{BOSS_ORIGIN}{API_JOB_LIST_PATH}?{urlencode(params)}"
+
+
+def is_transient_login_probe_error(error):
+    """Return True for CDP errors expected while login/captcha pages navigate."""
+    message = str(error).lower()
+    return any(marker in message for marker in (
+        "invalid url",
+        "execution context was destroyed",
+        "cannot find context with specified id",
+        "inspected target navigated",
+    ))
 
 
 def probe_login_state(cdp, sid):
     for query in LOGIN_PROBE_QUERIES:
         for city_code in LOGIN_PROBE_CITIES:
             probe_url = build_login_probe_url(query, city_code)
+            probe_url_js = json.dumps(probe_url)
             js = f"""
             (function(){{
+                var protocol = location.protocol;
+                var hostname = String(location.hostname || '').toLowerCase();
+                if ((protocol !== 'http:' && protocol !== 'https:') ||
+                    (hostname !== 'zhipin.com' && !hostname.endsWith('.zhipin.com'))) {{
+                    return JSON.stringify({{__loginProbePending: true, url: location.href}});
+                }}
                 var xhr = new XMLHttpRequest();
-                xhr.open('GET', '{probe_url}', false);
-                xhr.send();
-                return xhr.responseText;
+                try {{
+                    xhr.open('GET', {probe_url_js}, false);
+                    xhr.send();
+                    return xhr.responseText;
+                }} catch (error) {{
+                    return JSON.stringify({{
+                        __loginProbePending: true,
+                        url: location.href,
+                        error: String(error)
+                    }});
+                }}
             }})()
             """
-            val = cdp.eval_js(js, sid)
+            try:
+                val = cdp.eval_js(js, sid)
+            except RuntimeError as error:
+                if is_transient_login_probe_error(error):
+                    log.debug(f"登录页正在跳转，稍后重试: {error}")
+                    return False
+                raise
             if not val:
                 continue
             try:
                 data = json.loads(val) if isinstance(val, str) else val
             except (json.JSONDecodeError, ValueError):
                 continue
+            if isinstance(data, dict) and data.get("__loginProbePending"):
+                return False
             if is_logged_in_search_response(data):
                 return True
     return False

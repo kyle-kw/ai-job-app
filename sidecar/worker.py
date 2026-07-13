@@ -41,12 +41,25 @@ _active_boss: Any | None = None
 _cleaning_boss = False
 
 
-def emit(kind: str, **payload: Any) -> None:
-    print(
-        json.dumps({"type": kind, **payload}, ensure_ascii=False),
-        file=PROTOCOL_STDOUT,
-        flush=True,
-    )
+def emit(kind: str, **payload: Any) -> bool:
+    """Write one protocol event without crashing if the parent closed its pipe."""
+    try:
+        print(
+            json.dumps({"type": kind, **payload}, ensure_ascii=False),
+            file=PROTOCOL_STDOUT,
+            flush=True,
+        )
+        return True
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def print_current_exception() -> None:
+    """Best-effort traceback output for windowed/PyInstaller sidecars."""
+    try:
+        traceback.print_exc(file=sys.stderr)
+    except (OSError, ValueError, AttributeError):
+        pass
 
 
 def now() -> str:
@@ -885,7 +898,7 @@ def cleanup_active_boss() -> None:
     try:
         close_boss_session(_active_boss, action="进程退出前")
     except Exception:  # noqa: BLE001 - shutdown cleanup is best effort
-        traceback.print_exc(file=sys.stderr)
+        print_current_exception()
     finally:
         _active_boss = None
         _cleaning_boss = False
@@ -917,7 +930,7 @@ def main() -> int:
         emit("result", ok=True, data=data)
         return 0
     except Exception as error:  # noqa: BLE001 - process boundary must serialize every failure
-        traceback.print_exc(file=sys.stderr)
+        print_current_exception()
         emit("result", ok=False, error=str(error))
         return 1
 

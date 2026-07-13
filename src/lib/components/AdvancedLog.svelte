@@ -39,5 +39,7 @@
   onDestroy(() => { resizeObserver?.disconnect(); terminal?.dispose(); });
 </script>
 
-<div bind:this={host} aria-hidden="true" class="min-h-[150px] overflow-hidden rounded-xl bg-[#18201d] p-2"></div>
+<div class="h-[150px] overflow-hidden rounded-xl bg-[#18201d] p-2">
+  <div bind:this={host} aria-hidden="true" class="h-full min-h-0 overflow-hidden"></div>
+</div>
 <pre class="sr-only" aria-live="polite" aria-label="任务运行日志">{logs.join('\n')}</pre>
