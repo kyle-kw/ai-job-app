@@ -1,7 +1,7 @@
 requests>=2.32,<3
 websocket-client>=1.8,<2
 pypdf>=5,<7
-python-docx>=1.1,<2
+python-docx>=1.2.0,<2
 pypdfium2>=4.30,<5
 Pillow>=11,<13
 PyYAML>=6,<7
