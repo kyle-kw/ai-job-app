@@ -18,7 +18,7 @@ export default defineConfig(({ mode }) => ({
       ]
     }
   },
-  envPrefix: ['VITE_', 'TAURI_'],
+  envPrefix: ['VITE_'],
   test: {
     environment: 'jsdom',
     include: ['src/**/*.test.ts'],

@@ -4,7 +4,7 @@
   import { backend } from '$lib/services/backend';
   import { modalFocus } from '$lib/modal-focus';
   import type {
-    Job,
+    JobOption,
     ResumeChatMessage,
     ResumeChatProposal,
     ResumeCommitResult,
@@ -14,7 +14,6 @@
 
   export let open = false;
   export let resume: ResumeProfile | null = null;
-  export let jobs: Job[] = [];
   export let aiReady = false;
   export let initialJobId: string | null = null;
 
@@ -25,6 +24,7 @@
 
   let selectedJobId = '';
   let lastInitialJobId: string | null = null;
+  let wasOpen = false;
   let input = '';
   let messages: ResumeChatMessage[] = [];
   let proposal: ResumeChatProposal | null = null;
@@ -33,10 +33,36 @@
   let sending = false;
   let applying = false;
   let error = '';
+  let jobOptions: JobOption[] = [];
+  let jobQuery = '';
+  let optionRequestId = 0;
+  let optionsLoading = false;
 
-  $: if (open && initialJobId !== lastInitialJobId) {
-    selectedJobId = initialJobId && jobs.some((job) => job.id === initialJobId) ? initialJobId : '';
-    lastInitialJobId = initialJobId;
+  $: {
+    if (open && (!wasOpen || initialJobId !== lastInitialJobId)) {
+      selectedJobId = initialJobId ?? '';
+      lastInitialJobId = initialJobId;
+      void loadJobOptions();
+    }
+    wasOpen = open;
+  }
+
+  async function loadJobOptions() {
+    const requestId = ++optionRequestId;
+    optionsLoading = true;
+    try {
+      const options = await backend.listJobOptions(jobQuery);
+      if (requestId !== optionRequestId) return;
+      if (selectedJobId && !options.some((option) => option.id === selectedJobId)) {
+        try {
+          const job = await backend.getJob(selectedJobId);
+          options.unshift({ id: job.id, title: job.title, company: job.company, lastSeen: job.lastSeen });
+        } catch { selectedJobId = ''; }
+      }
+      jobOptions = options;
+    } finally {
+      if (requestId === optionRequestId) optionsLoading = false;
+    }
   }
   $: requiredFactCandidateIds = proposal
     ? proposal.edits
@@ -187,16 +213,17 @@
       </div>
     {:else}
       <div class="shrink-0 border-b px-6 py-3" style="border-color: var(--line); background: var(--panel-soft);">
-        <label class="flex items-center gap-3">
+        <div class="flex items-center gap-3">
           <BriefcaseBusiness size={15} class="shrink-0 body-muted" />
           <span class="shrink-0 text-xs font-semibold">关联岗位</span>
+          <input class="input h-9 min-w-0 flex-1" bind:value={jobQuery} on:input={() => void loadJobOptions()} placeholder="搜索岗位或公司" aria-label="搜索关联岗位" />
           <select class="select h-9 min-w-0 flex-1" bind:value={selectedJobId} disabled={sending || applying} aria-label="关联岗位">
-            <option value="">不指定岗位，优化通用主简历</option>
-            {#each jobs as job}
+            <option value="">{optionsLoading ? '正在加载岗位…' : '不指定岗位，优化通用主简历'}</option>
+            {#each jobOptions as job}
               <option value={job.id}>{job.title} · {job.company}</option>
             {/each}
           </select>
-        </label>
+        </div>
       </div>
 
       <div class="scrollbar-thin min-h-0 flex-1 overflow-y-auto px-6 py-5">

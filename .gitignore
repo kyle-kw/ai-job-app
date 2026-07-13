@@ -20,3 +20,5 @@ sidecar/tests/output/
 *.db-wal
 .DS_Store
 Thumbs.db
+.env*
+!.env.example

@@ -1,6 +1,7 @@
 use crate::models::{AiProviderConfig, ProviderTestResult};
+use crate::secrets;
 use keyring::Entry;
-use reqwest::Client;
+use reqwest::{redirect::Policy, Client, Url};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -63,6 +64,7 @@ pub async fn test(provider: &AiProviderConfig) -> Result<ProviderTestResult, Str
     if provider.base_url.trim().is_empty() || provider.model.trim().is_empty() {
         return Err("请填写 Base URL 和模型名。".into());
     }
+    validate_base_url(provider)?;
     let key = load_secret(provider)?;
     let started = Instant::now();
     let value: Value = chat_json(
@@ -99,8 +101,17 @@ async fn test_vision(provider: &AiProviderConfig, api_key: &str) -> Result<bool,
         {"type":"text","text":"Read the exact code in this image. Return JSON only: {\"vision\":\"the code\"}."},
         {"type":"image_url","image_url":{"url":format!("data:image/png;base64,{VISION_PROBE_PNG_BASE64}")}}
     ]);
-    let value = chat_json_with_content(provider, api_key, "You test image-reading capability and return JSON only.", content).await?;
-    Ok(value.get("vision").and_then(Value::as_str).is_some_and(|value| value.trim().eq_ignore_ascii_case("VISION-731")))
+    let value = chat_json_with_content(
+        provider,
+        api_key,
+        "You test image-reading capability and return JSON only.",
+        content,
+    )
+    .await?;
+    Ok(value
+        .get("vision")
+        .and_then(Value::as_str)
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case("VISION-731")))
 }
 
 pub async fn transcribe_resume_page(
@@ -120,7 +131,11 @@ pub async fn transcribe_resume_page(
         content,
     )
     .await?;
-    value.get("text").and_then(Value::as_str).map(str::to_string).ok_or_else(|| "视觉模型未返回页面文字。".to_string())
+    value
+        .get("text")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| "视觉模型未返回页面文字。".to_string())
 }
 
 pub async fn run_skill<T: DeserializeOwned>(
@@ -152,10 +167,12 @@ async fn chat_json_with_content(
     system: &str,
     user_content: Value,
 ) -> Result<Value, String> {
-    let endpoint = format!(
+    let base_url = validate_base_url(provider)?;
+    let endpoint = Url::parse(&format!(
         "{}/chat/completions",
-        provider.base_url.trim_end_matches('/')
-    );
+        base_url.as_str().trim_end_matches('/')
+    ))
+    .map_err(|_| "Invalid Base URL endpoint".to_string())?;
     let body = json!({
         "model": provider.model,
         "messages": [
@@ -168,6 +185,7 @@ async fn chat_json_with_content(
     });
     let response = Client::builder()
         .timeout(Duration::from_secs(60))
+        .redirect(Policy::none())
         .build()
         .map_err(|error| format!("无法创建模型客户端：{error}"))?
         .post(endpoint)
@@ -218,16 +236,28 @@ fn parse_json_content(content: &str) -> Result<Value, String> {
 }
 
 pub(crate) fn redact(value: &str) -> String {
-    let mut output = String::with_capacity(value.len());
-    for token in value.split_whitespace() {
-        if token.starts_with("sk-") || token.starts_with("tp-") {
-            output.push_str("[REDACTED]");
-        } else {
-            output.push_str(token);
-        }
-        output.push(' ');
+    secrets::redact(value)
+}
+
+pub(crate) fn validate_base_url(provider: &AiProviderConfig) -> Result<Url, String> {
+    let url = Url::parse(provider.base_url.trim())
+        .map_err(|_| "Base URL must be a complete HTTP or HTTPS URL.".to_string())?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        return Err("Base URL only supports HTTP or HTTPS.".into());
     }
-    output.trim().to_string()
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err("Base URL cannot contain credentials, query parameters, or fragments.".into());
+    }
+    if url.scheme() == "http" && !provider.allow_insecure_http {
+        return Err(
+            "HTTP sends the API Key in plaintext. Explicitly allow insecure HTTP first.".into(),
+        );
+    }
+    Ok(url)
 }
 
 #[cfg(test)]
@@ -243,5 +273,33 @@ mod tests {
     #[test]
     fn redacts_common_key_prefixes() {
         assert!(!redact("failure sk-secret-value").contains("secret"));
+    }
+
+    #[test]
+    fn validates_provider_url_security_policy() {
+        let mut provider = AiProviderConfig {
+            id: "test".into(),
+            kind: "custom".into(),
+            name: "Test".into(),
+            base_url: "https://example.com/v1".into(),
+            model: "model".into(),
+            allow_insecure_http: false,
+            api_key: None,
+            api_key_ref: None,
+            is_default: true,
+            verified: false,
+            vision_verified: false,
+            last_tested_at: None,
+            last_test_error: None,
+        };
+        assert!(validate_base_url(&provider).is_ok());
+        provider.base_url = "http://192.168.1.20:11434/v1".into();
+        assert!(validate_base_url(&provider).is_err());
+        provider.allow_insecure_http = true;
+        assert!(validate_base_url(&provider).is_ok());
+        provider.base_url = "file:///tmp/key".into();
+        assert!(validate_base_url(&provider).is_err());
+        provider.base_url = "https://user:pass@example.com/v1?x=1".into();
+        assert!(validate_base_url(&provider).is_err());
     }
 }

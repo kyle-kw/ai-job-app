@@ -5,10 +5,11 @@ import os
 import pathlib
 import subprocess
 import tempfile
+import types
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import sys
 
@@ -20,6 +21,82 @@ from vendor import boss_cdp_raw as boss_vendor  # noqa: E402
 
 
 class WorkerTests(unittest.TestCase):
+    def test_cdp_errors_are_not_converted_to_empty_values(self):
+        class FakeSocket:
+            def send(self, _message):
+                pass
+
+            def recv(self):
+                return json.dumps({"id": 1, "error": {"code": -32000, "message": "detached"}})
+
+        session = boss_vendor.CDPSession.__new__(boss_vendor.CDPSession)
+        session.mid = 0
+        session.ws = FakeSocket()
+        with self.assertRaisesRegex(RuntimeError, "detached"):
+            session.send("Runtime.evaluate")
+
+        session.send = lambda *_args, **_kwargs: {
+            "result": {"exceptionDetails": {"text": "ReferenceError"}}
+        }
+        with self.assertRaisesRegex(RuntimeError, "ReferenceError"):
+            session.eval_js("missing", "session")
+
+    def test_cdp_websocket_suppresses_origin_header(self):
+        response = types.SimpleNamespace(json=lambda: {"webSocketDebuggerUrl": "ws://127.0.0.1/devtools/browser/test"})
+        requests_module = types.SimpleNamespace(get=Mock(return_value=response))
+        connect = Mock(return_value=types.SimpleNamespace())
+        websocket_module = types.SimpleNamespace(create_connection=connect)
+        with patch.object(boss_vendor, "require_runtime_dependencies", return_value=True), \
+                patch.object(boss_vendor, "requests", requests_module), \
+                patch.object(boss_vendor, "websocket", websocket_module):
+            boss_vendor.CDPSession(9222)
+        self.assertTrue(connect.call_args.kwargs["suppress_origin"])
+
+    def test_unknown_city_resolution_never_uses_live_network_map(self):
+        self.assertFalse(hasattr(boss_vendor, "load_live_city_maps"))
+        self.assertEqual(boss_vendor.resolve_city("不存在城市"), ("不存在城市", "不存在城市"))
+
+    def test_pdf_render_closes_every_resource_when_save_fails(self):
+        closed = []
+
+        class Resource:
+            def __init__(self, name):
+                self.name = name
+
+            def close(self):
+                closed.append(self.name)
+
+        class Image(Resource):
+            def save(self, *_args, **_kwargs):
+                raise RuntimeError("save failed")
+
+        class Bitmap(Resource):
+            def to_pil(self):
+                return Image("image")
+
+        class Page(Resource):
+            def render(self, **_kwargs):
+                return Bitmap("bitmap")
+
+        class Document(Resource):
+            def __getitem__(self, _index):
+                return Page("page")
+
+        fake_pdfium = types.SimpleNamespace(PdfDocument=lambda _path: Document("document"))
+        with patch.dict(sys.modules, {"pypdfium2": fake_pdfium}), tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaisesRegex(RuntimeError, "save failed"):
+                worker.render_pdf_page(pathlib.Path("resume.pdf"), 0, pathlib.Path(temporary))
+        self.assertEqual(closed, ["image", "bitmap", "page", "document"])
+
+    def test_sigterm_cleanup_is_scoped_to_active_boss(self):
+        fake = object()
+        worker._active_boss = fake
+        worker._cleaning_boss = False
+        with patch.object(worker, "close_boss_session") as close:
+            worker.cleanup_active_boss()
+        close.assert_called_once()
+        self.assertIsNone(worker._active_boss)
+
     def test_text_extraction_does_not_invent_experience(self):
         profile = worker.profile_from_text(
             "林知远\nAI 应用研发工程师\nlin@example.com\n熟悉 Python、FastAPI、RAG 和 Docker。",
@@ -125,6 +202,10 @@ class WorkerTests(unittest.TestCase):
         self.assertIn("Dify", data["settings"]["bold_keywords"])
 
     def test_all_color_themes_generate_pdf_files(self):
+        from rendercv.renderer import pdf_png
+
+        bundled_library = pathlib.Path(pdf_png.__file__).parent / "rendercv_typst" / "lib.typ"
+        bundled_before = bundled_library.read_bytes()
         profile = worker.base_profile(
             "resume.pdf", "Candidate", "candidate@example.com", "", "Shanghai", "", "Engineer", "Summary",
             [{"id": "skills", "label": "Core", "items": ["Python"]}],
@@ -142,6 +223,7 @@ class WorkerTests(unittest.TestCase):
                 self.assertTrue(output.exists())
                 self.assertGreater(output.stat().st_size, 1_000)
             self.assertTrue(all(path.suffix == ".pdf" for path in pathlib.Path(temporary).iterdir()))
+        self.assertEqual(bundled_library.read_bytes(), bundled_before)
 
     def test_docx_extraction_includes_body_tables_headers_and_footers(self):
         from docx import Document

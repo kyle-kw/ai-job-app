@@ -36,6 +36,8 @@ npm run tauri:bundle
 
 `scripts/build_sidecar.py` 会为当前 Rust target 构建 PyInstaller 单文件程序。CI 在 Windows 和 macOS 上分别生成 sidecar 与安装包，最终用户无需单独安装 Python 或 RenderCV。
 
+当前公开构建产物会在文件名中标记 `unsigned`。Windows SmartScreen 或 macOS Gatekeeper 可能因此显示警告；面向正式分发的构建必须由发布者另外配置 Windows 代码签名证书以及 Apple Developer 签名与公证凭据。
+
 ## 数据与安全
 
 - SQLite、导入文件、导出 PDF 和 UTF-8 岗位报告位于 Tauri 应用数据目录。
@@ -45,3 +47,5 @@ npm run tauri:bundle
 - BOSS 抓取只由用户主动触发，使用独立 Chrome Profile，不绕过验证码；任务结束后自动关闭专用 Chrome。
 - 专岗简历只允许引用主简历中已确认的事实，并在用户审核、接受修改后生成新版本。
 - 遥测默认且始终关闭。
+- 自定义模型允许 HTTP，但必须逐个提供商明确确认；HTTP 会以明文传输 API Key 和请求内容，优先使用 HTTPS。
+- WebView CSP 因现有动态样式保留 `style-src 'unsafe-inline'`；模型网络请求由 Rust 发出，不依赖 WebView 的远程 `connect-src`。

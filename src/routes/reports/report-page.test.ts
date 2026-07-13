@@ -1,12 +1,12 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mockSnapshot } from '$lib/mock-data';
+import { mockJobs } from '$lib/mock-data';
 import { buildClientJobDataReport } from '$lib/report';
 import { backend } from '$lib/services/backend';
 import type { InterviewPreparationState, JobDataReport, RenderResult } from '$lib/types';
 import ReportPage from './+page.svelte';
 
-const localReport = buildClientJobDataReport(mockSnapshot.jobs);
+const localReport = buildClientJobDataReport(mockJobs);
 const reportKeywords = [
   { key: '__historical_unclassified__', label: '历史未分类', jobCount: 5, lastSeen: '2026-07-12T08:00:00.000Z' },
   { key: 'ai-agent', label: 'AI Agent', jobCount: 18, lastSeen: '2026-07-10T08:00:00.000Z' },

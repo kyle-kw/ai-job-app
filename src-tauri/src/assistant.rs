@@ -3,6 +3,7 @@ use crate::db::{ensure_resume_item_ids, Database, InterviewPreparationCacheRecor
 use crate::llm;
 use crate::models::*;
 use crate::scoring;
+use crate::secrets::redact;
 use crate::skills;
 use crate::time;
 use crate::AppState;
@@ -165,6 +166,16 @@ async fn analyze_job_internal(
 }
 
 #[tauri::command]
+pub async fn start_fit_batch_for_query(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    query: JobQuery,
+) -> Result<String, String> {
+    let ids = state.db.job_ids_for_query(&query)?;
+    start_fit_batch(app, state, ids).await
+}
+
+#[tauri::command]
 pub async fn start_fit_batch(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -186,7 +197,9 @@ pub async fn start_fit_batch(
         .active_resume()?
         .ok_or_else(|| "请先导入主简历。".to_string())?;
     let task = new_task("fit", &format!("批量分析 {} 个岗位", ids.len()));
-    state.db.save_task(&task)?;
+    if !state.db.reserve_task(&task)? {
+        return Err("已有批量匹配任务正在排队或运行。".into());
+    }
     emit_task(&app, &task);
     let task_id = task.id.clone();
     let db = state.db.clone();
@@ -330,9 +343,7 @@ pub async fn generate_interview_preparation(
         resume.as_ref(),
         &provider_fingerprint,
     );
-    if !force.unwrap_or(false)
-        && state.db.interview_preparation_by_key(&cache_key)?.is_some()
-    {
+    if !force.unwrap_or(false) && state.db.interview_preparation_by_key(&cache_key)?.is_some() {
         return interview_preparation_state(&state.db, &keyword_keys);
     }
     let input = json!({
@@ -748,6 +759,9 @@ pub fn apply_resume_chat_edits(
         });
     }
     ensure_resume_item_ids(&mut candidate);
+    // The earlier read improves the error message only. commit_resume repeats
+    // expected_version inside its write transaction and is the authoritative
+    // guard against a concurrent resume update in this TOCTOU window.
     state.db.commit_resume(
         candidate,
         request.expected_version,
@@ -1151,20 +1165,6 @@ fn update_task(
 
 fn emit_task(app: &AppHandle, task: &TaskRun) {
     let _ = app.emit("task://event", task);
-}
-
-fn redact(value: &str) -> String {
-    value
-        .split_whitespace()
-        .map(|token| {
-            if token.starts_with("sk-") || token.starts_with("tp-") {
-                "[REDACTED]"
-            } else {
-                token
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 #[cfg(test)]

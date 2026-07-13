@@ -1,13 +1,17 @@
 use crate::models::{
-    AiProviderConfig, AppSettings, BossProfileState, InterviewPreparation, Job, ReportKeyword,
-    ResumeCommitResult, ResumeEducation, ResumeProfile, ResumeVersionDetail, ResumeVersionSummary, ScrapeRun,
-    TaskRun,
+    AiProviderConfig, AppSettings, BossProfileState, InterviewPreparation, Job, JobOption, JobPage,
+    JobQuery, ReportKeyword, ResumeCommitResult, ResumeEducation, ResumeProfile,
+    ResumeVersionDetail, ResumeVersionSummary, ScrapeRun, TaskRun,
 };
 use crate::time;
+use base64::Engine;
+use rusqlite::types::Value as SqlValue;
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Transaction};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 mod providers;
 
@@ -43,6 +47,46 @@ pub struct InterviewPreparationCacheRecord {
     pub skill_version: String,
     pub generated_at: String,
     pub preparation: InterviewPreparation,
+}
+
+const JOB_PAGE_SIZE: usize = 50;
+
+#[derive(Debug)]
+struct JobQueryMetadata {
+    search_text: String,
+    salary_min: Option<f64>,
+    salary_max: Option<f64>,
+    company_scale_code: String,
+    is_new: i64,
+    fit_score: Option<i64>,
+    has_description: i64,
+    has_structured_details: i64,
+}
+
+impl JobQueryMetadata {
+    fn from_job(job: &Job) -> Self {
+        let (salary_min, salary_max) = parse_salary_range(&job.salary)
+            .map(|(minimum, maximum)| (Some(minimum), Some(maximum)))
+            .unwrap_or((None, None));
+        Self {
+            search_text: format!("{} {} {}", job.title, job.company, job.skills.join(" "))
+                .to_lowercase(),
+            salary_min,
+            salary_max,
+            company_scale_code: normalize_company_scale_code(&job.company_scale),
+            is_new: i64::from(job.is_new),
+            fit_score: job.fit.as_ref().map(|fit| fit.overall_score),
+            has_description: i64::from(!job.description.trim().is_empty()),
+            has_structured_details: i64::from(job.structured_details.is_some()),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct JobCursor {
+    score: i64,
+    last_seen: String,
+    id: String,
 }
 
 impl Database {
@@ -155,6 +199,7 @@ impl Database {
             .map_err(|error| error.to_string())?;
         self.migrate_v2()?;
         self.migrate_v3()?;
+        self.migrate_v4()?;
         self.recover_interrupted_tasks()?;
         Ok(())
     }
@@ -398,6 +443,98 @@ impl Database {
         Ok(())
     }
 
+    fn migrate_v4(&self) -> Result<(), String> {
+        let connection = self.connect()?;
+        let already_applied = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version=4)",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(|error| error.to_string())?;
+        if already_applied {
+            return Ok(());
+        }
+        let columns = {
+            let mut statement = connection
+                .prepare("PRAGMA table_info(jobs)")
+                .map_err(|error| error.to_string())?;
+            let result = statement
+                .query_map([], |row| row.get::<_, String>(1))
+                .map_err(|error| error.to_string())?
+                .collect::<Result<HashSet<_>, _>>()
+                .map_err(|error| error.to_string())?;
+            result
+        };
+        let additions = [
+            (
+                "search_text",
+                "ALTER TABLE jobs ADD COLUMN search_text TEXT NOT NULL DEFAULT ''",
+            ),
+            ("salary_min", "ALTER TABLE jobs ADD COLUMN salary_min REAL"),
+            ("salary_max", "ALTER TABLE jobs ADD COLUMN salary_max REAL"),
+            (
+                "company_scale_code",
+                "ALTER TABLE jobs ADD COLUMN company_scale_code TEXT NOT NULL DEFAULT ''",
+            ),
+            (
+                "query_is_new",
+                "ALTER TABLE jobs ADD COLUMN query_is_new INTEGER NOT NULL DEFAULT 0",
+            ),
+            ("fit_score", "ALTER TABLE jobs ADD COLUMN fit_score INTEGER"),
+            (
+                "has_description",
+                "ALTER TABLE jobs ADD COLUMN has_description INTEGER NOT NULL DEFAULT 0",
+            ),
+            (
+                "has_structured_details",
+                "ALTER TABLE jobs ADD COLUMN has_structured_details INTEGER NOT NULL DEFAULT 0",
+            ),
+        ];
+        for (name, sql) in additions {
+            if !columns.contains(name) {
+                connection
+                    .execute(sql, [])
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+        connection
+            .execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_jobs_page ON jobs(fit_score DESC, last_seen DESC, id ASC);
+                 CREATE INDEX IF NOT EXISTS idx_jobs_pending_detail ON jobs(has_description, has_structured_details);
+                 CREATE INDEX IF NOT EXISTS idx_jobs_source_detail ON jobs(source, has_description);",
+            )
+            .map_err(|error| error.to_string())?;
+        let jobs = {
+            let mut statement = connection
+                .prepare("SELECT id,payload_json FROM jobs")
+                .map_err(|error| error.to_string())?;
+            let result = statement
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(|error| error.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| error.to_string())?;
+            result
+        };
+        for (id, payload) in jobs {
+            let job: Job = serde_json::from_str(&payload).map_err(|error| error.to_string())?;
+            let meta = JobQueryMetadata::from_job(&job);
+            connection.execute(
+                "UPDATE jobs SET search_text=?1,salary_min=?2,salary_max=?3,company_scale_code=?4,query_is_new=?5,fit_score=?6,has_description=?7,has_structured_details=?8 WHERE id=?9",
+                params![meta.search_text, meta.salary_min, meta.salary_max, meta.company_scale_code, meta.is_new, meta.fit_score, meta.has_description, meta.has_structured_details, id],
+            ).map_err(|error| error.to_string())?;
+        }
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (4, datetime('now'))",
+                [],
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
     pub fn list_jobs(&self) -> Result<Vec<Job>, String> {
         let connection = self.connect()?;
         let mut statement = connection
@@ -411,6 +548,120 @@ impl Database {
             serde_json::from_str(&json).map_err(|error| error.to_string())
         })
         .collect()
+    }
+
+    pub fn list_jobs_page(&self, query: &JobQuery) -> Result<JobPage, String> {
+        let connection = self.connect()?;
+        let (where_without_cursor, count_values) = job_query_where(query, false)?;
+        let total = connection
+            .query_row(
+                &format!("SELECT COUNT(*) FROM jobs WHERE {where_without_cursor}"),
+                params_from_iter(count_values.iter()),
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|error| error.to_string())?;
+        let pending_detail_count = connection
+            .query_row(
+                "SELECT COUNT(*) FROM jobs WHERE has_description=1 AND has_structured_details=0",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|error| error.to_string())?;
+        let (where_clause, values) = job_query_where(query, true)?;
+        let sql = format!(
+            "SELECT payload_json,COALESCE(fit_score,0),last_seen,id FROM jobs WHERE {where_clause} ORDER BY COALESCE(fit_score,0) DESC,last_seen DESC,id ASC LIMIT {}",
+            JOB_PAGE_SIZE + 1
+        );
+        let mut statement = connection
+            .prepare(&sql)
+            .map_err(|error| error.to_string())?;
+        let rows = statement
+            .query_map(params_from_iter(values.iter()), |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })
+            .map_err(|error| error.to_string())?;
+        let mut records = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+        let has_more = records.len() > JOB_PAGE_SIZE;
+        records.truncate(JOB_PAGE_SIZE);
+        let next_cursor = if has_more {
+            records
+                .last()
+                .map(|(_, score, last_seen, id)| {
+                    encode_job_cursor(&JobCursor {
+                        score: *score,
+                        last_seen: last_seen.clone(),
+                        id: id.clone(),
+                    })
+                })
+                .transpose()?
+        } else {
+            None
+        };
+        let items = records
+            .into_iter()
+            .map(|(payload, _, _, _)| {
+                serde_json::from_str(&payload).map_err(|error| error.to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(JobPage {
+            items,
+            total,
+            pending_detail_count,
+            next_cursor,
+        })
+    }
+
+    pub fn list_job_options(&self, query: &str) -> Result<Vec<JobOption>, String> {
+        let connection = self.connect()?;
+        let normalized = query.trim().to_lowercase();
+        let pattern = escaped_like_pattern(&normalized);
+        let mut statement = connection
+            .prepare(
+                "SELECT id,title,company,last_seen FROM jobs WHERE ?1='' OR search_text LIKE ?2 ESCAPE '\\' ORDER BY last_seen DESC,id ASC LIMIT 50",
+            )
+            .map_err(|error| error.to_string())?;
+        let rows = statement
+            .query_map(params![normalized, pattern], |row| {
+                Ok(JobOption {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    company: row.get(2)?,
+                    last_seen: row.get(3)?,
+                })
+            })
+            .map_err(|error| error.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn job_ids_for_query(&self, query: &JobQuery) -> Result<Vec<String>, String> {
+        let mut query = query.clone();
+        query.cursor = None;
+        let (where_clause, values) = job_query_where(&query, false)?;
+        let connection = self.connect()?;
+        let mut statement = connection
+            .prepare(&format!("SELECT id FROM jobs WHERE {where_clause} ORDER BY COALESCE(fit_score,0) DESC,last_seen DESC,id ASC"))
+            .map_err(|error| error.to_string())?;
+        let rows = statement
+            .query_map(params_from_iter(values.iter()), |row| {
+                row.get::<_, String>(0)
+            })
+            .map_err(|error| error.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn pending_detail_jobs(&self) -> Result<Vec<Job>, String> {
+        self.list_json(
+            "SELECT payload_json FROM jobs WHERE has_description=1 AND has_structured_details=0 ORDER BY last_seen DESC",
+        )
     }
 
     pub fn list_report_keywords(&self) -> Result<Vec<ReportKeyword>, String> {
@@ -483,19 +734,15 @@ impl Database {
     }
 
     pub fn completed_detail_external_ids(&self, source: &str) -> Result<Vec<String>, String> {
-        let mut ids = self
-            .list_jobs()?
-            .into_iter()
-            .filter(|job| {
-                job.source.eq_ignore_ascii_case(source)
-                    && !job.external_id.trim().is_empty()
-                    && !job.description.trim().is_empty()
-            })
-            .map(|job| job.external_id)
-            .collect::<Vec<_>>();
-        ids.sort();
-        ids.dedup();
-        Ok(ids)
+        let connection = self.connect()?;
+        let mut statement = connection
+            .prepare("SELECT DISTINCT external_key FROM jobs WHERE lower(source)=lower(?1) AND has_description=1 AND external_key NOT LIKE 'fp:%' ORDER BY external_key")
+            .map_err(|error| error.to_string())?;
+        let rows = statement
+            .query_map([source], |row| row.get::<_, String>(0))
+            .map_err(|error| error.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())
     }
 
     pub fn get_job(&self, id: &str) -> Result<Option<Job>, String> {
@@ -563,12 +810,19 @@ impl Database {
     pub fn save_job(&self, job: &Job) -> Result<(), String> {
         let connection = self.connect()?;
         let payload = serde_json::to_string(job).map_err(|error| error.to_string())?;
-        connection
+        let meta = JobQueryMetadata::from_job(job);
+        let changed = connection
             .execute(
-                "UPDATE jobs SET payload_json = ?1, last_seen = ?2 WHERE id = ?3",
-                params![payload, job.last_seen, job.id],
+                "UPDATE jobs SET payload_json=?1,last_seen=?2,search_text=?3,salary_min=?4,salary_max=?5,company_scale_code=?6,query_is_new=?7,fit_score=?8,has_description=?9,has_structured_details=?10 WHERE id=?11",
+                params![payload, job.last_seen, meta.search_text, meta.salary_min, meta.salary_max, meta.company_scale_code, meta.is_new, meta.fit_score, meta.has_description, meta.has_structured_details, job.id],
             )
             .map_err(|error| error.to_string())?;
+        if changed == 0 {
+            return Err(format!(
+                "Job {} does not exist; changes were not saved.",
+                job.id
+            ));
+        }
         Ok(())
     }
 
@@ -766,6 +1020,16 @@ impl Database {
         Ok(())
     }
 
+    pub fn reserve_task(&self, task: &TaskRun) -> Result<bool, String> {
+        let connection = self.connect()?;
+        let payload = serde_json::to_string(task).map_err(|error| error.to_string())?;
+        let changed = connection.execute(
+            "INSERT INTO task_runs(id,payload_json,updated_at) SELECT ?1,?2,?3 WHERE NOT EXISTS (SELECT 1 FROM task_runs WHERE json_extract(payload_json,'$.kind')=?4 AND json_extract(payload_json,'$.state') IN ('queued','running'))",
+            params![task.id, payload, task.updated_at, task.kind],
+        ).map_err(|error| error.to_string())?;
+        Ok(changed == 1)
+    }
+
     pub fn list_scrape_runs(&self) -> Result<Vec<ScrapeRun>, String> {
         self.list_json("SELECT payload_json FROM scrape_runs ORDER BY started_at DESC LIMIT 20")
     }
@@ -828,10 +1092,18 @@ impl Database {
     }
 
     pub fn running_task(&self, kind: &str) -> Result<Option<TaskRun>, String> {
-        Ok(self
-            .list_tasks()?
-            .into_iter()
-            .find(|task| task.kind == kind && matches!(task.state.as_str(), "queued" | "running")))
+        let connection = self.connect()?;
+        let payload = connection
+            .query_row(
+                "SELECT payload_json FROM task_runs WHERE json_extract(payload_json,'$.kind')=?1 AND json_extract(payload_json,'$.state') IN ('queued','running') ORDER BY updated_at DESC LIMIT 1",
+                [kind],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?;
+        payload
+            .map(|value| serde_json::from_str(&value).map_err(|error| error.to_string()))
+            .transpose()
     }
 
     pub fn recover_interrupted_tasks(&self) -> Result<(), String> {
@@ -914,25 +1186,6 @@ impl Database {
         Ok(())
     }
 
-    pub fn bool_flag(&self, key: &str) -> Result<bool, String> {
-        let connection = self.connect()?;
-        let value = connection
-            .query_row(
-                "SELECT payload_json FROM app_settings WHERE key=?1",
-                [key],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()
-            .map_err(|error| error.to_string())?;
-        Ok(value.as_deref() == Some("true"))
-    }
-
-    pub fn set_bool_flag(&self, key: &str, value: bool) -> Result<(), String> {
-        let connection = self.connect()?;
-        connection.execute("INSERT INTO app_settings(key, payload_json) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET payload_json=excluded.payload_json", params![key, if value { "true" } else { "false" }]).map_err(|error| error.to_string())?;
-        Ok(())
-    }
-
     fn list_json<T: serde::de::DeserializeOwned>(&self, query: &str) -> Result<Vec<T>, String> {
         let connection = self.connect()?;
         let mut statement = connection
@@ -1006,14 +1259,19 @@ fn upsert_job_in_transaction(
         stats.inserted = 1;
     }
     let payload = serde_json::to_string(&job).map_err(|error| error.to_string())?;
+    let meta = JobQueryMetadata::from_job(&job);
     transaction
         .execute(
-            r#"INSERT INTO jobs(id, source, external_key, fingerprint, title, company, location, first_seen, last_seen, payload_json)
-               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            r#"INSERT INTO jobs(id,source,external_key,fingerprint,title,company,location,first_seen,last_seen,payload_json,search_text,salary_min,salary_max,company_scale_code,query_is_new,fit_score,has_description,has_structured_details)
+               VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)
                ON CONFLICT(source, external_key) DO UPDATE SET
                  fingerprint=excluded.fingerprint, title=excluded.title, company=excluded.company,
-                 location=excluded.location, last_seen=excluded.last_seen, payload_json=excluded.payload_json"#,
-            params![job.id, job.source, external_key, fingerprint, job.title, job.company, job.location, job.first_seen, job.last_seen, payload],
+                 location=excluded.location,last_seen=excluded.last_seen,payload_json=excluded.payload_json,
+                 search_text=excluded.search_text,salary_min=excluded.salary_min,salary_max=excluded.salary_max,
+                 company_scale_code=excluded.company_scale_code,query_is_new=excluded.query_is_new,
+                 fit_score=excluded.fit_score,has_description=excluded.has_description,
+                 has_structured_details=excluded.has_structured_details"#,
+            params![job.id,job.source,external_key,fingerprint,job.title,job.company,job.location,job.first_seen,job.last_seen,payload,meta.search_text,meta.salary_min,meta.salary_max,meta.company_scale_code,meta.is_new,meta.fit_score,meta.has_description,meta.has_structured_details],
         )
         .map_err(|error| error.to_string())?;
     if let Some(keyword) = keyword {
@@ -1071,6 +1329,196 @@ fn associate_job_keyword(
     Ok(())
 }
 
+fn escaped_like_pattern(value: &str) -> String {
+    format!(
+        "%{}%",
+        value
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_")
+    )
+}
+
+fn push_job_condition(
+    conditions: &mut Vec<String>,
+    values: &mut Vec<SqlValue>,
+    condition: &str,
+    value: SqlValue,
+) {
+    values.push(value);
+    conditions.push(condition.replace('?', &format!("?{}", values.len())));
+}
+
+fn job_query_where(
+    query: &JobQuery,
+    include_cursor: bool,
+) -> Result<(String, Vec<SqlValue>), String> {
+    let mut conditions = vec!["1=1".to_string()];
+    let mut values = Vec::<SqlValue>::new();
+    let text = query.query.trim().to_lowercase();
+    if !text.is_empty() {
+        push_job_condition(
+            &mut conditions,
+            &mut values,
+            "search_text LIKE ? ESCAPE '\\'",
+            escaped_like_pattern(&text).into(),
+        );
+    }
+    if query.min_score > 0 {
+        push_job_condition(
+            &mut conditions,
+            &mut values,
+            "COALESCE(fit_score,0)>=?",
+            query.min_score.into(),
+        );
+    }
+    if query.only_new {
+        conditions.push("query_is_new=1".into());
+    }
+    if !query.company_scale.trim().is_empty() {
+        push_job_condition(
+            &mut conditions,
+            &mut values,
+            "company_scale_code=?",
+            query.company_scale.trim().to_string().into(),
+        );
+    }
+    if let Some((minimum, maximum)) = salary_filter_range(query.salary.trim()) {
+        if maximum.is_finite() {
+            values.push(maximum.into());
+            let max_index = values.len();
+            values.push(minimum.into());
+            let min_index = values.len();
+            conditions.push(format!(
+                "salary_min<=?{max_index} AND salary_max>=?{min_index}"
+            ));
+        } else {
+            push_job_condition(
+                &mut conditions,
+                &mut values,
+                "salary_max>=?",
+                minimum.into(),
+            );
+        }
+    }
+    if include_cursor {
+        if let Some(encoded) = query.cursor.as_deref() {
+            let cursor = decode_job_cursor(encoded)?;
+            values.push(cursor.score.into());
+            let score_less = values.len();
+            values.push(cursor.score.into());
+            let score_equal = values.len();
+            values.push(cursor.last_seen.clone().into());
+            let seen_less = values.len();
+            values.push(cursor.last_seen.into());
+            let seen_equal = values.len();
+            values.push(cursor.id.into());
+            let id_after = values.len();
+            conditions.push(format!(
+                "(COALESCE(fit_score,0)<?{score_less} OR (COALESCE(fit_score,0)=?{score_equal} AND (last_seen<?{seen_less} OR (last_seen=?{seen_equal} AND id>?{id_after}))))"
+            ));
+        }
+    }
+    Ok((conditions.join(" AND "), values))
+}
+
+fn encode_job_cursor(cursor: &JobCursor) -> Result<String, String> {
+    let json = serde_json::to_vec(cursor).map_err(|error| error.to_string())?;
+    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(json))
+}
+
+fn decode_job_cursor(value: &str) -> Result<JobCursor, String> {
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(value)
+        .map_err(|_| "Invalid job page cursor.".to_string())?;
+    serde_json::from_slice(&bytes).map_err(|_| "Invalid job page cursor.".to_string())
+}
+
+fn salary_filter_range(code: &str) -> Option<(f64, f64)> {
+    Some(match code {
+        "402" => (0.0, 3.0),
+        "403" => (3.0, 5.0),
+        "404" => (5.0, 10.0),
+        "405" => (10.0, 20.0),
+        "406" => (20.0, 50.0),
+        "407" => (50.0, f64::INFINITY),
+        _ => return None,
+    })
+}
+
+fn parse_salary_range(value: &str) -> Option<(f64, f64)> {
+    static RANGE: OnceLock<regex::Regex> = OnceLock::new();
+    static SINGLE: OnceLock<regex::Regex> = OnceLock::new();
+    let normalized = value.replace(',', "");
+    if normalized.trim().is_empty()
+        || normalized.contains("面议")
+        || normalized.to_lowercase().contains("negotiable")
+    {
+        return None;
+    }
+    let range = RANGE.get_or_init(|| {
+        regex::Regex::new(
+            r"(?i)(\d+(?:\.\d+)?)\s*(?:k|千)?\s*(?:-|~|–|—|至)\s*(\d+(?:\.\d+)?)\s*(?:k|千)",
+        )
+        .expect("salary range regex")
+    });
+    if let Some(captures) = range.captures(&normalized) {
+        let left = captures.get(1)?.as_str().parse::<f64>().ok()?;
+        let right = captures.get(2)?.as_str().parse::<f64>().ok()?;
+        return Some((left.min(right), left.max(right)));
+    }
+    let single = SINGLE.get_or_init(|| {
+        regex::Regex::new(r"(?i)(\d+(?:\.\d+)?)\s*(?:k|千)").expect("salary regex")
+    });
+    let amount = single
+        .captures(&normalized)?
+        .get(1)?
+        .as_str()
+        .parse::<f64>()
+        .ok()?;
+    if normalized.contains("以下") || normalized.contains("以内") {
+        Some((0.0, amount))
+    } else if normalized.contains("以上") || normalized.contains('+') {
+        Some((amount, f64::INFINITY))
+    } else {
+        Some((amount, amount))
+    }
+}
+
+fn normalize_company_scale_code(value: &str) -> String {
+    let normalized = value
+        .replace([' ', ',', '，'], "")
+        .replace(['–', '—', '~', '至'], "-");
+    if matches!(
+        normalized.as_str(),
+        "301" | "302" | "303" | "304" | "305" | "306"
+    ) {
+        return normalized;
+    }
+    for (needle, code) in [
+        ("20-99", "302"),
+        ("20-100", "302"),
+        ("100-499", "303"),
+        ("100-500", "303"),
+        ("500-999", "304"),
+        ("500-1000", "304"),
+        ("1000-9999", "305"),
+        ("1000-10000", "305"),
+    ] {
+        if normalized.contains(needle) {
+            return code.into();
+        }
+    }
+    if normalized.contains("10000") || normalized.contains("1万人") || normalized.contains("万人")
+    {
+        "306".into()
+    } else if normalized.contains("0-20") || normalized.contains("20人以下") {
+        "301".into()
+    } else {
+        String::new()
+    }
+}
+
 pub fn normalize_keyword_key(value: &str) -> String {
     normalize_keyword_label(value).to_lowercase()
 }
@@ -1097,6 +1545,7 @@ fn default_xiaomi_provider() -> AiProviderConfig {
         name: "默认模型 · 小米 MiMo".into(),
         base_url: "https://token-plan-sgp.xiaomimimo.com/v1".into(),
         model: "mimo-v2.5".into(),
+        allow_insecure_http: false,
         api_key: None,
         api_key_ref: None,
         is_default: true,
@@ -1114,6 +1563,7 @@ fn default_custom_provider() -> AiProviderConfig {
         name: "自定义 OpenAI 兼容服务".into(),
         base_url: String::new(),
         model: String::new(),
+        allow_insecure_http: false,
         api_key: None,
         api_key_ref: None,
         is_default: false,
@@ -1170,11 +1620,19 @@ fn split_date_range(value: &str) -> Option<(String, String)> {
     )
     .ok()?;
     let captures = expression.captures(value)?;
-    Some((captures.get(1)?.as_str().trim().to_string(), captures.get(2)?.as_str().trim().to_string()))
+    Some((
+        captures.get(1)?.as_str().trim().to_string(),
+        captures.get(2)?.as_str().trim().to_string(),
+    ))
 }
 
 fn clean_date(value: &str) -> String {
-    value.trim().trim_matches(|character: char| matches!(character, '-' | '\u{2013}' | '\u{2014}') || character.is_whitespace()).to_string()
+    value
+        .trim()
+        .trim_matches(|character: char| {
+            matches!(character, '-' | '\u{2013}' | '\u{2014}') || character.is_whitespace()
+        })
+        .to_string()
 }
 
 pub fn normalize_date_pair(start: &mut String, end: &mut String) {
@@ -1745,5 +2203,74 @@ mod tests {
         assert_eq!(migrated.model, "mimo-v2.5");
         assert!(!migrated.verified);
         assert!(!migrated.vision_verified);
+    }
+
+    #[test]
+    fn pagination_and_atomic_task_reservation_are_stable() {
+        let dir = tempdir().unwrap();
+        let db = Database::new(dir.path().join("test.db"));
+        db.initialize().unwrap();
+        for index in 0..61 {
+            let mut value = job(&format!("id-{index:03}"), "20-30K");
+            value.title = format!("Rust Engineer {index:03}");
+            value.last_seen = format!("2026-01-{:02}T10:00:00+08:00", index % 28 + 1);
+            db.upsert_job(value).unwrap();
+        }
+        let query = JobQuery {
+            query: "rust".into(),
+            ..JobQuery::default()
+        };
+        let first = db.list_jobs_page(&query).unwrap();
+        assert_eq!(first.total, 61);
+        assert_eq!(first.items.len(), JOB_PAGE_SIZE);
+        let second = db
+            .list_jobs_page(&JobQuery {
+                cursor: first.next_cursor,
+                ..query
+            })
+            .unwrap();
+        assert_eq!(second.items.len(), 11);
+        let first_ids = first
+            .items
+            .into_iter()
+            .map(|job| job.id)
+            .collect::<HashSet<_>>();
+        assert!(second.items.iter().all(|job| !first_ids.contains(&job.id)));
+
+        let now = time::shanghai_rfc3339();
+        let task = TaskRun {
+            id: "task-1".into(),
+            kind: "scrape".into(),
+            title: "one".into(),
+            state: "queued".into(),
+            progress: 0,
+            message: String::new(),
+            recoverable_error: None,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+            logs: vec![],
+        };
+        let competing = TaskRun {
+            id: "task-2".into(),
+            ..task.clone()
+        };
+        assert!(db.reserve_task(&task).unwrap());
+        assert!(!db.reserve_task(&competing).unwrap());
+    }
+
+    #[test]
+    fn missing_jobs_and_stale_resume_versions_fail_loudly() {
+        let dir = tempdir().unwrap();
+        let db = Database::new(dir.path().join("test.db"));
+        db.initialize().unwrap();
+        assert!(db.save_job(&job("missing", "20K")).is_err());
+
+        let initial = resume(vec![]);
+        db.commit_resume(initial.clone(), 0, "test", "initial", None, None, None)
+            .unwrap();
+        let error = db
+            .commit_resume(initial, 0, "test", "stale", None, None, None)
+            .unwrap_err();
+        assert!(error.contains("version_conflict"));
     }
 }

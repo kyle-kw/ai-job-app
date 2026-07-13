@@ -2,6 +2,7 @@ use crate::analytics;
 use crate::llm;
 use crate::models::*;
 use crate::scoring;
+use crate::secrets::redact;
 use crate::sidecar;
 use crate::skills;
 use crate::time;
@@ -46,7 +47,44 @@ const SUPPORTED_SCRAPE_CITIES: [&str; 25] = [
 const MAX_RESUME_FILE_BYTES: usize = 25 * 1024 * 1024;
 const MAX_RESUME_BASE64_BYTES: usize = MAX_RESUME_FILE_BYTES.div_ceil(3) * 4;
 
-fn validate_resume_import_size(encoded_bytes: usize, decoded_bytes: Option<usize>) -> Result<(), String> {
+struct ImportArtifacts {
+    input_path: PathBuf,
+    image_dir: PathBuf,
+}
+
+impl ImportArtifacts {
+    fn new(input_path: PathBuf) -> Self {
+        let stem = input_path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default();
+        let image_dir = input_path.with_file_name(format!("{stem}-pages"));
+        Self {
+            input_path,
+            image_dir,
+        }
+    }
+}
+
+impl Drop for ImportArtifacts {
+    fn drop(&mut self) {
+        match std::fs::remove_file(&self.input_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => eprintln!("failed to remove resume import file: {error}"),
+        }
+        match std::fs::remove_dir_all(&self.image_dir) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => eprintln!("failed to remove resume import images: {error}"),
+        }
+    }
+}
+
+fn validate_resume_import_size(
+    encoded_bytes: usize,
+    decoded_bytes: Option<usize>,
+) -> Result<(), String> {
     if encoded_bytes > MAX_RESUME_BASE64_BYTES
         || decoded_bytes.is_some_and(|size| size > MAX_RESUME_FILE_BYTES)
     {
@@ -88,8 +126,6 @@ pub fn bootstrap(state: State<'_, AppState>) -> Result<BootstrapSnapshot, String
     let usable_provider = providers.iter().find(|provider| {
         provider.verified && provider.is_default && llm::secret_available(provider)
     });
-    let mut jobs = state.db.list_jobs()?;
-    crate::assistant::mark_fit_cache_status(&mut jobs, resume.as_ref(), usable_provider);
     let boss_profile = state.db.boss_profile_state()?;
     let boss_running = state.db.running_task("boss-login")?.is_some();
     let boss_configuration = if boss_running {
@@ -152,13 +188,40 @@ pub fn bootstrap(state: State<'_, AppState>) -> Result<BootstrapSnapshot, String
             boss: boss_configuration,
             llm: llm_configuration,
         },
-        jobs,
         resume,
         providers,
         tasks: state.db.list_tasks()?,
         scrape_runs: state.db.list_scrape_runs()?,
         settings: state.db.settings()?,
     })
+}
+
+#[tauri::command]
+pub fn list_jobs_page(state: State<'_, AppState>, query: JobQuery) -> Result<JobPage, String> {
+    let providers = state.db.list_providers()?;
+    let resume = state.db.active_resume()?;
+    let provider = providers.iter().find(|provider| {
+        provider.verified && provider.is_default && llm::secret_available(provider)
+    });
+    let mut page = state.db.list_jobs_page(&query)?;
+    crate::assistant::mark_fit_cache_status(&mut page.items, resume.as_ref(), provider);
+    Ok(page)
+}
+
+#[tauri::command]
+pub fn list_job_options(
+    state: State<'_, AppState>,
+    query: String,
+) -> Result<Vec<JobOption>, String> {
+    state.db.list_job_options(&query)
+}
+
+#[tauri::command]
+pub fn get_job(state: State<'_, AppState>, job_id: String) -> Result<Job, String> {
+    state
+        .db
+        .get_job(&job_id)?
+        .ok_or_else(|| "Job does not exist.".to_string())
 }
 
 #[tauri::command]
@@ -262,7 +325,9 @@ pub async fn start_scrape(
         );
     let estimated_minutes = i64::from(spec.pages) * 20;
     let task = new_task("scrape", &format!("抓取 {} · {}", spec.city, spec.keyword));
-    state.db.save_task(&task)?;
+    if !state.db.reserve_task(&task)? {
+        return Err("已有同类抓取任务正在排队或运行。".into());
+    }
     emit_task(&app, &task);
     let task_id = task.id.clone();
     let db = state.db.clone();
@@ -503,12 +568,7 @@ pub async fn start_job_detail_extraction(
         .db
         .default_provider()?
         .ok_or_else(|| "请先在设置中配置并验证默认 AI 模型。".to_string())?;
-    let jobs = state
-        .db
-        .list_jobs()?
-        .into_iter()
-        .filter(|job| !job.description.trim().is_empty() && job.structured_details.is_none())
-        .collect::<Vec<_>>();
+    let jobs = state.db.pending_detail_jobs()?;
     if jobs.is_empty() {
         return Err("没有待提取的岗位详情。".into());
     }
@@ -517,7 +577,9 @@ pub async fn start_job_detail_extraction(
         "job-detail-extraction",
         &format!("批量提取 {} 条岗位详情", jobs.len()),
     );
-    state.db.save_task(&task)?;
+    if !state.db.reserve_task(&task)? {
+        return Err("已有岗位详情提取任务正在排队或运行。".into());
+    }
     emit_task(&app, &task);
     let task_id = task.id.clone();
     let db = state.db.clone();
@@ -617,13 +679,24 @@ pub async fn setup_boss(
             "配置 BOSS 专用浏览器"
         },
     );
+    if !state.db.reserve_task(&task)? {
+        return Err("已有 BOSS 登录任务正在排队或运行。".into());
+    }
     let mut profile = state.db.boss_profile_state()?;
     profile.configured = false;
     profile.last_attempt_status = "running".into();
     profile.last_attempt_at = Some(time::shanghai_rfc3339());
     profile.last_error = None;
-    state.db.save_boss_profile_state(&profile)?;
-    state.db.save_task(&task)?;
+    if let Err(error) = state.db.save_boss_profile_state(&profile) {
+        let mut failed_task = task.clone();
+        failed_task.state = "failed".into();
+        failed_task.progress = 100;
+        failed_task.message = "无法保存 BOSS 配置状态".into();
+        failed_task.recoverable_error = Some(redact(&error));
+        failed_task.updated_at = time::shanghai_rfc3339();
+        let _ = state.db.save_task(&failed_task);
+        return Err(error);
+    }
     emit_task(&app, &task);
     let task_id = task.id.clone();
     let db = state.db.clone();
@@ -768,13 +841,17 @@ pub async fn import_resume(
     std::fs::create_dir_all(&imports).map_err(|error| error.to_string())?;
     let input_path = imports.join(format!("{}.{}", Uuid::new_v4(), extension));
     std::fs::write(&input_path, bytes).map_err(|error| error.to_string())?;
+    let import_artifacts = ImportArtifacts::new(input_path.clone());
 
     let task = new_task("resume-import", &format!("解析 {}", payload.file_name));
-    state.db.save_task(&task)?;
+    if !state.db.reserve_task(&task)? {
+        return Err("已有简历导入任务正在排队或运行。".into());
+    }
     emit_task(&app, &task);
     let task_id = task.id.clone();
     let db = state.db.clone();
     tauri::async_runtime::spawn(async move {
+        let _import_artifacts = import_artifacts;
         let mut task = task;
         update_task(
             &app,
@@ -802,37 +879,101 @@ pub async fn import_resume(
                     let provider = db.default_provider().ok().flatten();
                     if scan_required {
                         let Some(vision_provider) = provider.as_ref() else {
-                            update_task(&app, &db, &mut task, "failed", 38, "扫描件需要图片识别模型", Some("请先在设置中配置并验证默认 AI 模型。".into()));
+                            update_task(
+                                &app,
+                                &db,
+                                &mut task,
+                                "failed",
+                                38,
+                                "扫描件需要图片识别模型",
+                                Some("请先在设置中配置并验证默认 AI 模型。".into()),
+                            );
                             return;
                         };
                         if !vision_provider.vision_verified {
-                            update_task(&app, &db, &mut task, "failed", 38, "默认模型未通过图片能力测试", Some("请在设置中重新测试支持图片的多模态模型。".into()));
+                            update_task(
+                                &app,
+                                &db,
+                                &mut task,
+                                "failed",
+                                38,
+                                "默认模型未通过图片能力测试",
+                                Some("请在设置中重新测试支持图片的多模态模型。".into()),
+                            );
                             return;
                         }
                         for page in &mut output.pages {
-                            let Some(image_path) = page.image_path.as_ref() else { continue; };
-                            update_task(&app, &db, &mut task, "running", 30 + (page.page_number as i64).min(10) * 2, &format!("正在识别扫描页 {}", page.page_number), None);
+                            let Some(image_path) = page.image_path.as_ref() else {
+                                continue;
+                            };
+                            update_task(
+                                &app,
+                                &db,
+                                &mut task,
+                                "running",
+                                30 + (page.page_number as i64).min(10) * 2,
+                                &format!("正在识别扫描页 {}", page.page_number),
+                                None,
+                            );
                             let image_bytes = match std::fs::read(image_path) {
                                 Ok(value) => value,
                                 Err(error) => {
-                                    update_task(&app, &db, &mut task, "failed", 40, "无法读取扫描页", Some(error.to_string()));
+                                    update_task(
+                                        &app,
+                                        &db,
+                                        &mut task,
+                                        "failed",
+                                        40,
+                                        "无法读取扫描页",
+                                        Some(error.to_string()),
+                                    );
                                     return;
                                 }
                             };
-                            let image_data_url = format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(image_bytes));
-                            match llm::transcribe_resume_page(vision_provider, &image_data_url, page.page_number).await {
+                            let image_data_url = format!(
+                                "data:image/png;base64,{}",
+                                base64::engine::general_purpose::STANDARD.encode(image_bytes)
+                            );
+                            match llm::transcribe_resume_page(
+                                vision_provider,
+                                &image_data_url,
+                                page.page_number,
+                            )
+                            .await
+                            {
                                 Ok(text) if !text.trim().is_empty() => page.text = text,
                                 Ok(_) => {
-                                    update_task(&app, &db, &mut task, "failed", 44, "扫描页识别结果为空", Some(format!("第 {} 页未识别到文字。", page.page_number)));
+                                    update_task(
+                                        &app,
+                                        &db,
+                                        &mut task,
+                                        "failed",
+                                        44,
+                                        "扫描页识别结果为空",
+                                        Some(format!("第 {} 页未识别到文字。", page.page_number)),
+                                    );
                                     return;
                                 }
                                 Err(error) => {
-                                    update_task(&app, &db, &mut task, "failed", 44, "扫描页识别失败", Some(error));
+                                    update_task(
+                                        &app,
+                                        &db,
+                                        &mut task,
+                                        "failed",
+                                        44,
+                                        "扫描页识别失败",
+                                        Some(error),
+                                    );
                                     return;
                                 }
                             }
                         }
-                        output.raw_text = output.pages.iter().map(|page| format!("--- Page {} ---\n{}", page.page_number, page.text)).collect::<Vec<_>>().join("\n\n");
+                        output.raw_text = output
+                            .pages
+                            .iter()
+                            .map(|page| format!("--- Page {} ---\n{}", page.page_number, page.text))
+                            .collect::<Vec<_>>()
+                            .join("\n\n");
                     }
                     let mut ai_extracted = false;
                     if let Some(provider) = provider {
@@ -854,7 +995,15 @@ pub async fn import_resume(
                         }
                     }
                     if scan_required && !ai_extracted {
-                        update_task(&app, &db, &mut task, "failed", 58, "扫描简历结构化失败", Some("图片已识别，但模型返回的简历结构无效，请重试或更换模型。".into()));
+                        update_task(
+                            &app,
+                            &db,
+                            &mut task,
+                            "failed",
+                            58,
+                            "扫描简历结构化失败",
+                            Some("图片已识别，但模型返回的简历结构无效，请重试或更换模型。".into()),
+                        );
                         return;
                     }
                     for fact in &mut output.profile.facts {
@@ -1061,7 +1210,11 @@ pub async fn generate_greeting(
         .filter(|fact| fact.confirmed)
         .collect::<Vec<_>>();
     let mut greeting = if let Some(provider) = state.db.default_provider()? {
-        let input = json!({"job":job,"resumeFacts":confirmed_facts,"maxChineseCharacters":60});
+        let input = json!({
+            "job": {"id":job.id,"title":job.title,"company":job.company,"skills":job.skills},
+            "resumeFacts":confirmed_facts,
+            "maxChineseCharacters":60
+        });
         llm::run_skill::<GreetingOutput>(&provider, skills::GREETING_MESSAGE, &input)
             .await
             .map(|output| output.text)
@@ -1088,7 +1241,11 @@ pub async fn render_resume(
         .active_resume()?
         .ok_or_else(|| "请先导入主简历。".to_string())?;
     let output_path = PathBuf::from(output_path);
-    if output_path.extension().and_then(|value| value.to_str()).is_none_or(|value| !value.eq_ignore_ascii_case("pdf")) {
+    if output_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_none_or(|value| !value.eq_ignore_ascii_case("pdf"))
+    {
         return Err("导出路径必须使用 .pdf 扩展名。".into());
     }
     if let Some(parent) = output_path.parent() {
@@ -1105,7 +1262,11 @@ pub async fn render_resume(
         .to_string();
     Ok(RenderResult {
         path: rendered_path,
-        file_name: output_path.file_name().and_then(|value| value.to_str()).unwrap_or("简历.pdf").to_string(),
+        file_name: output_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("简历.pdf")
+            .to_string(),
     })
 }
 
@@ -1221,15 +1382,11 @@ fn facts_from_profile(profile: &ResumeProfile) -> Vec<ResumeFact> {
         } else {
             education.degree.trim()
         };
-        let mut values = [
-            education.institution.trim(),
-            education.area.trim(),
-            degree,
-        ]
-        .into_iter()
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .collect::<Vec<_>>();
+        let mut values = [education.institution.trim(), education.area.trim(), degree]
+            .into_iter()
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .collect::<Vec<_>>();
         if !dates.is_empty() {
             values.push(dates);
         }
@@ -1322,29 +1479,31 @@ fn normalize_fact_value(value: &str) -> String {
         .to_lowercase()
 }
 
-fn redact(value: &str) -> String {
-    value
-        .split_whitespace()
-        .map(|token| {
-            if token.starts_with("sk-") || token.starts_with("tp-") {
-                "[REDACTED]"
-            } else {
-                token
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn resume_import_size_limit_checks_encoded_and_decoded_payloads() {
-        assert!(validate_resume_import_size(MAX_RESUME_BASE64_BYTES, Some(MAX_RESUME_FILE_BYTES)).is_ok());
+        assert!(
+            validate_resume_import_size(MAX_RESUME_BASE64_BYTES, Some(MAX_RESUME_FILE_BYTES))
+                .is_ok()
+        );
         assert!(validate_resume_import_size(MAX_RESUME_BASE64_BYTES + 1, None).is_err());
         assert!(validate_resume_import_size(4, Some(MAX_RESUME_FILE_BYTES + 1)).is_err());
+    }
+
+    #[test]
+    fn import_artifact_guard_removes_source_and_rendered_pages() {
+        let directory = tempfile::tempdir().unwrap();
+        let input = directory.path().join("resume.pdf");
+        let pages = directory.path().join("resume-pages");
+        std::fs::write(&input, b"resume").unwrap();
+        std::fs::create_dir(&pages).unwrap();
+        std::fs::write(pages.join("page-1.png"), b"image").unwrap();
+        drop(ImportArtifacts::new(input.clone()));
+        assert!(!input.exists());
+        assert!(!pages.exists());
     }
 
     #[test]

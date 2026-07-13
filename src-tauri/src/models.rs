@@ -162,6 +162,41 @@ pub struct Job {
     pub structured_details: Option<JobStructuredDetails>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobQuery {
+    #[serde(default)]
+    pub query: String,
+    #[serde(default)]
+    pub min_score: i64,
+    #[serde(default)]
+    pub only_new: bool,
+    #[serde(default)]
+    pub salary: String,
+    #[serde(default)]
+    pub company_scale: String,
+    #[serde(default)]
+    pub cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobPage {
+    pub items: Vec<Job>,
+    pub total: i64,
+    pub pending_detail_count: i64,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobOption {
+    pub id: String,
+    pub title: String,
+    pub company: String,
+    pub last_seen: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResumeFact {
@@ -430,6 +465,8 @@ pub struct AiProviderConfig {
     pub name: String,
     pub base_url: String,
     pub model: String,
+    #[serde(default)]
+    pub allow_insecure_http: bool,
     #[serde(default, skip_serializing)]
     pub api_key: Option<String>,
     #[serde(default)]
@@ -526,26 +563,12 @@ impl Default for BossProfileState {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
-    pub locale: String,
-    pub theme: String,
     pub advanced_mode: bool,
     pub telemetry: bool,
     pub privacy_acknowledged: bool,
-}
-
-impl Default for AppSettings {
-    fn default() -> Self {
-        Self {
-            locale: "zh-CN".into(),
-            theme: "light".into(),
-            advanced_mode: false,
-            telemetry: false,
-            privacy_acknowledged: false,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -553,7 +576,6 @@ impl Default for AppSettings {
 pub struct BootstrapSnapshot {
     pub readiness: Readiness,
     pub configuration: ConfigurationSnapshot,
-    pub jobs: Vec<Job>,
     pub resume: Option<ResumeProfile>,
     pub providers: Vec<AiProviderConfig>,
     pub tasks: Vec<TaskRun>,

@@ -217,6 +217,7 @@ export interface AiProviderConfig {
   name: string;
   baseUrl: string;
   model: string;
+  allowInsecureHttp: boolean;
   apiKey?: string;
   apiKeyRef?: string;
   isDefault: boolean;
@@ -258,8 +259,6 @@ export interface ConfigurationSnapshot {
 }
 
 export interface AppSettings {
-  locale: 'zh-CN' | 'en';
-  theme: 'light' | 'dark' | 'system';
   advancedMode: boolean;
   telemetry: false;
   privacyAcknowledged: boolean;
@@ -268,12 +267,34 @@ export interface AppSettings {
 export interface BootstrapSnapshot {
   readiness: Readiness;
   configuration: ConfigurationSnapshot;
-  jobs: Job[];
   resume: ResumeProfile | null;
   providers: AiProviderConfig[];
   tasks: TaskRun[];
   scrapeRuns: ScrapeRun[];
   settings: AppSettings;
+}
+
+export interface JobQuery {
+  query: string;
+  minScore: number;
+  onlyNew: boolean;
+  salary: '' | '402' | '403' | '404' | '405' | '406' | '407';
+  companyScale: '' | '301' | '302' | '303' | '304' | '305' | '306';
+  cursor?: string | null;
+}
+
+export interface JobPage {
+  items: Job[];
+  total: number;
+  pendingDetailCount: number;
+  nextCursor?: string | null;
+}
+
+export interface JobOption {
+  id: string;
+  title: string;
+  company: string;
+  lastSeen: string;
 }
 
 export interface ProviderTestResult {

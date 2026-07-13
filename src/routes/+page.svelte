@@ -130,12 +130,15 @@
             <p class="mb-5 text-sm leading-6 body-muted">填写 API Key 并验证连接。连接成功后 Key 才会保存到系统钥匙串；失败不会保存本次输入。</p>
             <div class="space-y-4">
               <label><span class="label">Base URL</span><input class="input" bind:value={llmDraft.baseUrl} placeholder="https://token-plan-sgp.xiaomimimo.com/v1" /></label>
+              {#if llmDraft.baseUrl.trim().toLowerCase().startsWith('http://')}
+                <label class="flex items-start gap-3 rounded-xl border p-3 text-xs leading-5 text-warning" style="border-color: var(--warning); background: var(--warning-soft);"><input class="mt-1 h-4 w-4" type="checkbox" bind:checked={llmDraft.allowInsecureHttp} /><span><strong>允许不安全 HTTP</strong><br />API Key 和请求内容会通过明文连接发送。</span></label>
+              {/if}
               <label><span class="label">模型</span><input class="input" bind:value={llmDraft.model} placeholder="mimo-v2.5" /></label>
               <label><span class="label">API Key</span><div class="relative"><KeyRound size={15} class="absolute left-3 top-3 body-muted" /><input class="input pl-9" type="password" bind:value={apiKey} placeholder={llmDraft.apiKeyRef ? '已安全保存；留空则使用现有 Key' : '粘贴你的 API Key'} /></div></label>
             </div>
             {#if llmResult}<div class="mt-4 flex items-start gap-3 rounded-xl border p-3" style={`border-color:${llmResult.ok ? 'var(--success)' : 'var(--danger)'}; background:${llmResult.ok ? 'var(--brand-faint)' : 'var(--danger-soft)'}`}><svelte:component this={llmResult.ok ? CheckCircle2 : XCircle} size={17} class={llmResult.ok ? 'text-success' : 'text-danger'} /><div><p class="text-sm font-semibold">{llmResult.message}</p><p class="mt-0.5 text-[11px] body-muted">延迟 {llmResult.latencyMs} ms · 结构化输出 {llmResult.structuredOutput ? '正常' : '未通过'}</p></div></div>{/if}
             {#if llmError}<p class="mt-3 text-xs text-danger">{llmError}</p>{/if}
-            <button class="btn-primary mt-5 w-full" disabled={testingLlm || !llmDraft.baseUrl || !llmDraft.model || (!apiKey && !llmDraft.apiKeyRef)} on:click={testAndSaveLlm}>{#if testingLlm}<RefreshCw size={15} class="animate-spin" />正在测试{:else}<ShieldCheck size={15} />测试并保存{/if}</button>
+            <button class="btn-primary mt-5 w-full" disabled={testingLlm || !llmDraft.baseUrl || !llmDraft.model || (!apiKey && !llmDraft.apiKeyRef) || (llmDraft.baseUrl.trim().toLowerCase().startsWith('http://') && !llmDraft.allowInsecureHttp)} on:click={testAndSaveLlm}>{#if testingLlm}<RefreshCw size={15} class="animate-spin" />正在测试{:else}<ShieldCheck size={15} />测试并保存{/if}</button>
           {:else}
             <div class="rounded-xl border p-4" style="border-color: var(--danger); background: var(--danger-soft);"><p class="text-sm font-semibold">没有可用的模型预设</p><p class="mt-1 text-xs leading-5 body-muted">请到设置中创建一个自定义 OpenAI 兼容模型。</p></div>
             <a class="btn mt-5 w-full" href="/settings">打开模型设置 <ArrowRight size={15} /></a>

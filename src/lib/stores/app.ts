@@ -8,14 +8,15 @@ const empty: BootstrapSnapshot = {
     boss: { state: 'needs_setup', message: '需要配置 BOSS 专用浏览器。' },
     llm: { state: 'needs_setup', message: '需要配置默认模型。' }
   },
-  jobs: [], resume: null, providers: [], tasks: [], scrapeRuns: [],
-  settings: { locale: 'zh-CN', theme: 'light', advancedMode: false, telemetry: false, privacyAcknowledged: false }
+  resume: null, providers: [], tasks: [], scrapeRuns: [],
+  settings: { advancedMode: false, telemetry: false, privacyAcknowledged: false }
 };
 
 export const snapshot = writable<BootstrapSnapshot>(empty);
 export const loading = writable(true);
 export const appError = writable<string | null>(null);
 let unlisten: (() => void) | null = null;
+let bootstrapRequestId = 0;
 
 export const runningTasks = derived(snapshot, ($snapshot) => $snapshot.tasks.filter((task) => task.state === 'queued' || task.state === 'running'));
 export const completedTasks = derived(snapshot, ($snapshot) => $snapshot.tasks.filter((task) => task.state === 'completed' || task.state === 'failed'));
@@ -32,26 +33,36 @@ function mergeTask(event: TaskEvent) {
 }
 
 export async function initialize() {
+  const requestId = ++bootstrapRequestId;
   loading.set(true);
   appError.set(null);
   try {
-    snapshot.set(await backend.bootstrap());
+    const value = await backend.bootstrap();
+    if (requestId !== bootstrapRequestId) return;
+    snapshot.set(value);
+    appError.set(null);
     unlisten?.();
     unlisten = await backend.onTaskEvent(mergeTask);
   } catch (error) {
-    appError.set(error instanceof Error ? error.message : String(error));
+    if (requestId === bootstrapRequestId) appError.set(error instanceof Error ? error.message : String(error));
   } finally {
-    loading.set(false);
+    if (requestId === bootstrapRequestId) loading.set(false);
   }
 }
 
 export async function refresh() {
+  const requestId = ++bootstrapRequestId;
   try {
-    snapshot.set(await backend.bootstrap());
+    const value = await backend.bootstrap();
+    if (requestId !== bootstrapRequestId) return;
+    snapshot.set(value);
+    appError.set(null);
   } catch (error) {
-    appError.set(error instanceof Error ? error.message : String(error));
+    if (requestId === bootstrapRequestId) appError.set(error instanceof Error ? error.message : String(error));
   }
 }
+
+export function clearAppError() { appError.set(null); }
 
 export async function startScrape(spec: SearchSpec) {
   await backend.startScrape(spec);

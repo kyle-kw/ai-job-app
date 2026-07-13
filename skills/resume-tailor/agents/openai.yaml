@@ -1,4 +1,0 @@
-interface:
-  display_name: "专岗简历优化"
-  short_description: "只使用已确认事实为目标岗位生成逐条可审核且不会覆盖主简历的改写"
-  default_prompt: "Use $resume-tailor to produce reviewable job-specific resume patches from confirmed facts only."

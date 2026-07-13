@@ -37,9 +37,7 @@ pub async fn test_provider(
 ) -> Result<ProviderTestResult, String> {
     let existing = state.db.provider_by_id(&provider.id)?;
     let candidate = with_existing_secret(provider, existing.as_ref());
-    Ok(llm::test(&candidate)
-        .await
-        .unwrap_or_else(failed_test))
+    Ok(llm::test(&candidate).await.unwrap_or_else(failed_test))
 }
 
 #[tauri::command]
@@ -52,7 +50,9 @@ pub async fn save_provider(
     }
     let existing = state.db.provider_by_id(&provider.id)?;
     let mut candidate = with_existing_secret(provider, existing.as_ref());
-    let test_result = llm::test(&candidate).await.map_err(|error| llm::redact(&error))?;
+    let test_result = llm::test(&candidate)
+        .await
+        .map_err(|error| llm::redact(&error))?;
     if !test_result.ok {
         return Err(test_result.message);
     }
@@ -61,7 +61,9 @@ pub async fn save_provider(
         .api_key
         .take()
         .filter(|key| !key.trim().is_empty());
-    let old_key = existing.as_ref().and_then(|provider| llm::load_secret(provider).ok());
+    let old_key = existing
+        .as_ref()
+        .and_then(|provider| llm::load_secret(provider).ok());
     if let Some(key) = new_key.as_deref() {
         candidate.api_key_ref = Some(llm::store_secret(&candidate.id, key)?);
     }
@@ -97,6 +99,7 @@ mod tests {
             name: "Test".into(),
             base_url: "https://example.com/v1".into(),
             model: "test".into(),
+            allow_insecure_http: false,
             api_key: None,
             api_key_ref: None,
             is_default: true,

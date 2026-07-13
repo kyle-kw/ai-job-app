@@ -185,7 +185,7 @@
         if ($snapshot.resume) adoptResume($snapshot.resume);
       }
     }
-    initialChatJobId = jobId && $snapshot.jobs.some((job) => job.id === jobId) ? jobId : null;
+    initialChatJobId = jobId;
     assistantOpen = true;
   }
 
@@ -374,7 +374,6 @@
 <ResumeChatDialog
   bind:open={assistantOpen}
   resume={draft}
-  jobs={$snapshot.jobs}
   {aiReady}
   initialJobId={initialChatJobId}
   on:applied={(event) => handleResumeCommit(event, 'applied')}

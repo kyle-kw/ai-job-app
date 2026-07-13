@@ -95,8 +95,8 @@ const baseJobs: Job[] = [
 export const mockJobs = baseJobs.map((job) => ({ ...job, fit: deterministicFit(job, mockResume) }));
 
 export const defaultProviders: AiProviderConfig[] = [
-  { id: 'provider-xiaomi', kind: 'xiaomi', name: '默认模型 · 小米 MiMo', baseUrl: 'https://token-plan-sgp.xiaomimimo.com/v1', model: 'mimo-v2.5', isDefault: true, verified: false, visionVerified: false },
-  { id: 'provider-custom', kind: 'custom', name: '自定义 OpenAI 兼容服务', baseUrl: '', model: '', isDefault: false, verified: false, visionVerified: false }
+  { id: 'provider-xiaomi', kind: 'xiaomi', name: '默认模型 · 小米 MiMo', baseUrl: 'https://token-plan-sgp.xiaomimimo.com/v1', model: 'mimo-v2.5', allowInsecureHttp: false, isDefault: true, verified: false, visionVerified: false },
+  { id: 'provider-custom', kind: 'custom', name: '自定义 OpenAI 兼容服务', baseUrl: '', model: '', allowInsecureHttp: false, isDefault: false, verified: false, visionVerified: false }
 ];
 
 export const mockSnapshot: BootstrapSnapshot = {
@@ -105,7 +105,6 @@ export const mockSnapshot: BootstrapSnapshot = {
     boss: { state: 'needs_setup', message: '需要配置 BOSS 专用浏览器。' },
     llm: { state: 'needs_setup', message: '填写 API Key 并测试默认模型。' }
   },
-  jobs: mockJobs,
   resume: mockResume,
   providers: defaultProviders,
   tasks: [],
@@ -115,5 +114,5 @@ export const mockSnapshot: BootstrapSnapshot = {
       reportMarkdown: '## 本次岗位观察\n\n- 共整理 **90** 个岗位，其中 38 个为首次出现。\n- 高频技能为 **Python、RAG、LangChain、Docker**。\n- 3–5 年经验岗位占比最高，主流薪资集中在 **25–45K**。\n\n> 建议在简历前半页突出 Agent 工作流、RAG 评测和生产部署经验。'
     }
   ],
-  settings: { locale: 'zh-CN', theme: 'light', advancedMode: false, telemetry: false, privacyAcknowledged: false }
+  settings: { advancedMode: false, telemetry: false, privacyAcknowledged: false }
 };

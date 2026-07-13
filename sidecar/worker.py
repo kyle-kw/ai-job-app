@@ -8,11 +8,13 @@ and RenderCV output is captured so stdout always remains machine-readable.
 from __future__ import annotations
 
 import contextlib
+import atexit
 import io
 import json
 import os
 import pathlib
 import re
+import signal
 import sys
 import tempfile
 import traceback
@@ -35,6 +37,8 @@ def configure_utf8_stdio() -> None:
 
 configure_utf8_stdio()
 PROTOCOL_STDOUT = sys.stdout
+_active_boss: Any | None = None
+_cleaning_boss = False
 
 
 def emit(kind: str, **payload: Any) -> None:
@@ -131,7 +135,9 @@ def load_boss_module():
 
 
 def setup_boss(params: dict[str, Any]) -> dict[str, Any]:
+    global _active_boss
     boss = load_boss_module()
+    _active_boss = boss
     reset_requested = bool(params.get("resetProfile", False))
     outcome: dict[str, Any] = {
         "loginSucceeded": False,
@@ -172,6 +178,7 @@ def setup_boss(params: dict[str, Any]) -> dict[str, Any]:
             outcome["error"] = str(error)
     finally:
         record_cleanup(close_boss_session(boss, progress=90, action="配置结束后"))
+        _active_boss = None
 
     return outcome
 
@@ -221,9 +228,11 @@ def close_boss(_params: dict[str, Any]) -> dict[str, Any]:
 
 
 def scrape_jobs(params: dict[str, Any]) -> dict[str, Any]:
+    global _active_boss
     if not str(params.get("keyword") or "").strip():
         raise ValueError("岗位关键词不能为空。")
     boss = load_boss_module()
+    _active_boss = boss
     try:
         return _scrape_jobs(boss, params)
     finally:
@@ -231,6 +240,7 @@ def scrape_jobs(params: dict[str, Any]) -> dict[str, Any]:
         # results all travel through this path. Cleanup errors are reported as
         # progress but do not hide the original scrape result or exception.
         close_boss_session(boss)
+        _active_boss = None
 
 
 def _scrape_jobs(boss: Any, params: dict[str, Any]) -> dict[str, Any]:
@@ -411,14 +421,12 @@ def render_pdf_page(path: pathlib.Path, page_index: int, output_dir: pathlib.Pat
     import pypdfium2 as pdfium
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    document = pdfium.PdfDocument(str(path))
-    page = document[page_index]
-    image = page.render(scale=2.25).to_pil()
     output_path = output_dir / f"page-{page_index + 1}.png"
-    image.save(output_path, format="PNG", optimize=True)
-    image.close()
-    page.close()
-    document.close()
+    with contextlib.closing(pdfium.PdfDocument(str(path))) as document:
+        with contextlib.closing(document[page_index]) as page:
+            with contextlib.closing(page.render(scale=2.25)) as bitmap:
+                with contextlib.closing(bitmap.to_pil()) as image:
+                    image.save(output_path, format="PNG", optimize=True)
     return output_path
 
 
@@ -838,7 +846,8 @@ def render_resume(params: dict[str, Any]) -> dict[str, Any]:
             dont_generate_html=True,
         )
         # RenderCV 2.8 imports Font Awesome even when a theme disables icons.
-        # Replace that unused network import so rendering remains fully offline.
+        # get_package_path() returns a process-private temporary copy. Patch that
+        # copy atomically so the installed RenderCV package is never modified.
         package_path = pdf_png.get_package_path()
         for library in package_path.glob("preview/rendercv/*/lib.typ"):
             source = library.read_text(encoding="utf-8")
@@ -846,7 +855,9 @@ def render_resume(params: dict[str, Any]) -> dict[str, Any]:
                 '#import "@preview/fontawesome:0.6.0": fa-icon',
                 '#let fa-icon(name, size: 1em) = none',
             )
-            library.write_text(source, encoding="utf-8")
+            replacement = library.with_suffix(".typ.tmp")
+            replacement.write_text(source, encoding="utf-8")
+            os.replace(replacement, library)
         pdf_png.get_typst_compiler.cache_clear()
 
         generated_typst = generate_typst(model)
@@ -864,6 +875,30 @@ OPERATIONS = {
     "render_resume": render_resume,
     "ping": lambda params: {"python": sys.version, "ok": True},
 }
+
+
+def cleanup_active_boss() -> None:
+    global _active_boss, _cleaning_boss
+    if _active_boss is None or _cleaning_boss:
+        return
+    _cleaning_boss = True
+    try:
+        close_boss_session(_active_boss, action="进程退出前")
+    except Exception:  # noqa: BLE001 - shutdown cleanup is best effort
+        traceback.print_exc(file=sys.stderr)
+    finally:
+        _active_boss = None
+        _cleaning_boss = False
+
+
+def handle_sigterm(_signum: int, _frame: Any) -> None:
+    cleanup_active_boss()
+    raise SystemExit(143)
+
+
+atexit.register(cleanup_active_boss)
+if hasattr(signal, "SIGTERM"):
+    signal.signal(signal.SIGTERM, handle_sigterm)
 
 
 def main() -> int:

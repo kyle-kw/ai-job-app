@@ -1,4 +1,0 @@
-interface:
-  display_name: "岗位市场分析"
-  short_description: "基于抓取岗位汇总薪资技能经验与公司分布并生成证据化市场报告"
-  default_prompt: "Use $job-market-analysis to summarize this job dataset into an evidence-based market report."

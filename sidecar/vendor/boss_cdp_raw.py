@@ -40,7 +40,6 @@ import ntpath
 from datetime import datetime
 from collections import Counter
 from urllib.parse import urlencode, urlparse, urlunparse, parse_qsl
-from urllib.request import Request, urlopen
 
 websocket = None
 requests = None
@@ -54,8 +53,6 @@ DEFAULT_CDP_PORT = 9222
 
 # API 基础路径（便于统一修改）
 API_JOB_LIST_PATH = "/wapi/zpgeek/search/joblist.json"
-HOT_CITY_URL = "https://www.zhipin.com/wapi/zpgeek/search/job/hot/city.json"
-CITY_GROUP_URL = "https://www.zhipin.com/wapi/zpCommon/data/cityGroup.json"
 
 # 请求频率保护
 MAX_PAGES = 5           # 单次最大页数
@@ -118,7 +115,6 @@ DEFAULT_LOGIN_TIMEOUT = 300
 
 # 全局请求计数器
 _request_counter = 0
-_live_city_maps_cache = None
 
 logging.basicConfig(
     level=logging.INFO,
@@ -236,7 +232,7 @@ class CDPSession:
         self.cdp_port = cdp_port
         resp = requests.get(f"http://127.0.0.1:{cdp_port}/json/version", timeout=10)
         ws_url = resp.json()["webSocketDebuggerUrl"]
-        self.ws = websocket.create_connection(ws_url, timeout=60)
+        self.ws = websocket.create_connection(ws_url, timeout=60, suppress_origin=True)
         self.mid = 0
 
     def send(self, method, params=None, sid=None, timeout=30):
@@ -284,10 +280,18 @@ class CDPSession:
                 continue
 
             if r.get("id") == self.mid:
+                if r.get("error"):
+                    error = r["error"]
+                    raise RuntimeError(
+                        f"CDP {method} failed ({error.get('code', 'unknown')}): "
+                        f"{error.get('message', error)}"
+                    )
                 return r
 
             # 不匹配的消息：可能是事件通知，记录并跳过
             event_name = r.get("method", "unknown")
+            if event_name in {"Inspector.detached", "Target.detachedFromTarget"}:
+                raise RuntimeError(f"CDP target detached while waiting for {method}: {r.get('params', {})}")
             log.debug(f"跳过不匹配消息 (id={r.get('id')}, event={event_name})")
 
         raise TimeoutError(
@@ -296,6 +300,10 @@ class CDPSession:
 
     def eval_js(self, js, sid):
         r = self.send("Runtime.evaluate", {"expression": js, "returnByValue": True}, sid)
+        details = r.get("result", {}).get("exceptionDetails")
+        if details:
+            exception = details.get("exception", {}).get("description")
+            raise RuntimeError(f"Runtime.evaluate failed: {exception or details.get('text') or details}")
         return r.get("result", {}).get("result", {}).get("value", None)
 
     def close(self):
@@ -419,52 +427,11 @@ EXTRACT_DETAIL_JS = """
 # ============================================================
 # 解析城市参数（支持中文和代码）
 # ============================================================
-def fetch_boss_json(url, timeout=10):
-    req = Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read().decode("utf-8"))
-
-
-def load_live_city_maps(timeout=10):
-    global _live_city_maps_cache
-    if _live_city_maps_cache is not None:
-        return _live_city_maps_cache
-
-    name_to_code = {}
-
-    try:
-        hot_city_data = fetch_boss_json(HOT_CITY_URL, timeout=timeout)
-        for item in hot_city_data.get("zpData", {}).get("hotCityList", []):
-            name = item.get("name")
-            code = item.get("code")
-            if name and code is not None:
-                name_to_code[name] = str(code)
-
-        city_group_data = fetch_boss_json(CITY_GROUP_URL, timeout=timeout)
-        for group in city_group_data.get("zpData", {}).get("cityGroup", []):
-            for item in group.get("cityList", []):
-                name = item.get("name")
-                code = item.get("code")
-                if name and code is not None:
-                    name_to_code.setdefault(name, str(code))
-    except (OSError, json.JSONDecodeError, ValueError) as e:
-        log.debug(f"加载 BOSS 城市映射失败，使用内置城市映射: {e}")
-
-    code_to_name = {code: name for name, code in name_to_code.items()}
-    _live_city_maps_cache = name_to_code, code_to_name
-    return _live_city_maps_cache
-
-
 def resolve_city(city_input):
     if city_input in CITY_MAP:
         return city_input, CITY_MAP[city_input]
     if city_input in CITY_R:
         return CITY_R[city_input], city_input
-    live_city_map, live_city_reverse = load_live_city_maps()
-    if city_input in live_city_map:
-        return city_input, live_city_map[city_input]
-    if city_input in live_city_reverse:
-        return live_city_reverse[city_input], city_input
     return city_input, city_input
 
 
@@ -1829,10 +1796,10 @@ def run_setup_chrome(cdp_port=DEFAULT_CDP_PORT, copy_login_state=False,
     cmd = [
         DEFAULT_CHROME_PATH,
         f"--remote-debugging-port={cdp_port}",
+        "--remote-debugging-address=127.0.0.1",
         f"--user-data-dir={cdp_data_dir}",
         "--no-first-run",
         "--no-default-browser-check",
-        "--remote-allow-origins=*",
     ]
     launch_chrome(cmd)
 

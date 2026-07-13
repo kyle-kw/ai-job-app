@@ -22,8 +22,6 @@
   }
   $: if (!settingsInitialized && $snapshot.settings) {
     localSettings = structuredClone($snapshot.settings);
-    localSettings.locale = 'zh-CN';
-    localSettings.theme = 'system';
     settingsInitialized = true;
   }
 
@@ -84,7 +82,7 @@
 
   async function updateSettings() {
     if (!localSettings) return;
-    const next = { ...localSettings, locale: 'zh-CN' as const, theme: 'system' as const };
+    const next = { ...localSettings };
     await saveSettings(next);
     localSettings = next;
     showToast('高级模式设置已保存');
@@ -137,12 +135,18 @@
           <div class="max-w-[690px] space-y-5">
             <label><span class="label">API Key</span><div class="relative"><KeyRound size={15} class="absolute left-3 top-3 body-muted" /><input class="input pl-9 pr-11" type={revealKey ? 'text' : 'password'} bind:value={apiKey} placeholder={draft.apiKeyRef ? '已安全保存；留空则保持不变' : '粘贴你的 API Key'} /><button type="button" class="absolute right-1.5 top-1.5 btn-ghost h-7 px-2" on:click={() => revealKey = !revealKey} aria-label="显示或隐藏密钥">{#if revealKey}<EyeOff size={14} />{:else}<Eye size={14} />{/if}</button></div><p class="mt-1.5 flex items-center gap-1.5 text-[11px] body-muted"><LockKeyhole size={12} />测试失败时，本次输入的 Key 不会被保存。</p></label>
             <label><span class="label">Base URL</span><input class="input" bind:value={draft.baseUrl} placeholder="https://token-plan-sgp.xiaomimimo.com/v1" /><p class="mt-1.5 text-[11px] body-muted">请求发送到 <code>{draft.baseUrl || 'Base URL'}/chat/completions</code></p></label>
+            {#if draft.baseUrl.trim().toLowerCase().startsWith('http://')}
+              <label class="flex items-start gap-3 rounded-xl border p-3 text-xs leading-5 text-warning" style="border-color: var(--warning); background: var(--warning-soft);">
+                <input class="mt-1 h-4 w-4" type="checkbox" bind:checked={draft.allowInsecureHttp} />
+                <span><strong>允许不安全 HTTP</strong><br />API Key 和请求内容将以明文发送到该地址。仅在你信任此服务和网络时启用。</span>
+              </label>
+            {/if}
             <div class="grid grid-cols-2 gap-4"><label><span class="label">模型</span><input class="input" bind:value={draft.model} placeholder="mimo-v2.5" /></label><label><span class="label">设为默认</span><select class="select" bind:value={draft.isDefault}><option value={true}>是</option><option value={false}>否</option></select></label></div>
 
             {#if result}<div class="flex items-start gap-3 rounded-xl border p-3" style={`border-color:${result.ok ? 'var(--success)' : 'var(--danger)'}; background:${result.ok ? 'var(--brand-faint)' : 'var(--danger-soft)'}`}><svelte:component this={result.ok ? CheckCircle2 : XCircle} size={17} class={result.ok ? 'text-success' : 'text-danger'} /><div><p class="text-sm font-semibold">{result.message}</p><p class="mt-0.5 text-[11px] body-muted">延迟 {result.latencyMs} ms · 结构化输出 {result.structuredOutput ? '正常' : '未通过'} · {result.visionMessage}</p>{#if result.ok}<p class="mt-1 text-[11px] text-warning">本次仅测试连接；点击“验证并保存”后配置才会生效。</p>{/if}</div></div>{/if}
             {#if errorMessage}<div class="rounded-xl border p-3 text-xs leading-5 text-danger" style="border-color: var(--danger); background: var(--danger-soft);">{errorMessage}</div>{/if}
 
-            <div class="flex justify-end gap-2"><button class="btn" disabled={testing || saving || !draft.baseUrl || !draft.model || (!apiKey && !draft.apiKeyRef)} on:click={test}><TestTube2 size={15} />{testing ? '正在测试…' : '测试连接'}</button><button class="btn-primary" disabled={saving || testing || !draft.baseUrl || !draft.model || (!apiKey && !draft.apiKeyRef)} on:click={saveProvider}><Save size={15} />{saving ? '正在验证并保存…' : '验证并保存'}</button></div>
+            <div class="flex justify-end gap-2"><button class="btn" disabled={testing || saving || !draft.baseUrl || !draft.model || (!apiKey && !draft.apiKeyRef) || (draft.baseUrl.trim().toLowerCase().startsWith('http://') && !draft.allowInsecureHttp)} on:click={test}><TestTube2 size={15} />{testing ? '正在测试…' : '测试连接'}</button><button class="btn-primary" disabled={saving || testing || !draft.baseUrl || !draft.model || (!apiKey && !draft.apiKeyRef) || (draft.baseUrl.trim().toLowerCase().startsWith('http://') && !draft.allowInsecureHttp)} on:click={saveProvider}><Save size={15} />{saving ? '正在验证并保存…' : '验证并保存'}</button></div>
           </div>
         </div>
       {/if}

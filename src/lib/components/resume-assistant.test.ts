@@ -13,7 +13,7 @@ afterEach(() => {
 
 describe('ResumeChatDialog', () => {
   it('directs the user to model settings when AI is not ready', () => {
-    render(ResumeChatDialog, { open: true, resume: mockResume, jobs: mockJobs, aiReady: false });
+    render(ResumeChatDialog, { open: true, resume: mockResume, aiReady: false });
 
     expect(screen.getByText('先配置并验证 AI 模型')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: '前往模型设置' })).toHaveAttribute('href', '/settings');
@@ -50,7 +50,7 @@ describe('ResumeChatDialog', () => {
     const propose = vi.spyOn(backend, 'proposeResumeChatEdits').mockResolvedValue(proposal);
     const apply = vi.spyOn(backend, 'applyResumeChatEdits').mockResolvedValue(commit);
 
-    render(ResumeChatDialog, { open: true, resume: mockResume, jobs: mockJobs, aiReady: true, initialJobId: mockJobs[0].id });
+    render(ResumeChatDialog, { open: true, resume: mockResume, aiReady: true, initialJobId: mockJobs[0].id });
     await fireEvent.input(screen.getByRole('textbox', { name: '发送给简历 AI 的消息' }), { target: { value: '帮我精简个人简介' } });
     await fireEvent.click(screen.getByRole('button', { name: '发送' }));
 

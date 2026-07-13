@@ -1,7 +1,8 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
-import { mockResume, mockSnapshot } from '$lib/mock-data';
+import { mockJobs, mockResume, mockSnapshot } from '$lib/mock-data';
 import { deterministicFit } from '$lib/fit';
+import { filterJobs } from '$lib/job-filters';
 import { buildClientJobDataReport } from '$lib/report';
 import { flattenProfessionalSkills, suggestedProfessionalSkillGroups } from '$lib/resume-templates';
 import type {
@@ -13,6 +14,9 @@ import type {
   ImportResumePayload,
   InterviewPreparationState,
   Job,
+  JobOption,
+  JobPage,
+  JobQuery,
   JobDataReport,
   JobPreferences,
   ProviderTestResult,
@@ -35,6 +39,7 @@ import type {
 
 const browserMode = () => typeof window === 'undefined' || !window.__TAURI_INTERNALS__;
 let mockState: BootstrapSnapshot = structuredClone(mockSnapshot);
+let mockJobsState: Job[] = structuredClone(mockJobs);
 const mockReportKeywords: ReportKeyword[] = [
   { key: 'ai-agent', label: 'AI Agent', jobCount: 4, lastSeen: new Date().toISOString() },
   { key: 'data-analysis', label: '数据分析', jobCount: 2, lastSeen: new Date(Date.now() - 60_000).toISOString() }
@@ -45,7 +50,7 @@ const mockKeywordJobs: Record<string, string[]> = {
 };
 const mockJobsForKeywords = (keywordKeys: string[]) => {
   const ids = new Set(keywordKeys.flatMap((key) => mockKeywordJobs[key] ?? []));
-  return mockState.jobs.filter((job) => ids.has(job.id));
+  return mockJobsState.filter((job) => ids.has(job.id));
 };
 const mockListeners = new Set<(event: TaskEvent) => void>();
 let mockPreparationState: InterviewPreparationState = {
@@ -93,6 +98,41 @@ export const backend = {
   async bootstrap(): Promise<BootstrapSnapshot> {
     if (browserMode()) return structuredClone(mockState);
     return invoke('bootstrap');
+  },
+
+  async listJobsPage(query: JobQuery): Promise<JobPage> {
+    if (browserMode()) {
+      const filtered = filterJobs(mockJobsState, query);
+        const offset = Number(query.cursor || 0);
+        const items = filtered.slice(offset, offset + 50);
+        return {
+          items: structuredClone(items),
+          total: filtered.length,
+          pendingDetailCount: mockJobsState.filter((job) => job.description.trim() && !job.structuredDetails).length,
+          nextCursor: offset + items.length < filtered.length ? String(offset + items.length) : null
+        };
+    }
+    return invoke('list_jobs_page', { query });
+  },
+
+  async listJobOptions(query = ''): Promise<JobOption[]> {
+    if (browserMode()) {
+      const text = query.trim().toLowerCase();
+      return mockJobsState
+        .filter((job) => !text || `${job.title} ${job.company}`.toLowerCase().includes(text))
+        .slice(0, 50)
+        .map(({ id, title, company, lastSeen }) => ({ id, title, company, lastSeen }));
+    }
+    return invoke('list_job_options', { query });
+  },
+
+  async getJob(jobId: string): Promise<Job> {
+    if (browserMode()) {
+      const job = mockJobsState.find((item) => item.id === jobId);
+      if (!job) throw new Error('岗位不存在。');
+      return structuredClone(job);
+    }
+    return invoke('get_job', { jobId });
   },
 
   async listReportKeywords(): Promise<ReportKeyword[]> {
@@ -174,7 +214,7 @@ export const backend = {
         const completedAt = new Date().toISOString();
         mockState.scrapeRuns.unshift({
           id: crypto.randomUUID(), keyword: spec.keyword.trim(), city: spec.city,
-          totalSeen: mockState.jobs.length, inserted: 0, updated: mockState.jobs.length,
+          totalSeen: mockJobsState.length, inserted: 0, updated: mockJobsState.length,
           startedAt: task.createdAt, completedAt, reportMarkdown: null
         });
       });
@@ -185,14 +225,14 @@ export const backend = {
 
   async startJobDetailExtraction(): Promise<string> {
     if (browserMode()) {
-      let task = createMockTask('job-detail-extraction', `批量提取 ${mockState.jobs.length} 条岗位详情`);
+      let task = createMockTask('job-detail-extraction', `批量提取 ${mockJobsState.length} 条岗位详情`);
       advanceMockTask(task, [
         { progress: 12, message: '正在清理岗位详情页面噪声' },
         { progress: 56, message: '正在提取岗位职责与任职要求' },
         { progress: 82, message: '正在提取公司介绍与工商信息' },
-        { progress: 100, message: `提取完成：成功 ${mockState.jobs.length}，失败 0` }
+        { progress: 100, message: `提取完成：成功 ${mockJobsState.length}，失败 0` }
       ], () => {
-        mockState.jobs = mockState.jobs.map((job) => ({
+        mockJobsState = mockJobsState.map((job) => ({
           ...job,
           structuredDetails: {
             jobDescription: job.description,
@@ -284,7 +324,7 @@ export const backend = {
 
   async analyzeJob(jobId: string, force = false): Promise<FitAnalysisResult> {
     if (browserMode()) {
-      const job = mockState.jobs.find((item) => item.id === jobId);
+      const job = mockJobsState.find((item) => item.id === jobId);
       if (!job) throw new Error('岗位不存在');
       if (!mockState.resume) throw new Error('请先导入主简历');
       const cacheHit = !force && job.fit?.cacheStatus === 'fresh';
@@ -315,7 +355,7 @@ export const backend = {
         { progress: 60, message: '正在分析当前筛选结果' },
         { progress: 100, message: `完成：AI 0，本地基础 ${jobIds.length}，缓存跳过 0，失败 0` }
       ], () => {
-        mockState.jobs = mockState.jobs.map((job) => jobIds.includes(job.id) ? {
+        mockJobsState = mockJobsState.map((job) => jobIds.includes(job.id) ? {
           ...job,
           fit: {
             ...deterministicFit(job, mockState.resume!),
@@ -330,9 +370,16 @@ export const backend = {
     return invoke('start_fit_batch', { jobIds });
   },
 
+  async startFitBatchForQuery(query: JobQuery): Promise<string> {
+    if (browserMode()) {
+      return backend.startFitBatch(filterJobs(mockJobsState, query).map((job) => job.id));
+    }
+    return invoke('start_fit_batch_for_query', { query });
+  },
+
   async openJobSource(jobId: string): Promise<void> {
     if (browserMode()) {
-      const job = mockState.jobs.find((item) => item.id === jobId);
+      const job = mockJobsState.find((item) => item.id === jobId);
       if (!job?.sourceUrl) throw new Error('原岗位链接不可用');
       window.open(job.sourceUrl, '_blank', 'noopener,noreferrer');
       return;
@@ -342,7 +389,7 @@ export const backend = {
 
   async generateGreeting(jobId: string): Promise<string> {
     if (browserMode()) {
-      const job = mockState.jobs.find((item) => item.id === jobId);
+      const job = mockJobsState.find((item) => item.id === jobId);
       if (!job) throw new Error('岗位不存在');
       job.greeting = `您好，我有 RAG 与 Agent 工程落地经验，和贵司${job.title}较匹配，方便聊聊吗？`;
       return job.greeting;
@@ -365,7 +412,7 @@ export const backend = {
       const after = shouldShorten ? mockState.resume.summary.slice(0, Math.max(40, Math.floor(mockState.resume.summary.length * 0.75))) : mockState.resume.summary;
       return {
         proposalId: crypto.randomUUID(), resumeId: mockState.resume.id, baseVersion: mockState.resume.version,
-        job: request.jobId ? (() => { const job = mockState.jobs.find((item) => item.id === request.jobId); return job ? { id: job.id, title: job.title, company: job.company } : null; })() : null,
+        job: request.jobId ? (() => { const job = mockJobsState.find((item) => item.id === request.jobId); return job ? { id: job.id, title: job.title, company: job.company } : null; })() : null,
         assistantMessage: shouldShorten ? '我整理了一版更精简的个人简介，请审核后应用。' : '请告诉我希望修改的具体字段或目标；我不会在没有事实依据时改写。',
         edits: shouldShorten ? [{
           id: crypto.randomUUID(), path: '/summary', label: '个人简介', operation: 'replace',

@@ -6,6 +6,7 @@ mod llm;
 mod models;
 mod providers;
 mod scoring;
+mod secrets;
 mod sidecar;
 mod skills;
 mod time;
@@ -26,6 +27,12 @@ pub fn run() {
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
+            let imports = data_dir.join("imports");
+            if imports.exists() {
+                if let Err(error) = std::fs::remove_dir_all(&imports) {
+                    eprintln!("failed to clean stale resume imports: {error}");
+                }
+            }
             let db = Database::new(data_dir.join("ai-job-app.db"));
             db.initialize().map_err(std::io::Error::other)?;
             let _ = llm::delete_secret("provider-openrouter");
@@ -34,6 +41,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::bootstrap,
+            commands::list_jobs_page,
+            commands::list_job_options,
+            commands::get_job,
             commands::list_report_keywords,
             commands::get_job_data_report,
             commands::export_job_data_report,
@@ -46,6 +56,7 @@ pub fn run() {
             commands::save_preferences,
             assistant::analyze_job,
             assistant::start_fit_batch,
+            assistant::start_fit_batch_for_query,
             assistant::open_job_source,
             assistant::get_interview_preparation_state,
             assistant::generate_interview_preparation,

@@ -1,13 +1,12 @@
 <script lang="ts">
   import { BarChart3, BriefcaseBusiness, FileText, ListChecks, Settings2, Sparkles } from 'lucide-svelte';
   import { page } from '$app/stores';
-  import { t } from '$lib/i18n';
 
   const nav = [
-    { href: '/', label: 'nav.dashboard', icon: ListChecks },
-    { href: '/jobs', label: 'nav.jobs', icon: BriefcaseBusiness },
-    { href: '/reports', label: 'nav.reports', icon: BarChart3 },
-    { href: '/resume', label: 'nav.resume', icon: FileText }
+    { href: '/', label: '初始化', icon: ListChecks },
+    { href: '/jobs', label: '岗位', icon: BriefcaseBusiness },
+    { href: '/reports', label: '数据报告', icon: BarChart3 },
+    { href: '/resume', label: '简历', icon: FileText }
   ];
 
   const active = (href: string) => href === '/' ? $page.url.pathname === '/' : $page.url.pathname.startsWith(href);
@@ -28,14 +27,14 @@
     {#each nav as item}
       <a
         href={item.href}
-        aria-label={$t(item.label)}
+        aria-label={item.label}
         aria-current={active(item.href) ? 'page' : undefined}
-        title={$t(item.label)}
+        title={item.label}
         class:active={active(item.href)}
         class="nav-item flex h-11 items-center gap-3 rounded-xl px-3 text-sm font-medium transition"
       >
         <svelte:component this={item.icon} size={18} strokeWidth={active(item.href) ? 2.25 : 1.8} />
-        <span class="nav-copy">{$t(item.label)}</span>
+        <span class="nav-copy">{item.label}</span>
       </a>
     {/each}
   </nav>
@@ -48,9 +47,9 @@
       </div>
       <p class="text-[11px] leading-5 body-muted">岗位与简历保存在本机，仅主动使用 AI 时发送必要上下文。</p>
     </div>
-    <a href="/settings" aria-label={$t('nav.settings')} aria-current={active('/settings') ? 'page' : undefined} title={$t('nav.settings')} class:active={active('/settings')} class="nav-item flex h-11 items-center gap-3 rounded-xl px-3 text-sm font-medium transition">
+    <a href="/settings" aria-label="设置" aria-current={active('/settings') ? 'page' : undefined} title="设置" class:active={active('/settings')} class="nav-item flex h-11 items-center gap-3 rounded-xl px-3 text-sm font-medium transition">
       <Settings2 size={18} strokeWidth={active('/settings') ? 2.25 : 1.8} />
-      <span class="nav-copy">{$t('nav.settings')}</span>
+      <span class="nav-copy">设置</span>
     </a>
   </div>
 </aside>

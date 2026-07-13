@@ -25,4 +25,36 @@ describe('modalFocus', () => {
     dialog.remove();
     trigger.remove();
   });
+
+  it('ignores hidden controls, suppresses background, and only closes the top modal', async () => {
+    const background = document.body.appendChild(document.createElement('main'));
+    const outer = document.body.appendChild(document.createElement('div'));
+    outer.tabIndex = -1;
+    const hidden = outer.appendChild(document.createElement('button'));
+    hidden.style.display = 'none';
+    const visible = outer.appendChild(document.createElement('button'));
+    const closeOuter = vi.fn();
+    const outerAction = modalFocus(outer, { close: closeOuter });
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    expect(document.activeElement).toBe(visible);
+    expect(background.inert).toBe(true);
+    expect(background).toHaveAttribute('aria-hidden', 'true');
+
+    const inner = outer.appendChild(document.createElement('div'));
+    inner.tabIndex = -1;
+    inner.appendChild(document.createElement('button'));
+    const closeInner = vi.fn();
+    const innerAction = modalFocus(inner, { close: closeInner });
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(closeInner).toHaveBeenCalledOnce();
+    expect(closeOuter).not.toHaveBeenCalled();
+
+    innerAction.destroy();
+    outerAction.destroy();
+    expect(background.inert).not.toBe(true);
+    expect(background).not.toHaveAttribute('aria-hidden');
+    inner.remove();
+    outer.remove();
+    background.remove();
+  });
 });
