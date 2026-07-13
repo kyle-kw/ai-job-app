@@ -38,6 +38,8 @@ npm run tauri:bundle
 
 当前公开构建产物会在文件名中标记 `unsigned`。Windows SmartScreen 或 macOS Gatekeeper 可能因此显示警告；面向正式分发的构建必须由发布者另外配置 Windows 代码签名证书以及 Apple Developer 签名与公证凭据。
 
+内部测试用的 macOS 构建通过 `src-tauri/tauri.macos.conf.json` 关闭 Hardened Runtime，以允许 ad-hoc 签名的 PyInstaller 单文件 sidecar 加载其临时解压的 Python 动态库。正式分发前必须重新启用 Hardened Runtime，并使用同一个 Developer ID 对 PyInstaller 内嵌库和 Tauri 应用签名。
+
 ## 数据与安全
 
 - SQLite、导入文件、导出 PDF 和 UTF-8 岗位报告位于 Tauri 应用数据目录。
