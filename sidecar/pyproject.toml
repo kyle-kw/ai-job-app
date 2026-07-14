@@ -7,7 +7,7 @@ dependencies = [
   "websocket-client>=1.8,<2",
   "pypdf>=5,<7",
   "python-docx>=1.1,<2",
-  "pypdfium2>=4.30,<5",
+  "pypdfium2>=5.11.0,<6",
   "Pillow>=11,<13",
   "PyYAML>=6,<7",
   "rendercv[full]==2.8"
