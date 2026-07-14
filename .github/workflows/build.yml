@@ -70,6 +70,9 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           working-directory: src-tauri
+          # Tauri's GTK stack currently pins glib 0.18. This advisory is Linux-only,
+          # while this release supports Windows and macOS only.
+          ignore: RUSTSEC-2024-0429
       - name: Audit locked Python dependencies
         shell: pwsh
         run: |
