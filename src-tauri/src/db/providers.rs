@@ -23,9 +23,11 @@ impl Database {
     }
 
     pub fn default_provider(&self) -> Result<Option<AiProviderConfig>, String> {
-        Ok(crate::provider_policy::available_providers(self.list_providers()?)
-            .into_iter()
-            .find(|provider| provider.is_default && provider.verified))
+        Ok(
+            crate::provider_policy::available_providers(self.list_providers()?)
+                .into_iter()
+                .find(|provider| provider.is_default && provider.verified),
+        )
     }
 
     pub fn save_provider(&self, provider: &AiProviderConfig) -> Result<(), String> {

@@ -55,7 +55,10 @@ mod tests {
     #[test]
     fn development_keeps_xiaomi_and_custom_providers() {
         let providers = available_providers_for(
-            vec![provider("xiaomi", "xiaomi", true), provider("custom", "custom", false)],
+            vec![
+                provider("xiaomi", "xiaomi", true),
+                provider("custom", "custom", false),
+            ],
             false,
         );
         assert_eq!(providers.len(), 2);
@@ -66,7 +69,10 @@ mod tests {
     #[test]
     fn production_only_exposes_an_effective_custom_default() {
         let providers = available_providers_for(
-            vec![provider("xiaomi", "xiaomi", true), provider("custom", "custom", false)],
+            vec![
+                provider("xiaomi", "xiaomi", true),
+                provider("custom", "custom", false),
+            ],
             true,
         );
         assert_eq!(providers.len(), 1);
@@ -76,7 +82,13 @@ mod tests {
 
     #[test]
     fn production_rejects_direct_xiaomi_access() {
-        assert!(!provider_allowed_for(&provider("xiaomi", "xiaomi", true), true));
-        assert!(provider_allowed_for(&provider("custom", "custom", true), true));
+        assert!(!provider_allowed_for(
+            &provider("xiaomi", "xiaomi", true),
+            true
+        ));
+        assert!(provider_allowed_for(
+            &provider("custom", "custom", true),
+            true
+        ));
     }
 }
