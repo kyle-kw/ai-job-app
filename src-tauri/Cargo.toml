@@ -9,6 +9,9 @@ edition = "2021"
 name = "ai_job_app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+updater-e2e = []
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

@@ -150,7 +150,7 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "Could not set test version $version" }
             python scripts/build_sidecar.py
             if ($LASTEXITCODE -ne 0) { throw "Could not build sidecar $version" }
-            node node_modules/@tauri-apps/cli/tauri.js build --config $testConfig
+            node node_modules/@tauri-apps/cli/tauri.js build --features updater-e2e --config $testConfig
             if ($LASTEXITCODE -ne 0) { throw "Could not build desktop test version $version" }
           }
 
@@ -215,15 +215,21 @@ jobs:
               throw 'Installed updater test sidecar was not found'
             }
             $marker = Join-Path $env:RUNNER_TEMP 'updater-e2e-result.json'
-            $env:AI_JOB_APP_UPDATER_E2E_RESULT = $marker
-            $env:AI_JOB_APP_UPDATER_E2E_EXPECTED = '0.2.1'
-            Start-Process $app.FullName | Out-Null
+            Get-Process -Name 'ai-job-app' -ErrorAction SilentlyContinue | Stop-Process -Force
+            Remove-Item $marker -Force -ErrorAction SilentlyContinue
+            $application = Start-Process $app.FullName -ArgumentList @(
+              '--updater-e2e-result', $marker,
+              '--updater-e2e-expected', '0.2.1'
+            ) -PassThru
             $deadline = (Get-Date).AddMinutes(8)
             $result = $null
             while ((Get-Date) -lt $deadline) {
               if (Test-Path $marker) {
                 try { $result = Get-Content -Raw -Encoding UTF8 $marker | ConvertFrom-Json } catch { $result = $null }
                 if ($result.stage -in @('restarted', 'failed')) { break }
+              }
+              if ($application.HasExited -and -not (Test-Path $marker)) {
+                throw "Updater test application exited with $($application.ExitCode) before writing a result"
               }
               Start-Sleep -Seconds 2
             }

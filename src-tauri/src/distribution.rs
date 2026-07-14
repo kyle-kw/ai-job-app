@@ -527,6 +527,7 @@ pub fn maintain_logs(data_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(feature = "updater-e2e")]
 pub fn run_updater_e2e(app: AppHandle, marker: PathBuf, expected_version: String) {
     let current_version = app.package_info().version.to_string();
     if current_version == expected_version {
@@ -556,6 +557,16 @@ pub fn run_updater_e2e(app: AppHandle, marker: PathBuf, expected_version: String
         app.exit(if ok { 0 } else { 1 });
         return;
     }
+
+    let _ = write_updater_e2e_marker(
+        &marker,
+        &json!({
+            "ok": false,
+            "stage": "starting",
+            "fromVersion": current_version,
+            "expectedVersion": expected_version
+        }),
+    );
 
     tauri::async_runtime::spawn(async move {
         let result = async {
@@ -623,6 +634,7 @@ pub fn run_updater_e2e(app: AppHandle, marker: PathBuf, expected_version: String
     });
 }
 
+#[cfg(feature = "updater-e2e")]
 fn write_updater_e2e_marker(path: &Path, value: &Value) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;

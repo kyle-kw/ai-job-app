@@ -42,12 +42,35 @@ fn show_startup_error(app: &tauri::App, error: &str) {
         .show(move |_| handle.exit(1));
 }
 
+#[cfg(feature = "updater-e2e")]
+fn updater_e2e_args() -> Option<(PathBuf, String)> {
+    let mut marker = None;
+    let mut expected = None;
+    let mut args = std::env::args_os().skip(1);
+    while let Some(argument) = args.next() {
+        if argument == "--updater-e2e-result" {
+            marker = args.next().map(PathBuf::from);
+        } else if argument == "--updater-e2e-expected" {
+            expected = args.next().and_then(|value| value.into_string().ok());
+        }
+    }
+    marker.map(|path| (path, expected.unwrap_or_else(|| "0.2.1".into())))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
+            #[cfg(feature = "updater-e2e")]
+            if let Some((marker, expected)) = updater_e2e_args() {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+                distribution::run_updater_e2e(app.handle().clone(), marker, expected);
+                return Ok(());
+            }
             let startup = (|| {
                 let data_dir = app
                     .path()
@@ -100,17 +123,6 @@ pub fn run() {
                     None
                 }),
             });
-            if let Some(marker) =
-                std::env::var_os("AI_JOB_APP_UPDATER_E2E_RESULT").map(PathBuf::from)
-            {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.hide();
-                }
-                let expected = std::env::var("AI_JOB_APP_UPDATER_E2E_EXPECTED")
-                    .unwrap_or_else(|_| "0.2.1".into());
-                distribution::run_updater_e2e(app.handle().clone(), marker, expected);
-                return Ok(());
-            }
             if let (Some(marker), Some(result)) = (smoke_marker, smoke_result) {
                 std::fs::write(
                     marker,
