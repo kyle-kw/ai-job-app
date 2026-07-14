@@ -22,3 +22,5 @@ sidecar/tests/output/
 Thumbs.db
 .env*
 !.env.example
+.secrets/
+release-assets/

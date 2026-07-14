@@ -21,6 +21,32 @@ from vendor import boss_cdp_raw as boss_vendor  # noqa: E402
 
 
 class WorkerTests(unittest.TestCase):
+    def test_environment_status_reports_missing_chrome_without_downloading(self):
+        fake = types.SimpleNamespace(DEFAULT_CHROME_PATH="Z:/missing/google-chrome")
+        with patch.object(worker, "load_boss_module", return_value=fake):
+            status = worker.environment_status({})
+        self.assertEqual(status["protocolVersion"], worker.PROTOCOL_VERSION)
+        self.assertFalse(status["chrome"]["installed"])
+        self.assertIsNone(status["chrome"]["executablePath"])
+
+    def test_clear_boss_data_requires_no_remaining_profile_processes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            profile = pathlib.Path(temporary) / "profile"
+            result = pathlib.Path(temporary) / "result"
+            profile.mkdir()
+            result.mkdir()
+            fake = types.SimpleNamespace(
+                DEFAULT_CDP_DATA_DIR=str(profile),
+                DEFAULT_RESULT_DIR=str(result),
+                chrome_pids_for_user_data_dir=Mock(return_value=[]),
+            )
+            with patch.object(worker, "load_boss_module", return_value=fake), \
+                    patch.object(worker, "close_boss_session", return_value={"cleanupSucceeded": True}):
+                outcome = worker.clear_boss_data({})
+            self.assertEqual(outcome["remainingPids"], [])
+            self.assertFalse(profile.exists())
+            self.assertFalse(result.exists())
+
     def test_cdp_errors_are_not_converted_to_empty_values(self):
         class FakeSocket:
             def send(self, _message):

@@ -1,5 +1,6 @@
 use crate::analytics;
 use crate::db::{ensure_resume_item_ids, Database, InterviewPreparationCacheRecord};
+use crate::distribution;
 use crate::llm;
 use crate::models::*;
 use crate::scoring;
@@ -71,6 +72,7 @@ pub async fn analyze_job(
     job_id: String,
     force: Option<bool>,
 ) -> Result<FitAnalysisResult, String> {
+    distribution::require_privacy(&state)?;
     analyze_job_internal(&state.db, &job_id, force.unwrap_or(false)).await
 }
 
@@ -181,6 +183,7 @@ pub async fn start_fit_batch(
     state: State<'_, AppState>,
     job_ids: Vec<String>,
 ) -> Result<String, String> {
+    distribution::require_privacy(&state)?;
     if let Some(task) = state.db.running_task("fit")? {
         return Ok(task.id);
     }
@@ -255,6 +258,7 @@ pub fn open_job_source(
     state: State<'_, AppState>,
     job_id: String,
 ) -> Result<(), String> {
+    distribution::require_privacy(&state)?;
     let job = state
         .db
         .get_job(&job_id)?
@@ -317,6 +321,7 @@ pub async fn generate_interview_preparation(
     keyword_keys: Vec<String>,
     force: Option<bool>,
 ) -> Result<InterviewPreparationState, String> {
+    distribution::require_privacy(&state)?;
     if keyword_keys.is_empty() {
         return Err("请先选择至少一个关键词，再生成 AI 面试准备。".into());
     }
@@ -524,6 +529,7 @@ pub async fn propose_resume_chat_edits(
     state: State<'_, AppState>,
     request: ResumeChatRequest,
 ) -> Result<ResumeChatProposal, String> {
+    distribution::require_privacy(&state)?;
     validate_chat_messages(&request.messages)?;
     let resume = state
         .db

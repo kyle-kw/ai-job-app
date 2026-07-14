@@ -5,15 +5,19 @@ use crate::models::{
 };
 use crate::time;
 use base64::Engine;
+use rusqlite::backup::Backup;
 use rusqlite::types::Value as SqlValue;
-use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Transaction};
+use rusqlite::{params, params_from_iter, Connection, OpenFlags, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
+use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 mod providers;
+
+pub const CURRENT_SCHEMA_VERSION: i64 = 5;
 
 const HISTORICAL_KEYWORD_KEY: &str = "__historical_unclassified__";
 const HISTORICAL_KEYWORD_LABEL: &str = "历史未分类";
@@ -21,6 +25,115 @@ const HISTORICAL_KEYWORD_LABEL: &str = "历史未分类";
 #[derive(Clone)]
 pub struct Database {
     path: PathBuf,
+    gate: Arc<DatabaseGate>,
+}
+
+#[derive(Default)]
+struct DatabaseGate {
+    state: Mutex<DatabaseGateState>,
+    idle: Condvar,
+}
+
+#[derive(Default)]
+struct DatabaseGateState {
+    active_connections: usize,
+    maintenance: bool,
+    unavailable: bool,
+}
+
+pub(crate) struct DatabaseConnection {
+    connection: Connection,
+    gate: Arc<DatabaseGate>,
+}
+
+pub(crate) struct DatabaseMaintenanceGuard {
+    path: PathBuf,
+    gate: Arc<DatabaseGate>,
+    released: bool,
+}
+
+impl Deref for DatabaseConnection {
+    type Target = Connection;
+
+    fn deref(&self) -> &Self::Target {
+        &self.connection
+    }
+}
+
+impl DerefMut for DatabaseConnection {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.connection
+    }
+}
+
+impl Drop for DatabaseConnection {
+    fn drop(&mut self) {
+        if let Ok(mut state) = self.gate.state.lock() {
+            state.active_connections = state.active_connections.saturating_sub(1);
+            if state.active_connections == 0 {
+                self.gate.idle.notify_all();
+            }
+        }
+    }
+}
+
+impl DatabaseMaintenanceGuard {
+    pub(crate) fn has_active_tasks(&self) -> Result<bool, String> {
+        let connection = Database::open_connection(&self.path)?;
+        connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM task_runs WHERE json_extract(payload_json,'$.state') IN ('queued','running'))",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn checkpoint(&self) -> Result<(), String> {
+        if !self.path.exists() {
+            return Ok(());
+        }
+        let connection = Database::open_connection(&self.path)?;
+        let (busy, _, _): (i64, i64, i64) = connection
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })
+            .map_err(|error| format!("cannot checkpoint database: {error}"))?;
+        if busy != 0 {
+            return Err("cannot checkpoint database: database is busy".into());
+        }
+        Ok(())
+    }
+
+    pub(crate) fn backup_to(&self, destination: &Path) -> Result<(), String> {
+        let source = Database::open_connection(&self.path)?;
+        Database::backup_connection(&source, destination)
+    }
+
+    pub(crate) fn disable_until_restart(mut self) -> Result<(), String> {
+        let mut state = self
+            .gate
+            .state
+            .lock()
+            .map_err(|_| "database gate is poisoned".to_string())?;
+        state.unavailable = true;
+        state.maintenance = false;
+        self.released = true;
+        self.gate.idle.notify_all();
+        Ok(())
+    }
+}
+
+impl Drop for DatabaseMaintenanceGuard {
+    fn drop(&mut self) {
+        if self.released {
+            return;
+        }
+        if let Ok(mut state) = self.gate.state.lock() {
+            state.maintenance = false;
+            self.gate.idle.notify_all();
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -93,15 +206,18 @@ struct JobCursor {
 
 impl Database {
     pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
+        Self {
+            path: path.into(),
+            gate: Arc::new(DatabaseGate::default()),
+        }
     }
 
     pub fn path(&self) -> &Path {
         &self.path
     }
 
-    fn connect(&self) -> Result<Connection, String> {
-        let connection = Connection::open(&self.path).map_err(|error| error.to_string())?;
+    fn open_connection(path: &Path) -> Result<Connection, String> {
+        let connection = Connection::open(path).map_err(|error| error.to_string())?;
         connection
             .pragma_update(None, "journal_mode", "WAL")
             .map_err(|error| error.to_string())?;
@@ -114,12 +230,76 @@ impl Database {
         Ok(connection)
     }
 
+    pub(crate) fn connect(&self) -> Result<DatabaseConnection, String> {
+        {
+            let mut state = self
+                .gate
+                .state
+                .lock()
+                .map_err(|_| "database gate is poisoned".to_string())?;
+            if state.unavailable {
+                return Err("database_unavailable: 数据已更改，请重启应用".into());
+            }
+            if state.maintenance {
+                return Err("busy: 数据库正在维护，请稍后重试".into());
+            }
+            state.active_connections += 1;
+        }
+
+        match Self::open_connection(&self.path) {
+            Ok(connection) => Ok(DatabaseConnection {
+                connection,
+                gate: self.gate.clone(),
+            }),
+            Err(error) => {
+                if let Ok(mut state) = self.gate.state.lock() {
+                    state.active_connections = state.active_connections.saturating_sub(1);
+                    if state.active_connections == 0 {
+                        self.gate.idle.notify_all();
+                    }
+                }
+                Err(error)
+            }
+        }
+    }
+
+    pub(crate) fn begin_maintenance(&self) -> Result<DatabaseMaintenanceGuard, String> {
+        let mut state = self
+            .gate
+            .state
+            .lock()
+            .map_err(|_| "database gate is poisoned".to_string())?;
+        if state.unavailable {
+            return Err("database_unavailable: 数据已更改，请重启应用".into());
+        }
+        if state.maintenance {
+            return Err("busy: 数据库正在维护，请稍后重试".into());
+        }
+        state.maintenance = true;
+        while state.active_connections > 0 {
+            state = self
+                .gate
+                .idle
+                .wait(state)
+                .map_err(|_| "database gate is poisoned".to_string())?;
+        }
+        drop(state);
+        Ok(DatabaseMaintenanceGuard {
+            path: self.path.clone(),
+            gate: self.gate.clone(),
+            released: false,
+        })
+    }
+
     pub fn initialize(&self) -> Result<(), String> {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         }
-        let connection = self.connect()?;
-        connection
+        let mut connection = self.connect()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| error.to_string())?;
+        transaction
             .execute_batch(
                 r#"
                 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -199,19 +379,16 @@ impl Database {
                 "#,
             )
             .map_err(|error| error.to_string())?;
-        self.migrate_v2()?;
-        self.migrate_v3()?;
-        self.migrate_v4()?;
-        self.migrate_v5()?;
+        Self::migrate_v2(&transaction)?;
+        Self::migrate_v3(&transaction)?;
+        Self::migrate_v4(&transaction)?;
+        Self::migrate_v5(&transaction)?;
+        transaction.commit().map_err(|error| error.to_string())?;
         self.recover_interrupted_tasks()?;
         Ok(())
     }
 
-    fn migrate_v2(&self) -> Result<(), String> {
-        let mut connection = self.connect()?;
-        let transaction = connection
-            .transaction()
-            .map_err(|error| error.to_string())?;
+    fn migrate_v2(transaction: &Transaction<'_>) -> Result<(), String> {
         let already_applied: bool = transaction
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version=2)",
@@ -361,15 +538,10 @@ impl Database {
                 [],
             )
             .map_err(|error| error.to_string())?;
-        transaction.commit().map_err(|error| error.to_string())?;
         Ok(())
     }
 
-    fn migrate_v3(&self) -> Result<(), String> {
-        let mut connection = self.connect()?;
-        let transaction = connection
-            .transaction()
-            .map_err(|error| error.to_string())?;
+    fn migrate_v3(transaction: &Transaction<'_>) -> Result<(), String> {
         let already_applied: bool = transaction
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version=3)",
@@ -442,13 +614,11 @@ impl Database {
                 [],
             )
             .map_err(|error| error.to_string())?;
-        transaction.commit().map_err(|error| error.to_string())?;
         Ok(())
     }
 
-    fn migrate_v4(&self) -> Result<(), String> {
-        let connection = self.connect()?;
-        let already_applied = connection
+    fn migrate_v4(transaction: &Transaction<'_>) -> Result<(), String> {
+        let already_applied = transaction
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version=4)",
                 [],
@@ -459,7 +629,7 @@ impl Database {
             return Ok(());
         }
         let columns = {
-            let mut statement = connection
+            let mut statement = transaction
                 .prepare("PRAGMA table_info(jobs)")
                 .map_err(|error| error.to_string())?;
             let result = statement
@@ -496,12 +666,12 @@ impl Database {
         ];
         for (name, sql) in additions {
             if !columns.contains(name) {
-                connection
+                transaction
                     .execute(sql, [])
                     .map_err(|error| error.to_string())?;
             }
         }
-        connection
+        transaction
             .execute_batch(
                 "CREATE INDEX IF NOT EXISTS idx_jobs_page ON jobs(fit_score DESC, last_seen DESC, id ASC);
                  CREATE INDEX IF NOT EXISTS idx_jobs_pending_detail ON jobs(has_description, has_structured_details);
@@ -509,7 +679,7 @@ impl Database {
             )
             .map_err(|error| error.to_string())?;
         let jobs = {
-            let mut statement = connection
+            let mut statement = transaction
                 .prepare("SELECT id,payload_json FROM jobs")
                 .map_err(|error| error.to_string())?;
             let result = statement
@@ -524,12 +694,12 @@ impl Database {
         for (id, payload) in jobs {
             let job: Job = serde_json::from_str(&payload).map_err(|error| error.to_string())?;
             let meta = JobQueryMetadata::from_job(&job);
-            connection.execute(
+            transaction.execute(
                 "UPDATE jobs SET search_text=?1,salary_min=?2,salary_max=?3,company_scale_code=?4,query_is_new=?5,fit_score=?6,has_description=?7,has_structured_details=?8 WHERE id=?9",
                 params![meta.search_text, meta.salary_min, meta.salary_max, meta.company_scale_code, meta.is_new, meta.fit_score, meta.has_description, meta.has_structured_details, id],
             ).map_err(|error| error.to_string())?;
         }
-        connection
+        transaction
             .execute(
                 "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (4, datetime('now'))",
                 [],
@@ -538,9 +708,8 @@ impl Database {
         Ok(())
     }
 
-    fn migrate_v5(&self) -> Result<(), String> {
-        let connection = self.connect()?;
-        let already_applied = connection
+    fn migrate_v5(transaction: &Transaction<'_>) -> Result<(), String> {
+        let already_applied = transaction
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version=5)",
                 [],
@@ -551,7 +720,7 @@ impl Database {
             return Ok(());
         }
         let has_city = {
-            let mut statement = connection
+            let mut statement = transaction
                 .prepare("PRAGMA table_info(jobs)")
                 .map_err(|error| error.to_string())?;
             let found = statement
@@ -562,7 +731,7 @@ impl Database {
             found
         };
         if !has_city {
-            connection
+            transaction
                 .execute(
                     "ALTER TABLE jobs ADD COLUMN city TEXT NOT NULL DEFAULT ''",
                     [],
@@ -570,7 +739,7 @@ impl Database {
                 .map_err(|error| error.to_string())?;
         }
         let locations = {
-            let mut statement = connection
+            let mut statement = transaction
                 .prepare("SELECT id,location FROM jobs")
                 .map_err(|error| error.to_string())?;
             let rows = statement
@@ -583,17 +752,17 @@ impl Database {
             rows
         };
         for (id, location) in locations {
-            connection
+            transaction
                 .execute(
                     "UPDATE jobs SET city=?1 WHERE id=?2",
                     params![job_city(&location), id],
                 )
                 .map_err(|error| error.to_string())?;
         }
-        connection
+        transaction
             .execute("CREATE INDEX IF NOT EXISTS idx_jobs_city ON jobs(city)", [])
             .map_err(|error| error.to_string())?;
-        connection
+        transaction
             .execute(
                 "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (5, datetime('now'))",
                 [],
@@ -1163,6 +1332,109 @@ impl Database {
         let payload = serde_json::to_string(settings).map_err(|error| error.to_string())?;
         connection.execute("INSERT INTO app_settings(key, payload_json) VALUES ('main', ?1) ON CONFLICT(key) DO UPDATE SET payload_json=excluded.payload_json", [payload]).map_err(|error| error.to_string())?;
         Ok(())
+    }
+
+    pub fn schema_version(&self) -> Result<i64, String> {
+        let connection = self.connect()?;
+        connection
+            .query_row(
+                "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn has_active_tasks(&self) -> Result<bool, String> {
+        let connection = self.connect()?;
+        connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM task_runs WHERE json_extract(payload_json,'$.state') IN ('queued','running'))",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn backup_to(&self, destination: &Path) -> Result<(), String> {
+        let source = self.connect()?;
+        Self::backup_connection(&source, destination)
+    }
+
+    pub fn copy_database(source: &Path, destination: &Path) -> Result<(), String> {
+        let connection = Connection::open_with_flags(source, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(|error| error.to_string())?;
+        Self::backup_connection(&connection, destination)
+    }
+
+    fn backup_connection(source: &Connection, destination: &Path) -> Result<(), String> {
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        if destination.exists() {
+            std::fs::remove_file(destination).map_err(|error| error.to_string())?;
+        }
+        let mut target = Connection::open(destination).map_err(|error| error.to_string())?;
+        {
+            let backup = Backup::new(source, &mut target).map_err(|error| error.to_string())?;
+            backup
+                .run_to_completion(128, std::time::Duration::from_millis(5), None)
+                .map_err(|error| error.to_string())?;
+        }
+        drop(target);
+        Self::validate_database(destination).map(|_| ())
+    }
+
+    pub fn validate_database(path: &Path) -> Result<i64, String> {
+        let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(|error| format!("cannot open backup: {error}"))?;
+        let integrity: String = connection
+            .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+            .map_err(|error| format!("cannot check backup integrity: {error}"))?;
+        if integrity != "ok" {
+            return Err(format!("backup integrity check failed: {integrity}"));
+        }
+        let migrations_exist: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations')",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|error| error.to_string())?;
+        if !migrations_exist {
+            return Err("backup does not contain a supported schema".into());
+        }
+        connection
+            .query_row(
+                "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn clear_provider_secret_references(&self) -> Result<(), String> {
+        let providers = self.list_providers()?;
+        let mut connection = self.connect()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| error.to_string())?;
+        for mut provider in providers {
+            provider.api_key = None;
+            provider.api_key_ref = None;
+            provider.verified = false;
+            provider.vision_verified = false;
+            provider.last_tested_at = None;
+            provider.last_test_error = None;
+            let payload = serde_json::to_string(&provider).map_err(|error| error.to_string())?;
+            transaction
+                .execute(
+                    "UPDATE ai_providers SET payload_json=?1 WHERE id=?2",
+                    params![payload, provider.id],
+                )
+                .map_err(|error| error.to_string())?;
+        }
+        transaction.commit().map_err(|error| error.to_string())
     }
 
     pub fn boss_profile_state(&self) -> Result<BossProfileState, String> {
@@ -2107,6 +2379,53 @@ mod tests {
             .unwrap();
 
         assert_eq!(db.list_jobs().unwrap()[0].greeting, None);
+    }
+
+    #[test]
+    fn maintenance_waits_for_existing_connections_and_blocks_new_ones() {
+        let dir = tempdir().unwrap();
+        let db = Database::new(dir.path().join("maintenance.db"));
+        db.initialize().unwrap();
+        let connection = db.connect().unwrap();
+        let maintenance_db = db.clone();
+        let (acquired_tx, acquired_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let guard = maintenance_db.begin_maintenance().unwrap();
+            acquired_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            drop(guard);
+        });
+
+        assert!(acquired_rx
+            .recv_timeout(std::time::Duration::from_millis(50))
+            .is_err());
+        drop(connection);
+        acquired_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+        assert!(db
+            .connect()
+            .err()
+            .is_some_and(|error| error.starts_with("busy:")));
+        release_tx.send(()).unwrap();
+        worker.join().unwrap();
+        assert!(db.connect().is_ok());
+    }
+
+    #[test]
+    fn disabling_database_requires_a_restart_before_new_connections() {
+        let dir = tempdir().unwrap();
+        let db = Database::new(dir.path().join("disabled.db"));
+        db.initialize().unwrap();
+        db.begin_maintenance()
+            .unwrap()
+            .disable_until_restart()
+            .unwrap();
+        assert!(db
+            .connect()
+            .err()
+            .is_some_and(|error| error.starts_with("database_unavailable:")));
     }
 
     #[test]

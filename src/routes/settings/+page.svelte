@@ -1,8 +1,12 @@
 <script lang="ts">
-  import { Bot, Check, CheckCircle2, ChevronRight, CircleHelp, Code2, Eye, EyeOff, KeyRound, LockKeyhole, PlugZap, Save, ShieldCheck, Sparkles, TerminalSquare, TestTube2, XCircle } from 'lucide-svelte';
+  import { onMount } from 'svelte';
+  import { open, save, confirm } from '@tauri-apps/plugin-dialog';
+  import { Bot, Check, CheckCircle2, ChevronRight, CircleHelp, Code2, DatabaseBackup, Download, Eye, EyeOff, HardDrive, KeyRound, LockKeyhole, PlugZap, RefreshCw, RotateCcw, Save, ShieldCheck, Sparkles, TerminalSquare, TestTube2, Trash2, XCircle } from 'lucide-svelte';
   import { backend } from '$lib/services/backend';
+  import { shouldReloadAfterClear } from '$lib/clear-data';
+  import { checkForUpdate, updateCheckError, updateChecking } from '$lib/stores/distribution';
   import { refresh, saveSettings, snapshot } from '$lib/stores/app';
-  import type { AiProviderConfig, AppSettings, ProviderTestResult } from '$lib/types';
+  import type { AiProviderConfig, AppInfo, AppSettings, BackupInfo, ClearDataResult, ClearDataScope, ProviderTestResult } from '$lib/types';
 
   let selectedId = '';
   let draft: AiProviderConfig | null = null;
@@ -15,6 +19,26 @@
   let toast = '';
   let localSettings: AppSettings | null = null;
   let settingsInitialized = false;
+  let appInfo: AppInfo | null = null;
+  let automaticBackups: BackupInfo[] = [];
+  let maintenanceError = '';
+  let maintenanceBusy = false;
+  let clearResult: ClearDataResult | null = null;
+
+  onMount(() => {
+    void loadDistributionInfo();
+  });
+
+  async function loadDistributionInfo() {
+    try {
+      [appInfo, automaticBackups] = await Promise.all([
+        backend.getAppInfo(),
+        backend.listAutomaticBackups()
+      ]);
+    } catch (error) {
+      maintenanceError = error instanceof Error ? error.message : String(error);
+    }
+  }
 
   $: visibleProviders = $snapshot.providers.filter((provider) => (provider.kind as string) !== 'openrouter');
   $: if (visibleProviders.length && (!selectedId || !visibleProviders.some((provider) => provider.id === selectedId))) {
@@ -86,6 +110,86 @@
     await saveSettings(next);
     localSettings = next;
     showToast('高级模式设置已保存');
+  }
+
+  const formatBytes = (bytes: number) => bytes < 1024 * 1024
+    ? `${Math.max(1, Math.round(bytes / 1024))} KiB`
+    : `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
+
+  async function manualUpdateCheck() {
+    maintenanceError = '';
+    const update = await checkForUpdate(true);
+    if (!update && !$updateCheckError) showToast('当前已是最新版本');
+  }
+
+  async function exportBackup() {
+    const accepted = await confirm('备份包含简历和岗位数据，且不加密；不包含 API Key 或 BOSS Cookie。请妥善保管。', { title: '导出明文备份', kind: 'warning' });
+    if (!accepted) return;
+    const output = await save({ defaultPath: `求职舱-${new Date().toISOString().slice(0, 10)}.aijobbackup`, filters: [{ name: '求职舱备份', extensions: ['aijobbackup'] }] });
+    if (!output) return;
+    maintenanceBusy = true;
+    try {
+      await backend.createBackup(output);
+      showToast('备份已导出');
+    } catch (error) {
+      maintenanceError = error instanceof Error ? error.message : String(error);
+    } finally {
+      maintenanceBusy = false;
+    }
+  }
+
+  async function restoreBackup() {
+    const selected = await open({ multiple: false, filters: [{ name: '求职舱备份', extensions: ['aijobbackup'] }] });
+    if (!selected || Array.isArray(selected)) return;
+    const accepted = await confirm('恢复前会自动保存当前数据快照。恢复成功后应用将重启。', { title: '恢复备份', kind: 'warning' });
+    if (!accepted) return;
+    maintenanceBusy = true;
+    try {
+      await backend.restoreBackup(selected);
+      await backend.restartApp();
+    } catch (error) {
+      maintenanceError = error instanceof Error ? error.message : String(error);
+      maintenanceBusy = false;
+    }
+  }
+
+  async function exportDiagnostics() {
+    const output = await save({ defaultPath: `求职舱-诊断-${new Date().toISOString().slice(0, 10)}.zip`, filters: [{ name: '诊断 ZIP', extensions: ['zip'] }] });
+    if (!output) return;
+    maintenanceBusy = true;
+    try {
+      await backend.exportDiagnostics(output);
+      showToast('脱敏诊断已导出');
+    } catch (error) {
+      maintenanceError = error instanceof Error ? error.message : String(error);
+    } finally {
+      maintenanceBusy = false;
+    }
+  }
+
+  const clearLabels: Record<ClearDataScope, string> = {
+    modelKeys: '模型密钥', bossProfile: 'BOSS 登录数据', legacyData: '旧版遗留数据', all: '全部应用数据'
+  };
+
+  async function clearData(scope: ClearDataScope) {
+    const detail = scope === 'all'
+      ? '这会清除钥匙串、BOSS Profile、数据库、自动备份、日志和临时文件。自行导出的 PDF、报告和 .aijobbackup 不受影响。'
+      : `即将清除${clearLabels[scope]}。`;
+    const accepted = await confirm(detail, { title: `清除${clearLabels[scope]}`, kind: 'warning' });
+    if (!accepted) return;
+    maintenanceBusy = true;
+    clearResult = null;
+    try {
+      clearResult = await backend.clearData(scope);
+      if (shouldReloadAfterClear(clearResult)) {
+        await refresh();
+        await loadDistributionInfo();
+      }
+    } catch (error) {
+      maintenanceError = error instanceof Error ? error.message : String(error);
+    } finally {
+      maintenanceBusy = false;
+    }
   }
 
   const providerNote = (kind: string) => kind === 'xiaomi'
@@ -160,6 +264,52 @@
     </section>
     <div class="mt-6 flex justify-end"><button class="btn-primary" on:click={updateSettings}><Save size={15} />保存高级模式设置</button></div>
   {/if}
+</div>
+
+<div class="page-content max-w-[1240px] pt-0">
+  <section class="panel overflow-hidden">
+    <div class="flex flex-wrap items-center justify-between gap-3 border-b px-6 py-5" style="border-color: var(--line);">
+      <div class="flex items-center gap-3"><span class="grid h-10 w-10 place-items-center rounded-xl bg-brand-soft text-brand"><HardDrive size={18} /></span><div><h3 class="section-title">关于与诊断</h3><p class="mt-0.5 text-xs body-muted">版本、运行环境、更新状态和可安全分享的诊断信息。</p></div></div>
+      <button class="btn" type="button" on:click={manualUpdateCheck} disabled={$updateChecking}><RefreshCw size={15} class={$updateChecking ? 'animate-spin' : ''} />{$updateChecking ? '正在检查…' : '检查更新'}</button>
+    </div>
+    {#if appInfo}
+      <div class="grid gap-x-8 gap-y-3 px-6 py-5 text-sm md:grid-cols-2">
+        <p><span class="body-muted">应用 / sidecar</span><br />v{appInfo.version} / protocol {appInfo.sidecarProtocol}</p>
+        <p><span class="body-muted">系统 / 架构 / WebView</span><br />{appInfo.os} · {appInfo.arch} · {appInfo.webview}</p>
+        <p><span class="body-muted">数据库 schema</span><br />{appInfo.schemaVersion}</p>
+        <p><span class="body-muted">Google Chrome</span><br />{appInfo.chrome.installed ? appInfo.chrome.version || '已安装' : '未安装（BOSS 功能已禁用）'}</p>
+        <p class="md:col-span-2"><span class="body-muted">数据目录</span><br /><code class="break-all text-xs">{appInfo.dataDir}</code></p>
+        <p><span class="body-muted">最后更新检查</span><br />{appInfo.lastUpdateCheckStatus || $snapshot.settings.lastUpdateCheckAt || '尚未检查'}</p>
+        <p><span class="body-muted">旧版遗留数据</span><br />{appInfo.legacyDataDetected ? '已发现，保留用于回退' : '未发现'}</p>
+      </div>
+      {#if !appInfo.chrome.installed}<div class="mx-6 mb-5 rounded-xl border p-3 text-xs text-warning" style="border-color: var(--warning); background: var(--warning-soft);">BOSS 功能需要 Google Chrome，应用不会替你下载浏览器。<a class="ml-1 underline" href="https://www.google.com/chrome/" target="_blank" rel="noreferrer">前往 Chrome 官方网站</a></div>{/if}
+    {/if}
+    <div class="flex flex-wrap gap-2 border-t px-6 py-4" style="border-color: var(--line);"><button class="btn" type="button" on:click={exportDiagnostics} disabled={maintenanceBusy}><Download size={15} />导出脱敏诊断</button><a class="btn" href="https://github.com/kyle-kw/ai-job-app/issues" target="_blank" rel="noreferrer">GitHub Issues 支持</a></div>
+  </section>
+
+  <section class="mt-6 panel overflow-hidden">
+    <div class="flex flex-wrap items-center justify-between gap-3 border-b px-6 py-5" style="border-color: var(--line);"><div class="flex items-center gap-3"><span class="grid h-10 w-10 place-items-center rounded-xl surface-soft"><DatabaseBackup size={18} /></span><div><h3 class="section-title">备份与恢复</h3><p class="mt-0.5 text-xs body-muted">导出备份为明文文件；自动备份最多保留最近 3 份。</p></div></div><div class="flex gap-2"><button class="btn" type="button" on:click={restoreBackup} disabled={maintenanceBusy}><RotateCcw size={15} />恢复备份</button><button class="btn-primary" type="button" on:click={exportBackup} disabled={maintenanceBusy}><Download size={15} />导出备份</button></div></div>
+    <div class="px-6 py-5">
+      <div class="rounded-xl border p-4 text-xs leading-6 text-warning" style="border-color: var(--warning); background: var(--warning-soft);">.aijobbackup 包含简历和岗位数据且不加密，不包含 API Key 或 BOSS Cookie。恢复会先校验完整性和 schema，并在覆盖前保存当前快照。</div>
+      <h4 class="mt-5 text-sm font-semibold">自动备份</h4>
+      {#if automaticBackups.length}
+        <div class="mt-2 divide-y rounded-xl border text-xs" style="border-color: var(--line);">{#each automaticBackups as backup}<div class="flex flex-wrap items-center justify-between gap-2 px-4 py-3"><div><p class="font-medium">{backup.fileName}</p><p class="mt-1 body-muted">{new Date(backup.createdAt).toLocaleString()} · {formatBytes(backup.size)}</p></div><code class="max-w-[48%] truncate body-muted" title={backup.path}>{backup.path}</code></div>{/each}</div>
+      {:else}<p class="mt-2 text-xs body-muted">尚无自动备份。更新、恢复或 schema 迁移前会自动创建。</p>{/if}
+    </div>
+  </section>
+
+  <section class="mt-6 panel overflow-hidden">
+    <div class="border-b px-6 py-5" style="border-color: var(--line);"><div class="flex items-center gap-3"><span class="grid h-10 w-10 place-items-center rounded-xl bg-[var(--danger-soft)] text-danger"><Trash2 size={18} /></span><div><h3 class="section-title">数据生命周期</h3><p class="mt-0.5 text-xs body-muted">普通卸载保留用户数据；彻底卸载前请在此清除全部数据。</p></div></div></div>
+    <div class="grid gap-3 px-6 py-5 sm:grid-cols-2 lg:grid-cols-4">
+      <button class="btn justify-center" type="button" on:click={() => clearData('modelKeys')} disabled={maintenanceBusy}>清除模型密钥</button>
+      <button class="btn justify-center" type="button" on:click={() => clearData('bossProfile')} disabled={maintenanceBusy}>清除 BOSS 数据</button>
+      <button class="btn justify-center" type="button" on:click={() => clearData('legacyData')} disabled={maintenanceBusy || !appInfo?.legacyDataDetected}>删除旧版遗留</button>
+      <button class="btn justify-center text-danger" type="button" on:click={() => clearData('all')} disabled={maintenanceBusy}>清除全部数据</button>
+    </div>
+    {#if clearResult}<div class="mx-6 mb-5 rounded-xl border p-4 text-xs" style="border-color: var(--line);"><p class="font-semibold">{clearResult.complete ? '清理完成' : '部分项目清理失败'}</p><ul class="mt-2 space-y-1">{#each clearResult.items as item}<li class={item.ok ? 'text-success' : 'text-danger'}>{item.ok ? '✓' : '✕'} {item.message}</li>{/each}</ul>{#if clearResult.restartRequired}<button class="btn mt-3" type="button" on:click={() => void backend.restartApp()}>重启并重新初始化</button>{/if}</div>{/if}
+  </section>
+
+  {#if maintenanceError || $updateCheckError}<div class="mt-5 rounded-xl border p-3 text-xs text-danger" style="border-color: var(--danger); background: var(--danger-soft);">{maintenanceError || $updateCheckError}</div>{/if}
 </div>
 
 {#if toast}<div class="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-xl bg-[#1d2824] px-4 py-2.5 text-sm font-medium text-white shadow-xl animate-lift">{toast}</div>{/if}

@@ -459,6 +459,19 @@ mod tests {
             "graphite"
         );
     }
+
+    #[test]
+    fn legacy_privacy_boolean_does_not_acknowledge_the_beta_policy() {
+        let settings: AppSettings = serde_json::from_value(serde_json::json!({
+            "advancedMode": true,
+            "privacyAcknowledged": true,
+            "telemetry": true
+        }))
+        .unwrap();
+        assert!(settings.advanced_mode);
+        assert!(settings.privacy_acknowledged_version.is_none());
+        assert!(settings.last_update_check_at.is_none());
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -571,8 +584,88 @@ impl Default for BossProfileState {
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     pub advanced_mode: bool,
-    pub telemetry: bool,
-    pub privacy_acknowledged: bool,
+    #[serde(default)]
+    pub privacy_acknowledged_version: Option<String>,
+    #[serde(default)]
+    pub last_update_check_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChromeStatus {
+    pub installed: bool,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub executable_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppInfo {
+    pub version: String,
+    pub identifier: String,
+    pub os: String,
+    pub arch: String,
+    pub webview: String,
+    pub schema_version: i64,
+    pub sidecar_protocol: String,
+    pub chrome: ChromeStatus,
+    pub data_dir: String,
+    pub legacy_data_detected: bool,
+    #[serde(default)]
+    pub last_update_check_status: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppUpdateInfo {
+    pub version: String,
+    pub current_version: String,
+    #[serde(default)]
+    pub published_at: Option<String>,
+    #[serde(default)]
+    pub notes: String,
+    #[serde(default)]
+    pub download_size: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateEvent {
+    pub event: String,
+    #[serde(default)]
+    pub downloaded: u64,
+    #[serde(default)]
+    pub total: Option<u64>,
+    #[serde(default)]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupInfo {
+    pub file_name: String,
+    pub path: String,
+    pub size: u64,
+    pub created_at: String,
+    pub source_version: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClearDataItemResult {
+    pub item: String,
+    pub ok: bool,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClearDataResult {
+    pub complete: bool,
+    pub items: Vec<ClearDataItemResult>,
+    pub restart_required: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

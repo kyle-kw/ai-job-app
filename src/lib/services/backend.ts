@@ -1,5 +1,5 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { invoke } from '@tauri-apps/api/core';
+import { Channel, invoke } from '@tauri-apps/api/core';
 import { mockJobs, mockResume, mockSnapshot } from '$lib/mock-data';
 import { deterministicFit } from '$lib/fit';
 import { filterJobs } from '$lib/job-filters';
@@ -9,7 +9,12 @@ import type {
   AiProviderConfig,
   ApplyResumeEditsRequest,
   AppSettings,
+  AppInfo,
+  AppUpdateInfo,
+  BackupInfo,
   BootstrapSnapshot,
+  ClearDataResult,
+  ClearDataScope,
   DeleteJobsResult,
   FitAnalysisResult,
   ImportResumePayload,
@@ -35,7 +40,8 @@ import type {
   SearchSpec,
   TaskEvent,
   TaskKind,
-  TaskRun
+  TaskRun,
+  UpdateEvent
 } from '$lib/types';
 
 const browserMode = () => typeof window === 'undefined' || !window.__TAURI_INTERNALS__;
@@ -552,5 +558,66 @@ export const backend = {
       return structuredClone(settings);
     }
     return invoke('save_settings', { settings });
+  },
+
+  async getAppInfo(): Promise<AppInfo> {
+    if (browserMode()) {
+      return {
+        version: '0.2.0', identifier: 'io.github.kylekw.aijobapp', os: 'browser', arch: 'demo',
+        webview: navigator.userAgent, schemaVersion: 5, sidecarProtocol: 'demo',
+        chrome: { installed: true, version: '浏览器演示', executablePath: null },
+        dataDir: '<browser-demo>', legacyDataDetected: false, lastUpdateCheckStatus: 'demo'
+      };
+    }
+    return invoke('get_app_info');
+  },
+
+  async checkForUpdate(manual = true): Promise<AppUpdateInfo | null> {
+    if (browserMode()) return null;
+    return invoke('check_for_update', { manual });
+  },
+
+  async downloadAndInstallUpdate(onEvent: (event: UpdateEvent) => void): Promise<void> {
+    if (browserMode()) throw new Error('更新安装仅桌面版可用');
+    const onEventChannel = new Channel<UpdateEvent>();
+    onEventChannel.onmessage = onEvent;
+    return invoke('download_and_install_update', { onEvent: onEventChannel });
+  },
+
+  async createBackup(outputPath: string): Promise<BackupInfo> {
+    if (browserMode()) throw new Error('备份导出仅桌面版可用');
+    return invoke('create_backup', { outputPath });
+  },
+
+  async restoreBackup(backupPath: string): Promise<void> {
+    if (browserMode()) throw new Error('备份恢复仅桌面版可用');
+    return invoke('restore_backup', { backupPath });
+  },
+
+  async listAutomaticBackups(): Promise<BackupInfo[]> {
+    if (browserMode()) return [];
+    return invoke('list_automatic_backups');
+  },
+
+  async clearData(scope: ClearDataScope): Promise<ClearDataResult> {
+    if (browserMode()) {
+      return { complete: true, items: [{ item: scope, ok: true, message: '浏览器演示不会修改任何数据' }], restartRequired: false };
+    }
+    return invoke('clear_data', { scope });
+  },
+
+  async exportDiagnostics(outputPath: string): Promise<string> {
+    if (browserMode()) throw new Error('诊断导出仅桌面版可用');
+    return invoke('export_diagnostics', { outputPath });
+  },
+
+  async restartApp(): Promise<void> {
+    if (browserMode()) return;
+    return invoke('restart_app');
+  },
+
+  async exitApp(): Promise<void> {
+    if (browserMode()) return;
+    return invoke('exit_app');
   }
 };

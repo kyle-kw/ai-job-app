@@ -1,6 +1,6 @@
 [package]
 name = "ai-job-app"
-version = "0.1.7"
+version = "0.2.0"
 description = "Local-first AI job search assistant"
 authors = ["AI Job App contributors"]
 edition = "2021"
@@ -18,15 +18,18 @@ chrono = { version = "0.4", features = ["serde"] }
 keyring = { version = "3", features = ["apple-native", "windows-native"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 regex = "1"
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["backup", "bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+semver = "1"
 sha2 = "0.10"
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2.7.1"
+tauri-plugin-updater = "2.10.1"
 thiserror = "2"
 tokio = { version = "1", features = ["process", "io-util", "sync", "time"] }
 uuid = { version = "1", features = ["v4", "serde"] }
+zip = { version = "4", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 tempfile = "3"

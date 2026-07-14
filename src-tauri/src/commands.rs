@@ -1,4 +1,5 @@
 use crate::analytics;
+use crate::distribution;
 use crate::llm;
 use crate::models::*;
 use crate::scoring;
@@ -43,6 +44,19 @@ const SUPPORTED_SCRAPE_CITIES: [&str; 25] = [
     "宁波",
     "福州",
 ];
+
+async fn ensure_chrome_available() -> Result<(), String> {
+    let environment = sidecar::request(json!({"op":"environment_status","params":{}})).await?;
+    if environment
+        .get("chrome")
+        .and_then(|value| value.get("installed"))
+        .and_then(Value::as_bool)
+        != Some(true)
+    {
+        return Err("chrome_missing: BOSS 功能需要 Google Chrome，请从 https://www.google.com/chrome/ 安装后重试".into());
+    }
+    Ok(())
+}
 
 const MAX_RESUME_FILE_BYTES: usize = 25 * 1024 * 1024;
 const MAX_RESUME_BASE64_BYTES: usize = MAX_RESUME_FILE_BYTES.div_ceil(3) * 4;
@@ -375,6 +389,8 @@ pub async fn start_scrape(
     state: State<'_, AppState>,
     mut spec: SearchSpec,
 ) -> Result<String, String> {
+    distribution::require_privacy(&state)?;
+    ensure_chrome_available().await?;
     spec.keyword = spec.keyword.trim().to_string();
     spec.city = spec.city.trim().to_string();
     if spec.keyword.is_empty() {
@@ -639,6 +655,7 @@ pub async fn start_job_detail_extraction(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
+    distribution::require_privacy(&state)?;
     let provider = state
         .db
         .default_provider()?
@@ -742,6 +759,8 @@ pub async fn setup_boss(
     state: State<'_, AppState>,
     reset_profile: Option<bool>,
 ) -> Result<String, String> {
+    distribution::require_privacy(&state)?;
+    ensure_chrome_available().await?;
     if let Some(task) = state.db.running_task("boss-login")? {
         return Ok(task.id);
     }
@@ -899,6 +918,7 @@ pub async fn import_resume(
     state: State<'_, AppState>,
     payload: ImportResumePayload,
 ) -> Result<String, String> {
+    distribution::require_privacy(&state)?;
     let extension = PathBuf::from(&payload.file_name)
         .extension()
         .and_then(|value| value.to_str())
@@ -1270,6 +1290,7 @@ pub async fn generate_greeting(
     state: State<'_, AppState>,
     job_id: String,
 ) -> Result<String, String> {
+    distribution::require_privacy(&state)?;
     let mut job = state
         .db
         .get_job(&job_id)?
@@ -1348,9 +1369,8 @@ pub async fn render_resume(
 #[tauri::command]
 pub fn save_settings(
     state: State<'_, AppState>,
-    mut settings: AppSettings,
+    settings: AppSettings,
 ) -> Result<AppSettings, String> {
-    settings.telemetry = false;
     state.db.save_settings(&settings)?;
     Ok(settings)
 }

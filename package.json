@@ -1,8 +1,11 @@
 {
   "name": "ai-job-app",
-  "version": "0.1.7",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": "22.23.1"
+  },
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
@@ -10,6 +13,8 @@
     "check": "node scripts/check.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
+    "version:set": "node scripts/set-version.mjs",
+    "release:verify": "node scripts/verify-release.mjs",
     "tauri": "node scripts/tauri.mjs",
     "tauri:dev": "node scripts/tauri.mjs dev",
     "sidecar:build": "powershell -ExecutionPolicy Bypass -File scripts/build-sidecar.ps1",

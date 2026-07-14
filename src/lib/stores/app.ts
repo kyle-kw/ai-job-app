@@ -9,7 +9,7 @@ const empty: BootstrapSnapshot = {
     llm: { state: 'needs_setup', message: '需要配置默认模型。' }
   },
   resume: null, providers: [], tasks: [], scrapeRuns: [],
-  settings: { advancedMode: false, telemetry: false, privacyAcknowledged: false }
+  settings: { advancedMode: false, privacyAcknowledgedVersion: null, lastUpdateCheckAt: null }
 };
 
 export const snapshot = writable<BootstrapSnapshot>(empty);
@@ -61,8 +61,6 @@ export async function refresh() {
     if (requestId === bootstrapRequestId) appError.set(error instanceof Error ? error.message : String(error));
   }
 }
-
-export function clearAppError() { appError.set(null); }
 
 export async function startScrape(spec: SearchSpec) {
   await backend.startScrape(spec);

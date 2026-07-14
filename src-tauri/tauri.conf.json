@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "求职舱",
-  "version": "0.1.7",
-  "identifier": "com.localfirst.aijobapp",
+  "version": "0.2.0",
+  "identifier": "io.github.kylekw.aijobapp",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://127.0.0.1:1420",
@@ -28,6 +28,13 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
+    "resources": {
+      "../LICENSE": "policies/LICENSE",
+      "../PRIVACY.md": "policies/PRIVACY.md",
+      "../TERMS.md": "policies/TERMS.md",
+      "../THIRD_PARTY_NOTICES.md": "policies/THIRD_PARTY_NOTICES.md"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -36,12 +43,32 @@
       "icons/icon.ico"
     ],
     "windows": {
+      "webviewInstallMode": {
+        "type": "embedBootstrapper"
+      },
+      "nsis": {
+        "installMode": "currentUser"
+      },
       "wix": {
         "language": "zh-CN"
       }
     },
+    "macOS": {
+      "minimumSystemVersion": "12.0"
+    },
     "category": "Productivity",
     "shortDescription": "本地优先的 AI 求职助手",
     "longDescription": "抓取岗位、优化简历、评估匹配度并生成专岗求职材料。"
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/kyle-kw/ai-job-app/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQ0REU2NzA0REU5Q0YyNEYKUldSUDhwemVCR2ZlMURvQXRuY1BCSDRVOUZpUkFKems0cmV5cW9TYnlXR3NIbEdBTkRDNC82YmsK",
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

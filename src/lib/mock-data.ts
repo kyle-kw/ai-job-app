@@ -114,5 +114,5 @@ export const mockSnapshot: BootstrapSnapshot = {
       reportMarkdown: '## 本次岗位观察\n\n- 共整理 **90** 个岗位，其中 38 个为首次出现。\n- 高频技能为 **Python、RAG、LangChain、Docker**。\n- 3–5 年经验岗位占比最高，主流薪资集中在 **25–45K**。\n\n> 建议在简历前半页突出 Agent 工作流、RAG 评测和生产部署经验。'
     }
   ],
-  settings: { advancedMode: false, telemetry: false, privacyAcknowledged: false }
+  settings: { advancedMode: false, privacyAcknowledgedVersion: null, lastUpdateCheckAt: null }
 };

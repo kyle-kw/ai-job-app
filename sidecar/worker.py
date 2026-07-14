@@ -14,7 +14,9 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import signal
+import subprocess
 import sys
 import tempfile
 import traceback
@@ -25,6 +27,8 @@ from typing import Any
 
 
 SHANGHAI_TZ = timezone(timedelta(hours=8), name="Asia/Shanghai")
+APP_VERSION = "0.2.0"
+PROTOCOL_VERSION = "2"
 
 
 def configure_utf8_stdio() -> None:
@@ -238,6 +242,55 @@ def close_boss_session(
 
 def close_boss(_params: dict[str, Any]) -> dict[str, Any]:
     return close_boss_session(load_boss_module(), action="手动清理时")
+
+
+def environment_status(_params: dict[str, Any]) -> dict[str, Any]:
+    boss = load_boss_module()
+    executable = pathlib.Path(str(boss.DEFAULT_CHROME_PATH)).expanduser()
+    installed = executable.is_file()
+    version: str | None = None
+    if installed:
+        kwargs: dict[str, Any] = {
+            "capture_output": True,
+            "text": True,
+            "timeout": 5,
+            "check": False,
+            "encoding": "utf-8",
+            "errors": "replace",
+        }
+        if os.name == "nt":
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        try:
+            completed = subprocess.run([str(executable), "--version"], **kwargs)
+            version = (completed.stdout or completed.stderr).strip() or None
+        except (OSError, subprocess.SubprocessError):
+            version = None
+    return {
+        "appVersion": APP_VERSION,
+        "protocolVersion": PROTOCOL_VERSION,
+        "chrome": {
+            "installed": installed,
+            "version": version,
+            "executablePath": str(executable) if installed else None,
+        },
+    }
+
+
+def clear_boss_data(_params: dict[str, Any]) -> dict[str, Any]:
+    boss = load_boss_module()
+    outcome = close_boss_session(boss, action="清除数据前")
+    if not outcome["cleanupSucceeded"]:
+        raise RuntimeError(outcome.get("error") or "无法确认 BOSS 专用 Chrome 已关闭")
+    remaining = list(boss.chrome_pids_for_user_data_dir(boss.DEFAULT_CDP_DATA_DIR))
+    if remaining:
+        raise RuntimeError(f"仍检测到 BOSS 专用 Chrome 进程：{remaining}")
+    deleted: list[str] = []
+    for raw_path in (boss.DEFAULT_CDP_DATA_DIR, boss.DEFAULT_RESULT_DIR):
+        path = pathlib.Path(str(raw_path)).expanduser()
+        if path.exists():
+            shutil.rmtree(path)
+            deleted.append(str(path))
+    return {"deleted": deleted, "remainingPids": []}
 
 
 def scrape_jobs(params: dict[str, Any]) -> dict[str, Any]:
@@ -883,6 +936,8 @@ def render_resume(params: dict[str, Any]) -> dict[str, Any]:
 OPERATIONS = {
     "setup_boss": setup_boss,
     "close_boss": close_boss,
+    "clear_boss_data": clear_boss_data,
+    "environment_status": environment_status,
     "scrape_jobs": scrape_jobs,
     "extract_resume": extract_resume,
     "render_resume": render_resume,

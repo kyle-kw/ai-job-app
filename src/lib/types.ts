@@ -260,8 +260,65 @@ export interface ConfigurationSnapshot {
 
 export interface AppSettings {
   advancedMode: boolean;
-  telemetry: false;
-  privacyAcknowledged: boolean;
+  privacyAcknowledgedVersion?: string | null;
+  lastUpdateCheckAt?: string | null;
+}
+
+export interface ChromeStatus {
+  installed: boolean;
+  version?: string | null;
+  executablePath?: string | null;
+}
+
+export interface AppInfo {
+  version: string;
+  identifier: string;
+  os: string;
+  arch: string;
+  webview: string;
+  schemaVersion: number;
+  sidecarProtocol: string;
+  chrome: ChromeStatus;
+  dataDir: string;
+  legacyDataDetected: boolean;
+  lastUpdateCheckStatus?: string | null;
+}
+
+export interface AppUpdateInfo {
+  version: string;
+  currentVersion: string;
+  publishedAt?: string | null;
+  notes: string;
+  downloadSize?: number | null;
+}
+
+export interface UpdateEvent {
+  event: 'started' | 'progress' | 'downloaded' | 'finished';
+  downloaded: number;
+  total?: number | null;
+  message?: string | null;
+}
+
+export interface BackupInfo {
+  fileName: string;
+  path: string;
+  size: number;
+  createdAt: string;
+  sourceVersion: string;
+}
+
+export type ClearDataScope = 'modelKeys' | 'bossProfile' | 'legacyData' | 'all';
+
+export interface ClearDataItemResult {
+  item: string;
+  ok: boolean;
+  message: string;
+}
+
+export interface ClearDataResult {
+  complete: boolean;
+  items: ClearDataItemResult[];
+  restartRequired: boolean;
 }
 
 export interface BootstrapSnapshot {

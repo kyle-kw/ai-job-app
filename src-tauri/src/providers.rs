@@ -1,3 +1,4 @@
+use crate::distribution;
 use crate::llm;
 use crate::models::{AiProviderConfig, ProviderSaveResult, ProviderTestResult};
 use crate::time;
@@ -35,6 +36,7 @@ pub async fn test_provider(
     state: State<'_, AppState>,
     provider: AiProviderConfig,
 ) -> Result<ProviderTestResult, String> {
+    distribution::require_privacy(&state)?;
     let existing = state.db.provider_by_id(&provider.id)?;
     let candidate = with_existing_secret(provider, existing.as_ref());
     Ok(llm::test(&candidate).await.unwrap_or_else(failed_test))
@@ -45,6 +47,7 @@ pub async fn save_provider(
     state: State<'_, AppState>,
     provider: AiProviderConfig,
 ) -> Result<ProviderSaveResult, String> {
+    distribution::require_privacy(&state)?;
     if provider.kind == "openrouter" {
         return Err("OpenRouter 预设已移除，请使用自定义模型。".into());
     }

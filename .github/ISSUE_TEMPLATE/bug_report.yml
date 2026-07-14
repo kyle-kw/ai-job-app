@@ -1,0 +1,47 @@
+name: Bug report
+description: 报告可复现的问题；请勿上传简历、密钥或 Cookie。
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: "请先更新到最新版本。不要提交简历、岗位数据库、API Key、Cookie 或包含个人信息的截图。"
+  - type: input
+    id: version
+    attributes:
+      label: 应用版本
+      placeholder: 0.2.0
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: 操作系统
+      placeholder: Windows 11 x64 / macOS 14 Apple Silicon
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: 隐私确认
+      options:
+        - label: 我确认没有附加简历、API Key、Cookie 或其他敏感信息。
+          required: true

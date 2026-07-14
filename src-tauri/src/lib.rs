@@ -2,6 +2,7 @@ mod analytics;
 mod assistant;
 mod commands;
 mod db;
+mod distribution;
 mod llm;
 mod models;
 mod providers;
@@ -13,30 +14,112 @@ mod time;
 
 use db::Database;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use tauri::Manager;
+use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+use tauri_plugin_updater::Update;
 
 pub struct AppState {
     pub db: Database,
     pub data_dir: PathBuf,
+    pub legacy_data_dir: Option<PathBuf>,
+    pub pending_update: Mutex<Option<Update>>,
+    pub last_update_status: Mutex<Option<String>>,
+}
+
+fn show_startup_error(app: &tauri::App, error: &str) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
+    let handle = app.handle().clone();
+    app.dialog()
+        .message(format!(
+            "求职舱无法安全启动。原数据未被删除，也不会创建空数据库掩盖问题。\n\n{error}"
+        ))
+        .title("求职舱启动失败")
+        .kind(MessageDialogKind::Error)
+        .show(move |_| handle.exit(1));
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
-            let data_dir = app.path().app_data_dir()?;
-            std::fs::create_dir_all(&data_dir)?;
+            let startup = (|| {
+                let data_dir = app
+                    .path()
+                    .app_data_dir()
+                    .map_err(|error| error.to_string())?;
+                std::fs::create_dir_all(&data_dir).map_err(|error| error.to_string())?;
+                let legacy = distribution::migrate_legacy_identity(&data_dir)?;
+                let db = Database::new(data_dir.join("ai-job-app.db"));
+                distribution::prepare_database(&db, &data_dir)?;
+                distribution::maintain_logs(&data_dir)?;
+                Ok::<_, String>((data_dir, legacy, db))
+            })();
+            let (data_dir, legacy, db) = match startup {
+                Ok(value) => value,
+                Err(error) => {
+                    show_startup_error(app, &error);
+                    return Ok(());
+                }
+            };
             let imports = data_dir.join("imports");
             if imports.exists() {
                 if let Err(error) = std::fs::remove_dir_all(&imports) {
                     eprintln!("failed to clean stale resume imports: {error}");
                 }
             }
-            let db = Database::new(data_dir.join("ai-job-app.db"));
-            db.initialize().map_err(std::io::Error::other)?;
             let _ = llm::delete_secret("provider-openrouter");
-            app.manage(AppState { db, data_dir });
+            let _ = llm::delete_legacy_secret("provider-openrouter");
+            let smoke_marker = std::env::var_os("AI_JOB_APP_SMOKE_RESULT").map(PathBuf::from);
+            let smoke_result = if smoke_marker.is_some() {
+                let sidecar = tauri::async_runtime::block_on(sidecar::request(serde_json::json!({
+                    "op": "ping",
+                    "params": {}
+                })));
+                Some(serde_json::json!({
+                    "ok": sidecar.is_ok(),
+                    "schemaVersion": db.schema_version().unwrap_or_default(),
+                    "sidecar": sidecar.unwrap_or_else(|error| serde_json::json!({"error": error}))
+                }))
+            } else {
+                None
+            };
+            app.manage(AppState {
+                db,
+                data_dir,
+                legacy_data_dir: legacy.legacy_dir,
+                pending_update: Mutex::new(None),
+                last_update_status: Mutex::new(if legacy.migrated {
+                    Some("legacy data migrated".into())
+                } else {
+                    None
+                }),
+            });
+            if let Some(marker) =
+                std::env::var_os("AI_JOB_APP_UPDATER_E2E_RESULT").map(PathBuf::from)
+            {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+                let expected = std::env::var("AI_JOB_APP_UPDATER_E2E_EXPECTED")
+                    .unwrap_or_else(|_| "0.2.1".into());
+                distribution::run_updater_e2e(app.handle().clone(), marker, expected);
+                return Ok(());
+            }
+            if let (Some(marker), Some(result)) = (smoke_marker, smoke_result) {
+                std::fs::write(
+                    marker,
+                    serde_json::to_vec_pretty(&result).map_err(std::io::Error::other)?,
+                )?;
+                if result.get("ok").and_then(serde_json::Value::as_bool) != Some(true) {
+                    return Err(std::io::Error::other("desktop smoke check failed").into());
+                }
+                app.handle().exit(0);
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -74,6 +157,16 @@ pub fn run() {
             providers::save_provider,
             providers::test_provider,
             commands::save_settings,
+            distribution::get_app_info,
+            distribution::check_for_update,
+            distribution::download_and_install_update,
+            distribution::create_backup,
+            distribution::restore_backup,
+            distribution::list_automatic_backups,
+            distribution::clear_data,
+            distribution::export_diagnostics,
+            distribution::restart_app,
+            distribution::exit_app,
         ])
         .run(tauri::generate_context!())
         .expect("error while running AI Job App");

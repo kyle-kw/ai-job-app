@@ -6,12 +6,13 @@ import pathlib
 import shutil
 import subprocess
 import sys
-import venv
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SIDECAR = ROOT / "sidecar"
 BINARIES = ROOT / "src-tauri" / "binaries"
+PYTHON_VERSION = "3.13.6"
+UV_VERSION = "0.11.24"
 
 
 def host_target() -> str:
@@ -23,20 +24,26 @@ def host_target() -> str:
 
 
 def main() -> int:
+    if ".".join(str(value) for value in sys.version_info[:3]) != PYTHON_VERSION:
+        raise RuntimeError(f"Sidecar build requires Python {PYTHON_VERSION}; found {sys.version.split()[0]}")
     target = os.environ.get("TAURI_TARGET") or host_target()
     suffix = ".exe" if target.endswith("windows-msvc") else ""
     BINARIES.mkdir(parents=True, exist_ok=True)
     build_venv = SIDECAR / ".build-venv"
-    if not build_venv.exists():
-        venv.EnvBuilder(with_pip=True).create(build_venv)
-    build_python = build_venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     uv = shutil.which("uv")
-    if uv:
-        environment = dict(os.environ)
-        environment.setdefault("UV_CACHE_DIR", str(ROOT / ".uv-cache"))
-        subprocess.check_call([uv, "pip", "install", "--python", str(build_python), "-r", str(SIDECAR / "requirements-build.txt")], env=environment)
-    else:
-        subprocess.check_call([str(build_python), "-m", "pip", "install", "--disable-pip-version-check", "-r", str(SIDECAR / "requirements-build.txt")])
+    if not uv:
+        raise RuntimeError(f"uv {UV_VERSION} is required to build the sidecar")
+    installed_uv = subprocess.check_output([uv, "--version"], text=True).split()[1]
+    if installed_uv != UV_VERSION:
+        raise RuntimeError(f"Sidecar build requires uv {UV_VERSION}; found {installed_uv}")
+    environment = dict(os.environ)
+    environment.setdefault("UV_CACHE_DIR", str(ROOT / ".uv-cache"))
+    environment["UV_PROJECT_ENVIRONMENT"] = str(build_venv)
+    subprocess.check_call([
+        uv, "sync", "--project", str(SIDECAR), "--locked", "--group", "build",
+        "--no-install-project", "--python", PYTHON_VERSION,
+    ], env=environment)
+    build_python = build_venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     name = "job-assistant-sidecar"
     work_path = SIDECAR / "build"
     dist_path = SIDECAR / "dist"

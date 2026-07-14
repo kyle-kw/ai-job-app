@@ -1,7 +1,7 @@
 [project]
 name = "ai-job-app-sidecar"
-version = "0.1.0"
-requires-python = ">=3.12"
+version = "0.2.0"
+requires-python = "==3.13.6"
 dependencies = [
   "requests>=2.32,<3",
   "websocket-client>=1.8,<2",
@@ -15,3 +15,6 @@ dependencies = [
 
 [project.scripts]
 ai-job-sidecar = "worker:main"
+
+[dependency-groups]
+build = ["pyinstaller==6.21.0"]
