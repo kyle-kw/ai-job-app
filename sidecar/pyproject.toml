@@ -4,7 +4,7 @@ version = "0.2.0"
 requires-python = "==3.13.6"
 dependencies = [
   "requests>=2.32,<3",
-  "websocket-client>=1.8,<2",
+  "websocket-client>=1.9.0,<2",
   "pypdf>=5,<7",
   "python-docx>=1.1,<2",
   "pypdfium2>=4.30,<5",
