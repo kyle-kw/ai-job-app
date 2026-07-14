@@ -543,7 +543,8 @@ pub fn run_updater_e2e(app: AppHandle, marker: PathBuf, expected_version: String
             .get("downloadedBytes")
             .and_then(Value::as_u64)
             .unwrap_or_default();
-        let ok = previous.get("stage").and_then(Value::as_str) == Some("installed")
+        let previous_stage = previous.get("stage").and_then(Value::as_str);
+        let ok = matches!(previous_stage, Some("downloaded" | "installed"))
             && progress_events > 0
             && downloaded_bytes > 0;
         let result = json!({
@@ -593,13 +594,46 @@ pub fn run_updater_e2e(app: AppHandle, marker: PathBuf, expected_version: String
             let downloaded_bytes = Arc::new(AtomicU64::new(0));
             let progress_events_callback = progress_events.clone();
             let downloaded_bytes_callback = downloaded_bytes.clone();
+            let progress_marker = marker.clone();
+            let progress_from_version = current_version.clone();
+            let progress_expected_version = expected_version.clone();
+            let finished_events = progress_events.clone();
+            let finished_bytes = downloaded_bytes.clone();
+            let finished_marker = marker.clone();
+            let finished_from_version = current_version.clone();
+            let finished_expected_version = expected_version.clone();
             update
                 .download_and_install(
                     move |chunk, _| {
-                        progress_events_callback.fetch_add(1, Ordering::Relaxed);
-                        downloaded_bytes_callback.fetch_add(chunk as u64, Ordering::Relaxed);
+                        let events = progress_events_callback.fetch_add(1, Ordering::Relaxed) + 1;
+                        let bytes = downloaded_bytes_callback
+                            .fetch_add(chunk as u64, Ordering::Relaxed)
+                            + chunk as u64;
+                        let _ = write_updater_e2e_marker(
+                            &progress_marker,
+                            &json!({
+                                "ok": false,
+                                "stage": "downloading",
+                                "fromVersion": progress_from_version,
+                                "expectedVersion": progress_expected_version,
+                                "progressEvents": events,
+                                "downloadedBytes": bytes
+                            }),
+                        );
                     },
-                    || {},
+                    move || {
+                        let _ = write_updater_e2e_marker(
+                            &finished_marker,
+                            &json!({
+                                "ok": false,
+                                "stage": "downloaded",
+                                "fromVersion": finished_from_version,
+                                "expectedVersion": finished_expected_version,
+                                "progressEvents": finished_events.load(Ordering::Relaxed),
+                                "downloadedBytes": finished_bytes.load(Ordering::Relaxed)
+                            }),
+                        );
+                    },
                 )
                 .await
                 .map_err(|error| error.to_string())?;
