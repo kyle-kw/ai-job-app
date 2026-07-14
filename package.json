@@ -28,7 +28,7 @@
     "dompurify": "^3.2.6",
     "highlight.js": "^11.11.1",
     "lucide-svelte": "^0.468.0",
-    "marked": "^15.0.12"
+    "marked": "^18.0.6"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.8",
