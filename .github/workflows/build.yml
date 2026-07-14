@@ -125,7 +125,7 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or -not (Test-Path "$key.pub")) { throw 'Could not generate temporary updater key' }
           $env:TAURI_SIGNING_PRIVATE_KEY = [IO.File]::ReadAllText($key).Trim()
           $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = $password
-          $publicKey = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([IO.File]::ReadAllText("$key.pub")))
+          $publicKey = [IO.File]::ReadAllText("$key.pub").Trim()
           $testConfig = Join-Path $env:RUNNER_TEMP 'tauri.updater-e2e.json'
           $config = @{
             bundle = @{
