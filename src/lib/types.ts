@@ -260,6 +260,7 @@ export interface ConfigurationSnapshot {
 
 export interface AppSettings {
   advancedMode: boolean;
+  automaticUpdateChecks: boolean;
   privacyAcknowledgedVersion?: string | null;
   lastUpdateCheckAt?: string | null;
 }

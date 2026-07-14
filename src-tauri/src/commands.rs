@@ -135,7 +135,7 @@ struct GreetingOutput {
 
 #[tauri::command]
 pub fn bootstrap(state: State<'_, AppState>) -> Result<BootstrapSnapshot, String> {
-    let providers = state.db.list_providers()?;
+    let providers = crate::provider_policy::available_providers(state.db.list_providers()?);
     let resume = state.db.active_resume()?;
     let usable_provider = providers.iter().find(|provider| {
         provider.verified && provider.is_default && llm::secret_available(provider)
@@ -212,13 +212,10 @@ pub fn bootstrap(state: State<'_, AppState>) -> Result<BootstrapSnapshot, String
 
 #[tauri::command]
 pub fn list_jobs_page(state: State<'_, AppState>, query: JobQuery) -> Result<JobPage, String> {
-    let providers = state.db.list_providers()?;
     let resume = state.db.active_resume()?;
-    let provider = providers.iter().find(|provider| {
-        provider.verified && provider.is_default && llm::secret_available(provider)
-    });
+    let provider = state.db.default_provider()?;
     let mut page = state.db.list_jobs_page(&query)?;
-    crate::assistant::mark_fit_cache_status(&mut page.items, resume.as_ref(), provider);
+    crate::assistant::mark_fit_cache_status(&mut page.items, resume.as_ref(), provider.as_ref());
     Ok(page)
 }
 
@@ -431,7 +428,7 @@ pub async fn start_scrape(
             "running",
             10,
             &format!(
-                "正在启动 BOSS 专用浏览器，预计约 {estimated_minutes} 分钟；抓取期间请勿关闭应用，切换页面不会中断"
+                "正在检查 BOSS 登录状态；若出现登录界面，请在 5 分钟内完成登录。预计抓取约 {estimated_minutes} 分钟"
             ),
             None,
         );
@@ -442,7 +439,7 @@ pub async fn start_scrape(
             &mut task,
             "running",
             28,
-            "确认登录后将自动抓取岗位列表与详情；抓取期间请勿关闭应用，切换页面不会中断",
+            "正在等待登录验证；验证成功后将自动抓取岗位列表与详情",
             None,
         );
         let task_state = Arc::new(Mutex::new(task));

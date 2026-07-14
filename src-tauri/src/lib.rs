@@ -5,6 +5,7 @@ mod db;
 mod distribution;
 mod llm;
 mod models;
+mod provider_policy;
 mod providers;
 mod scoring;
 mod secrets;

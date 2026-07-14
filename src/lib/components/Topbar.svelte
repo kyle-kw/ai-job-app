@@ -5,7 +5,7 @@
 
   export let onTasks: () => void;
   const titles: Record<string, { title: string; subtitle: string }> = {
-    '/': { title: '初始化', subtitle: '完成 BOSS 与默认模型配置' },
+    '/': { title: '首页', subtitle: '求职进展、优先机会与快捷入口' },
     '/jobs': { title: '岗位库', subtitle: '抓取、筛选并理解每一个机会' },
     '/reports': { title: '数据报告', subtitle: '从本地岗位数据生成求职与面试准备洞察' },
     '/resume': { title: '我的简历', subtitle: '维护一份可信、可复用的职业事实库' },

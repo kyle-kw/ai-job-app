@@ -9,6 +9,7 @@
   import { backend } from '$lib/services/backend';
   import { appError, initialize, loading, refresh, saveSettings, snapshot } from '$lib/stores/app';
   import { availableUpdate, checkForUpdate } from '$lib/stores/distribution';
+  import { shouldStartAutomaticUpdateCheck } from '$lib/update-policy';
 
   let taskDrawerOpen = false;
   let acceptingPrivacy = false;
@@ -16,7 +17,8 @@
   const privacyVersion = '2026-07-14';
 
   $: acknowledgedVersion = $snapshot.settings.privacyAcknowledgedVersion ?? '';
-  $: if (!$loading && !$appError && acknowledgedVersion === privacyVersion && autoCheckStartedFor !== acknowledgedVersion) {
+  $: shouldAutoCheck = shouldStartAutomaticUpdateCheck($snapshot.settings, acknowledgedVersion, privacyVersion);
+  $: if (!$loading && !$appError && shouldAutoCheck && autoCheckStartedFor !== acknowledgedVersion) {
     autoCheckStartedFor = acknowledgedVersion;
     void checkForUpdate(false);
   }

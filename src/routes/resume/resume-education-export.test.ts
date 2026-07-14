@@ -24,6 +24,8 @@ describe('resume education and PDF export', () => {
     expect(screen.getByPlaceholderText(/大专/)).toBeInTheDocument();
 
     await fireEvent.click(screen.getAllByRole('button', { name: /删除教育经历/ })[0]);
+    expect(screen.getByRole('dialog', { name: '确认删除简历内容' })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: '确认删除' }));
     expect(screen.getAllByRole('button', { name: /删除教育经历/ })).toHaveLength(1);
   });
 

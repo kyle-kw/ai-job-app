@@ -29,6 +29,67 @@ class WorkerTests(unittest.TestCase):
         self.assertFalse(status["chrome"]["installed"])
         self.assertIsNone(status["chrome"]["executablePath"])
 
+    def test_environment_status_reads_version_without_starting_chrome(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            application = pathlib.Path(temporary) / "Application"
+            application.mkdir()
+            executable = application / "chrome.exe"
+            executable.touch()
+            (application / "137.0.1.9").mkdir()
+            (application / "138.0.3351.95").mkdir()
+            fake = types.SimpleNamespace(DEFAULT_CHROME_PATH=str(executable))
+            with patch.object(worker.os, "name", "nt"), \
+                    patch.object(worker.subprocess, "run") as run, \
+                    patch.object(worker, "load_boss_module", return_value=fake):
+                status = worker.environment_status({})
+        self.assertTrue(status["chrome"]["installed"])
+        self.assertEqual(status["chrome"]["version"], "138.0.3351.95")
+        self.assertEqual(status["chrome"]["executablePath"], str(executable))
+        run.assert_not_called()
+
+    def test_environment_status_uses_version_command_outside_windows(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            executable = pathlib.Path(temporary) / "Google Chrome"
+            executable.touch()
+            fake = types.SimpleNamespace(DEFAULT_CHROME_PATH=str(executable))
+            completed = subprocess.CompletedProcess(
+                [str(executable), "--version"],
+                0,
+                stdout="Google Chrome 138.0.7204.168\n",
+                stderr="",
+            )
+            with patch.object(worker.os, "name", "posix"), \
+                    patch.object(worker.subprocess, "run", return_value=completed) as run, \
+                    patch.object(worker, "load_boss_module", return_value=fake):
+                status = worker.environment_status({})
+        self.assertTrue(status["chrome"]["installed"])
+        self.assertEqual(status["chrome"]["version"], "Google Chrome 138.0.7204.168")
+        run.assert_called_once_with(
+            [str(executable), "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+            encoding="utf-8",
+            errors="replace",
+        )
+
+    def test_environment_status_tolerates_version_command_failure_outside_windows(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            executable = pathlib.Path(temporary) / "Google Chrome"
+            executable.touch()
+            fake = types.SimpleNamespace(DEFAULT_CHROME_PATH=str(executable))
+            with patch.object(worker.os, "name", "posix"), \
+                    patch.object(
+                        worker.subprocess,
+                        "run",
+                        side_effect=subprocess.TimeoutExpired([str(executable), "--version"], 5),
+                    ), \
+                    patch.object(worker, "load_boss_module", return_value=fake):
+                status = worker.environment_status({})
+        self.assertTrue(status["chrome"]["installed"])
+        self.assertIsNone(status["chrome"]["version"])
+
     def test_clear_boss_data_requires_no_remaining_profile_processes(self):
         with tempfile.TemporaryDirectory() as temporary:
             profile = pathlib.Path(temporary) / "profile"
@@ -481,6 +542,8 @@ class WorkerTests(unittest.TestCase):
         rmtree.assert_not_called()
 
     def test_scrape_resolves_city_code_and_connects_boss(self):
+        call_order = []
+
         class FakeBoss:
             DEFAULT_CDP_DATA_DIR = "fake-profile"
             setup_called = False
@@ -494,12 +557,18 @@ class WorkerTests(unittest.TestCase):
                 return "上海", "101020100"
 
             @classmethod
-            def run_setup_chrome(cls, *_args, **_kwargs):
+            def run_setup_chrome(cls, *_args, **kwargs):
                 cls.setup_called = True
+                self.assertFalse(kwargs["reset_profile"])
+                self.assertTrue(kwargs["wait_login"])
+                self.assertEqual(kwargs["login_timeout"], 300)
+                call_order.append("setup")
                 return 0
 
             @classmethod
             def scrape_list(cls, _keyword, city, pages, _filters, _output, **_kwargs):
+                self.assertEqual(call_order, ["setup"])
+                call_order.append("list")
                 cls.received_city = city
                 cls.received_pages = pages
                 result = {
@@ -542,6 +611,7 @@ class WorkerTests(unittest.TestCase):
             result = worker.scrape_jobs({"keyword": "AI Agent", "city": " 上海 "})
 
         self.assertTrue(fake.setup_called)
+        self.assertEqual(call_order, ["setup", "list"])
         self.assertTrue(fake.stop_called)
         self.assertEqual(fake.received_city, "101020100")
         self.assertEqual(fake.received_pages, 1)

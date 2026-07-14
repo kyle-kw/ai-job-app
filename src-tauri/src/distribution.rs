@@ -156,6 +156,9 @@ pub async fn check_for_update(
 ) -> Result<Option<AppUpdateInfo>, String> {
     require_privacy(&state)?;
     let mut settings = state.db.settings()?;
+    if !automatic_update_check_allowed(&settings, manual) {
+        return Ok(None);
+    }
     if !manual && !update_check_due(settings.last_update_check_at.as_deref(), Utc::now()) {
         return Ok(None);
     }
@@ -670,6 +673,10 @@ fn update_check_due(last_check: Option<&str>, now: DateTime<Utc>) -> bool {
         .unwrap_or(true)
 }
 
+fn automatic_update_check_allowed(settings: &AppSettings, manual: bool) -> bool {
+    manual || settings.automatic_update_checks
+}
+
 fn validate_update_metadata(
     current_version: &str,
     candidate_version: &str,
@@ -946,6 +953,16 @@ mod tests {
             Some(&(now - ChronoDuration::hours(24)).to_rfc3339()),
             now
         ));
+    }
+
+    #[test]
+    fn disabled_automatic_checks_still_allow_manual_checks() {
+        let settings = AppSettings {
+            automatic_update_checks: false,
+            ..AppSettings::default()
+        };
+        assert!(!automatic_update_check_allowed(&settings, false));
+        assert!(automatic_update_check_allowed(&settings, true));
     }
 
     #[test]

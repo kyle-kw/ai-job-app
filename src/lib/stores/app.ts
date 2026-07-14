@@ -9,7 +9,7 @@ const empty: BootstrapSnapshot = {
     llm: { state: 'needs_setup', message: '需要配置默认模型。' }
   },
   resume: null, providers: [], tasks: [], scrapeRuns: [],
-  settings: { advancedMode: false, privacyAcknowledgedVersion: null, lastUpdateCheckAt: null }
+  settings: { advancedMode: false, automaticUpdateChecks: true, privacyAcknowledgedVersion: null, lastUpdateCheckAt: null }
 };
 
 export const snapshot = writable<BootstrapSnapshot>(empty);

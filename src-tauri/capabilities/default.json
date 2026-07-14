@@ -3,5 +3,10 @@
   "identifier": "main-capability",
   "description": "Permissions for the main application window",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:allow-save"]
+  "permissions": [
+    "core:default",
+    "dialog:allow-confirm",
+    "dialog:allow-open",
+    "dialog:allow-save"
+  ]
 }

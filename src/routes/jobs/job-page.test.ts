@@ -64,6 +64,28 @@ describe('job scraping controls', () => {
     await waitFor(() => expect(screen.getByLabelText('关键词')).toHaveValue('商业分析'));
   });
 
+  it('requires confirmation before checking login and starting a scrape', async () => {
+    snapshot.set(structuredClone(mockSnapshot));
+    const start = vi.spyOn(backend, 'startScrape').mockResolvedValue('scrape-confirmed');
+    render(JobPage);
+
+    await fireEvent.click(screen.getByRole('button', { name: '抓取新岗位' }));
+    await fireEvent.click(screen.getByRole('button', { name: '开始抓取' }));
+    expect(screen.getByRole('heading', { name: '抓取前确认' })).toBeInTheDocument();
+    expect(screen.getByText(/如果出现登录界面，请在 5 分钟内完成登录/)).toBeInTheDocument();
+    expect(start).not.toHaveBeenCalled();
+
+    await fireEvent.click(screen.getByRole('button', { name: '返回修改' }));
+    expect(screen.getByRole('heading', { name: '抓取新岗位' })).toBeInTheDocument();
+    expect(start).not.toHaveBeenCalled();
+
+    await fireEvent.click(screen.getByRole('button', { name: '开始抓取' }));
+    await fireEvent.click(screen.getByRole('button', { name: '检查登录并开始抓取' }));
+    await waitFor(() => expect(start).toHaveBeenCalledWith(expect.objectContaining({
+      keyword: 'AI Agent', city: '上海', pages: 1
+    })));
+  });
+
   it('prevents opening another scrape while one is queued or running', () => {
     const state = structuredClone(mockSnapshot);
     state.tasks = [{

@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { BarChart3, BriefcaseBusiness, FileText, ListChecks, Settings2, Sparkles } from 'lucide-svelte';
+  import { BarChart3, BriefcaseBusiness, FileText, Home, Settings2, Sparkles } from 'lucide-svelte';
   import { page } from '$app/stores';
 
   const nav = [
-    { href: '/', label: '初始化', icon: ListChecks },
+    { href: '/', label: '首页', icon: Home },
     { href: '/jobs', label: '岗位', icon: BriefcaseBusiness },
     { href: '/reports', label: '数据报告', icon: BarChart3 },
     { href: '/resume', label: '简历', icon: FileText }
@@ -13,7 +13,7 @@
 </script>
 
 <aside class="sidebar flex w-[224px] shrink-0 flex-col border-r px-3 py-4" style="background: var(--sidebar); border-color: var(--line);">
-  <a href="/" class="mb-7 flex items-center gap-3 px-2.5" aria-label="求职舱初始化">
+  <a href="/" class="mb-7 flex items-center gap-3 px-2.5" aria-label="求职舱首页">
     <span class="grid h-10 w-10 place-items-center rounded-[14px] text-white shadow-sm" style="background: var(--brand);">
       <Sparkles size={20} strokeWidth={2.2} />
     </span>

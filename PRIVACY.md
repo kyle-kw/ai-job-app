@@ -8,7 +8,7 @@
 
 BOSS 功能仅在用户主动操作时启动独立的 Google Chrome Profile，并访问 BOSS 直聘。该 Profile 可能保存登录 Cookie，位置为用户主目录下的 `.boss-zhipin-scraper/chrome-profile`。设置页可单独删除该数据。
 
-用户同意隐私说明后，应用每天最多访问一次公开 GitHub Release 地址检查更新。该请求会向 GitHub 暴露常规网络信息，例如 IP 地址和 User-Agent。应用不包含遥测、广告、后台行为分析或自动崩溃上传。
+用户同意隐私说明后，应用默认每天最多访问一次公开 GitHub Release 地址检查更新；用户可在设置中关闭自动检查，并保留手动检查入口。该请求会向 GitHub 暴露常规网络信息，例如 IP 地址和 User-Agent。应用不会自动下载或安装更新，也不包含遥测、广告、后台行为分析或自动崩溃上传。
 
 自动备份和用户导出的 `.aijobbackup` 包含简历及岗位数据，但不包含 API Key 或 BOSS Cookie。备份不加密，用户应保存在受信任的位置。
 

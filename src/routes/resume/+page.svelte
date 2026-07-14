@@ -5,6 +5,7 @@
   import { save as saveDialog } from '@tauri-apps/plugin-dialog';
   import { Check, ChevronDown, Download, FileText, History, Plus, Save, Sparkles, Upload, UserRound, WandSparkles } from 'lucide-svelte';
   import ResumeChatDialog from '$lib/components/ResumeChatDialog.svelte';
+  import ResumeDeleteDialog from '$lib/components/ResumeDeleteDialog.svelte';
   import ResumeFactsEditor from '$lib/components/ResumeFactsEditor.svelte';
   import ResumePaper from '$lib/components/ResumePaper.svelte';
   import ResumeVersionDrawer from '$lib/components/ResumeVersionDrawer.svelte';
@@ -37,6 +38,7 @@
   let constraintsText = '';
   let previewTemplate: ResumeTemplateDefinition | null = null;
   let exportDialogOpen = false;
+  let pendingRemoval: { label: string; apply: () => void } | null = null;
   let exportColorTheme: ResumeColorTheme = 'navy';
   const exportColorThemes: ReadonlyArray<{ id: ResumeColorTheme; label: string; description: string; accent: string }> = [
     { id: 'navy', label: '经典蓝', description: '参考简历原始配色，专业清晰', accent: '#1F407A' },
@@ -247,6 +249,19 @@
     draft.professionalSkills = [...draft.professionalSkills, ...additions];
   }
 
+  function addExperience() {
+    if (!draft) return;
+    draft.experiences = [...draft.experiences, {
+      id: crypto.randomUUID(),
+      company: '',
+      position: '',
+      location: '',
+      startDate: '',
+      endDate: '',
+      highlights: ['']
+    }];
+  }
+
   function addProject() {
     if (!draft) return;
     draft.projects = [...draft.projects, { id: crypto.randomUUID(), name: '新项目', summary: '', startDate: '', endDate: '', highlights: [''] }];
@@ -260,6 +275,95 @@
   function addEducation() {
     if (!draft) return;
     draft.education = [...draft.education, { id: crypto.randomUUID(), institution: '', area: '', degree: '', degreeDetail: '', startDate: '', endDate: '', highlights: [] }];
+  }
+
+  const emptyItemLabels = new Set(['新分组', '新项目', '新证书']);
+
+  function hasEnteredContent(value: unknown): boolean {
+    if (typeof value === 'string') {
+      const normalized = value.trim();
+      return Boolean(normalized && !emptyItemLabels.has(normalized));
+    }
+    if (Array.isArray(value)) return value.some(hasEnteredContent);
+    if (value && typeof value === 'object') {
+      return Object.entries(value).some(([key, child]) => key !== 'id' && hasEnteredContent(child));
+    }
+    return false;
+  }
+
+  function requestItemRemoval(label: string, value: unknown, apply: () => void) {
+    if (!hasEnteredContent(value)) {
+      apply();
+      return;
+    }
+    pendingRemoval = { label, apply };
+  }
+
+  function cancelItemRemoval() {
+    pendingRemoval = null;
+  }
+
+  function confirmItemRemoval() {
+    const removal = pendingRemoval;
+    pendingRemoval = null;
+    removal?.apply();
+  }
+
+  function removeSkillGroup(groupIndex: number) {
+    if (!draft) return;
+    const group = draft.professionalSkills[groupIndex];
+    if (!group) return;
+    requestItemRemoval(`技能分组“${group.label || groupIndex + 1}”`, group, () => {
+      if (draft) draft.professionalSkills = draft.professionalSkills.filter((item) => item.id !== group.id);
+    });
+  }
+
+  function removeSkill(groupIndex: number, skillIndex: number) {
+    if (!draft) return;
+    const group = draft.professionalSkills[groupIndex];
+    const skill = group?.items[skillIndex];
+    if (skill === undefined) return;
+    requestItemRemoval(`技能“${skill || skillIndex + 1}”`, skill, () => {
+      const currentGroup = draft?.professionalSkills.find((item) => item.id === group.id);
+      if (currentGroup) currentGroup.items = currentGroup.items.filter((_, index) => index !== skillIndex);
+    });
+  }
+
+  function removeExperience(experienceIndex: number) {
+    if (!draft) return;
+    const experience = draft.experiences[experienceIndex];
+    if (!experience) return;
+    const name = [experience.company, experience.position].filter(Boolean).join(' / ') || `第 ${experienceIndex + 1} 条工作经历`;
+    requestItemRemoval(`工作经历“${name}”`, experience, () => {
+      if (draft) draft.experiences = draft.experiences.filter((item) => item.id !== experience.id);
+    });
+  }
+
+  function removeProject(projectIndex: number) {
+    if (!draft) return;
+    const project = draft.projects[projectIndex];
+    if (!project) return;
+    requestItemRemoval(`项目“${project.name || projectIndex + 1}”`, project, () => {
+      if (draft) draft.projects = draft.projects.filter((item) => item.id !== project.id);
+    });
+  }
+
+  function removeCertification(certificationIndex: number) {
+    if (!draft) return;
+    const certification = draft.certifications[certificationIndex];
+    if (!certification) return;
+    requestItemRemoval(`证书“${certification.name || certificationIndex + 1}”`, certification, () => {
+      if (draft) draft.certifications = draft.certifications.filter((item) => item.id !== certification.id);
+    });
+  }
+
+  function removeEducation(educationIndex: number) {
+    if (!draft) return;
+    const education = draft.education[educationIndex];
+    if (!education) return;
+    requestItemRemoval(`教育经历“${education.institution || educationIndex + 1}”`, education, () => {
+      if (draft) draft.education = draft.education.filter((item) => item.id !== education.id);
+    });
   }
 
   onMount(() => {
@@ -319,15 +423,33 @@
               <div class="divider"></div>
               <div><div class="mb-3 flex items-center justify-between"><div class="flex items-center gap-2"><Sparkles size={17} class="text-brand" /><h3 class="section-title">个人简介</h3></div><button class="btn-ghost h-8 text-xs text-brand" on:click={() => openAssistant(null)}><WandSparkles size={14} />AI 优化</button></div><textarea class="textarea min-h-[120px] leading-6" bind:value={draft.summary}></textarea><p class="mt-2 text-[11px] body-muted">建议保持 3–4 行；AI 只会提出待审核修改，不会直接覆盖。</p></div>
               <div class="divider"></div>
-              <div><div class="mb-3 flex items-center justify-between"><div><h3 class="section-title">专业技能</h3><p class="mt-1 text-[11px] body-muted">按岗位相关能力分组；分组标题不是个人事实。</p></div><div class="flex gap-2"><button class="btn-ghost h-8 text-xs" on:click={applySuggestedGroups}>使用模板分组</button><button class="btn-ghost h-8 text-xs" on:click={addSkillGroup}><Plus size={14} />添加分组</button></div></div><div class="space-y-3">{#each draft.professionalSkills as group, groupIndex}<article class="rounded-xl border p-4" style="border-color: var(--line);"><div class="flex items-center gap-2"><input class="input h-9 font-semibold" bind:value={group.label} /><button class="btn-ghost h-8 text-xs" on:click={() => addSkill(groupIndex)}><Plus size={13} />技能</button><button class="btn-ghost h-8 text-xs" aria-label="删除专业技能分组" on:click={() => draft && (draft.professionalSkills = draft.professionalSkills.filter((_, index) => index !== groupIndex))}>×</button></div><div class="mt-3 flex flex-wrap gap-2">{#each group.items as skill, skillIndex}<label class="chip-brand group cursor-text"><input class="w-[96px] bg-transparent outline-none" bind:value={group.items[skillIndex]} /><button class="ml-1 opacity-0 transition group-hover:opacity-100" on:click={() => group.items = group.items.filter((_, index) => index !== skillIndex)}>×</button></label>{/each}</div></article>{/each}</div></div>
+              <div><div class="mb-3 flex items-center justify-between"><div><h3 class="section-title">专业技能</h3><p class="mt-1 text-[11px] body-muted">按岗位相关能力分组；分组标题不是个人事实。</p></div><div class="flex gap-2"><button class="btn-ghost h-8 text-xs" on:click={applySuggestedGroups}>使用模板分组</button><button class="btn-ghost h-8 text-xs" on:click={addSkillGroup}><Plus size={14} />添加分组</button></div></div><div class="space-y-3">{#each draft.professionalSkills as group, groupIndex}<article class="rounded-xl border p-4" style="border-color: var(--line);"><div class="flex items-center gap-2"><input class="input h-9 font-semibold" bind:value={group.label} /><button class="btn-ghost h-8 text-xs" on:click={() => addSkill(groupIndex)}><Plus size={13} />技能</button><button class="btn-ghost h-8 text-xs" aria-label="删除专业技能分组" on:click={() => removeSkillGroup(groupIndex)}>×</button></div><div class="mt-3 flex flex-wrap gap-2">{#each group.items as skill, skillIndex}<label class="chip-brand group cursor-text"><input class="w-[96px] bg-transparent outline-none" bind:value={group.items[skillIndex]} /><button class="ml-1 opacity-0 transition group-hover:opacity-100" aria-label={`删除技能：${skill || skillIndex + 1}`} on:click={() => removeSkill(groupIndex, skillIndex)}>×</button></label>{/each}</div></article>{/each}</div></div>
               <div class="divider"></div>
-              <div><div class="mb-4 flex items-center justify-between"><h3 class="section-title">工作经历</h3><button class="btn-ghost h-8 text-xs"><Plus size={14} />添加经历</button></div><div class="space-y-4">{#each draft.experiences as experience}<article class="rounded-xl border p-4" style="border-color: var(--line);"><div class="grid grid-cols-2 gap-3"><input class="input font-semibold" bind:value={experience.company} /><input class="input" bind:value={experience.position} /></div><div class="mt-3 space-y-2">{#each experience.highlights as highlight, index}<div class="flex gap-2"><span class="mt-3 h-1.5 w-1.5 shrink-0 rounded-full bg-brand"></span><textarea class="textarea min-h-[66px]" bind:value={experience.highlights[index]}></textarea></div>{/each}</div></article>{/each}</div></div>
+              <div>
+                <div class="mb-4 flex items-center justify-between"><h3 class="section-title">工作经历</h3><button class="btn-ghost h-8 text-xs" on:click={addExperience}><Plus size={14} />添加经历</button></div>
+                <div class="space-y-4">
+                  {#each draft.experiences as experience, experienceIndex (experience.id)}
+                    <article class="rounded-xl border p-4" style="border-color: var(--line);">
+                      <div class="grid grid-cols-[1fr_1fr_auto] gap-3">
+                        <input class="input font-semibold" aria-label="公司名称" placeholder="公司名称" bind:value={experience.company} />
+                        <input class="input" aria-label="职位名称" placeholder="职位名称" bind:value={experience.position} />
+                        <button class="btn-ghost h-10" aria-label={`删除工作经历：${experience.company || experience.position || experienceIndex + 1}`} on:click={() => removeExperience(experienceIndex)}>×</button>
+                      </div>
+                      <div class="mt-3 space-y-2">
+                        {#each experience.highlights as highlight, index}
+                          <div class="flex gap-2"><span class="mt-3 h-1.5 w-1.5 shrink-0 rounded-full bg-brand"></span><textarea class="textarea min-h-[66px]" aria-label={`经历成果 ${index + 1}`} placeholder="经历成果" bind:value={experience.highlights[index]}></textarea></div>
+                        {/each}
+                      </div>
+                    </article>
+                  {/each}
+                </div>
+              </div>
               <div class="divider"></div>
-              <div><div class="mb-4 flex items-center justify-between"><h3 class="section-title">项目经历</h3><button class="btn-ghost h-8 text-xs" on:click={addProject}><Plus size={14} />添加项目</button></div><div class="space-y-4">{#each draft.projects as project, projectIndex}<article class="rounded-xl border p-4" style="border-color: var(--line);"><div class="flex gap-3"><input class="input font-semibold" bind:value={project.name} placeholder="项目名称" /><button class="btn-ghost h-9" aria-label="删除项目" on:click={() => draft && (draft.projects = draft.projects.filter((_, index) => index !== projectIndex))}>×</button></div><textarea class="textarea mt-3" bind:value={project.summary} placeholder="项目简介"></textarea><div class="mt-3 grid grid-cols-2 gap-3"><input class="input" bind:value={project.startDate} placeholder="开始时间" /><input class="input" bind:value={project.endDate} placeholder="结束时间" /></div><div class="mt-3 space-y-2">{#each project.highlights as highlight, index}<textarea class="textarea min-h-[60px]" bind:value={project.highlights[index]} placeholder="项目成果"></textarea>{/each}</div></article>{/each}</div></div>
+              <div><div class="mb-4 flex items-center justify-between"><h3 class="section-title">项目经历</h3><button class="btn-ghost h-8 text-xs" on:click={addProject}><Plus size={14} />添加项目</button></div><div class="space-y-4">{#each draft.projects as project, projectIndex}<article class="rounded-xl border p-4" style="border-color: var(--line);"><div class="flex gap-3"><input class="input font-semibold" bind:value={project.name} placeholder="项目名称" /><button class="btn-ghost h-9" aria-label="删除项目" on:click={() => removeProject(projectIndex)}>×</button></div><textarea class="textarea mt-3" bind:value={project.summary} placeholder="项目简介"></textarea><div class="mt-3 grid grid-cols-2 gap-3"><input class="input" bind:value={project.startDate} placeholder="开始时间" /><input class="input" bind:value={project.endDate} placeholder="结束时间" /></div><div class="mt-3 space-y-2">{#each project.highlights as highlight, index}<textarea class="textarea min-h-[60px]" bind:value={project.highlights[index]} placeholder="项目成果"></textarea>{/each}</div></article>{/each}</div></div>
               <div class="divider"></div>
-              <div><div class="mb-4 flex items-center justify-between"><h3 class="section-title">证书 / 专业资质</h3><button class="btn-ghost h-8 text-xs" on:click={addCertification}><Plus size={14} />添加证书</button></div><div class="space-y-3">{#each draft.certifications as certification, certificationIndex}<article class="grid grid-cols-[1fr_1fr_140px_auto] gap-3 rounded-xl border p-4" style="border-color: var(--line);"><input class="input font-semibold" bind:value={certification.name} placeholder="证书名称" /><input class="input" bind:value={certification.issuer} placeholder="颁发机构" /><input class="input" bind:value={certification.date} placeholder="取得日期" /><button class="btn-ghost h-10" aria-label="删除证书" on:click={() => draft && (draft.certifications = draft.certifications.filter((_, index) => index !== certificationIndex))}>×</button></article>{/each}</div></div>
+              <div><div class="mb-4 flex items-center justify-between"><h3 class="section-title">证书 / 专业资质</h3><button class="btn-ghost h-8 text-xs" on:click={addCertification}><Plus size={14} />添加证书</button></div><div class="space-y-3">{#each draft.certifications as certification, certificationIndex}<article class="grid grid-cols-[1fr_1fr_140px_auto] gap-3 rounded-xl border p-4" style="border-color: var(--line);"><input class="input font-semibold" bind:value={certification.name} placeholder="证书名称" /><input class="input" bind:value={certification.issuer} placeholder="颁发机构" /><input class="input" bind:value={certification.date} placeholder="取得日期" /><button class="btn-ghost h-10" aria-label="删除证书" on:click={() => removeCertification(certificationIndex)}>×</button></article>{/each}</div></div>
               <div class="divider"></div>
-              <div><div class="mb-4 flex items-center justify-between"><h3 class="section-title">教育经历</h3><button class="btn-ghost h-8 text-xs" on:click={addEducation}><Plus size={14} />添加教育经历</button></div><div class="space-y-4">{#each draft.education as education, educationIndex (education.id)}<article class="rounded-xl border p-4" style="border-color: var(--line);"><div class="grid grid-cols-[1fr_1fr_auto] gap-3"><input class="input font-semibold" bind:value={education.institution} placeholder="学校" /><input class="input" bind:value={education.area} placeholder="专业" /><button class="btn-ghost h-10" aria-label={`删除教育经历：${education.institution || educationIndex + 1}`} on:click={() => draft && (draft.education = draft.education.filter((_, index) => index !== educationIndex))}>×</button></div><div class="mt-3 grid grid-cols-2 gap-3"><label><span class="label">学历</span><select class="select" bind:value={education.degree}><option value="">请选择</option><option value="本科">本科</option><option value="硕士">硕士</option><option value="博士">博士</option><option value="其他">其他</option></select></label>{#if education.degree === '其他'}<label><span class="label">学历原文</span><input class="input" bind:value={education.degreeDetail} placeholder="例如：大专、Bachelor of Science" /></label>{:else}<div class="grid grid-cols-2 gap-2"><label><span class="label">开始时间</span><input class="input" bind:value={education.startDate} placeholder="2019.09" /></label><label><span class="label">结束时间</span><input class="input" bind:value={education.endDate} placeholder="2023.06" /></label></div>{/if}</div>{#if education.degree === '其他'}<div class="mt-3 grid grid-cols-2 gap-3"><input class="input" bind:value={education.startDate} placeholder="开始时间" /><input class="input" bind:value={education.endDate} placeholder="结束时间" /></div>{/if}</article>{/each}</div></div>
+              <div><div class="mb-4 flex items-center justify-between"><h3 class="section-title">教育经历</h3><button class="btn-ghost h-8 text-xs" on:click={addEducation}><Plus size={14} />添加教育经历</button></div><div class="space-y-4">{#each draft.education as education, educationIndex (education.id)}<article class="rounded-xl border p-4" style="border-color: var(--line);"><div class="grid grid-cols-[1fr_1fr_auto] gap-3"><input class="input font-semibold" bind:value={education.institution} placeholder="学校" /><input class="input" bind:value={education.area} placeholder="专业" /><button class="btn-ghost h-10" aria-label={`删除教育经历：${education.institution || educationIndex + 1}`} on:click={() => removeEducation(educationIndex)}>×</button></div><div class="mt-3 grid grid-cols-2 gap-3"><label><span class="label">学历</span><select class="select" bind:value={education.degree}><option value="">请选择</option><option value="本科">本科</option><option value="硕士">硕士</option><option value="博士">博士</option><option value="其他">其他</option></select></label>{#if education.degree === '其他'}<label><span class="label">学历原文</span><input class="input" bind:value={education.degreeDetail} placeholder="例如：大专、Bachelor of Science" /></label>{:else}<div class="grid grid-cols-2 gap-2"><label><span class="label">开始时间</span><input class="input" bind:value={education.startDate} placeholder="2019.09" /></label><label><span class="label">结束时间</span><input class="input" bind:value={education.endDate} placeholder="2023.06" /></label></div>{/if}</div>{#if education.degree === '其他'}<div class="mt-3 grid grid-cols-2 gap-3"><input class="input" bind:value={education.startDate} placeholder="开始时间" /><input class="input" bind:value={education.endDate} placeholder="结束时间" /></div>{/if}</article>{/each}</div></div>
             </div>
           {:else if activeSection === 'preferences'}
             <div class="animate-lift"><div class="rounded-xl border p-4" style="border-color: var(--line); background: var(--brand-faint);"><div class="flex gap-3"><Sparkles size={18} class="mt-0.5 shrink-0 text-brand" /><div><p class="text-sm font-semibold">约 60 秒，提高匹配结果的可信度</p><p class="mt-1 text-xs leading-5 body-muted">不知道的维度不会被 AI 硬猜。未填写项会降低置信度，而不会直接扣分。</p></div></div></div><div class="mt-6 space-y-5"><label><span class="label">目标岗位</span><input class="input" bind:value={targetRolesText} placeholder="AI Agent、大模型应用" /><span class="mt-1 block text-[11px] body-muted">使用顿号分隔多个方向</span></label><label><span class="label">目标城市</span><input class="input" bind:value={citiesText} placeholder="上海、杭州" /></label><label><span class="label">工作方式</span><select class="select" bind:value={draft.preferences.remotePreference}><option value="onsite">到岗办公</option><option value="hybrid">混合办公</option><option value="remote">远程办公</option><option value="flexible">均可</option></select></label><label><span class="label">让你有动力的任务</span><textarea class="textarea" bind:value={energizingText} placeholder="从 0 到 1、系统设计、Agent 工作流"></textarea></label><label><span class="label">希望减少的任务</span><textarea class="textarea" bind:value={drainingText} placeholder="长期纯维护、高频汇报"></textarea></label><label><span class="label">不可妥协的条件</span><textarea class="textarea" bind:value={constraintsText} placeholder="不接受长期出差"></textarea></label><div class="flex justify-end"><button class="btn-primary" on:click={savePrefs}><Check size={15} />保存求职偏好</button></div></div></div>
@@ -384,6 +506,12 @@
   resume={draft}
   {hasUnsavedChanges}
   on:restored={(event) => handleResumeCommit(event, 'restored')}
+/>
+<ResumeDeleteDialog
+  open={Boolean(pendingRemoval)}
+  itemLabel={pendingRemoval?.label ?? ''}
+  onCancel={cancelItemRemoval}
+  onConfirm={confirmItemRemoval}
 />
 
 {#if previewTemplate?.sample}

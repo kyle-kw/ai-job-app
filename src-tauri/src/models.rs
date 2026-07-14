@@ -469,6 +469,7 @@ mod tests {
         }))
         .unwrap();
         assert!(settings.advanced_mode);
+        assert!(settings.automatic_update_checks);
         assert!(settings.privacy_acknowledged_version.is_none());
         assert!(settings.last_update_check_at.is_none());
     }
@@ -580,14 +581,31 @@ impl Default for BossProfileState {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     pub advanced_mode: bool,
+    #[serde(default = "default_automatic_update_checks")]
+    pub automatic_update_checks: bool,
     #[serde(default)]
     pub privacy_acknowledged_version: Option<String>,
     #[serde(default)]
     pub last_update_check_at: Option<String>,
+}
+
+const fn default_automatic_update_checks() -> bool {
+    true
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            advanced_mode: false,
+            automatic_update_checks: true,
+            privacy_acknowledged_version: None,
+            last_update_check_at: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

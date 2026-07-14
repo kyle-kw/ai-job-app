@@ -170,6 +170,11 @@ fn sidecar_command() -> Result<Command, String> {
     if let Ok(explicit) = std::env::var("AI_JOB_SIDECAR") {
         return Ok(Command::new(explicit));
     }
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let worker = manifest.join("..").join("sidecar").join("worker.py");
+    if cfg!(debug_assertions) && worker.exists() {
+        return Ok(source_sidecar_command(&manifest, &worker));
+    }
     let executable = std::env::current_exe().map_err(|error| error.to_string())?;
     let parent = executable.parent().unwrap_or_else(|| Path::new("."));
     let binary_name = if cfg!(windows) {
@@ -181,37 +186,39 @@ fn sidecar_command() -> Result<Command, String> {
     if packaged.exists() {
         return Ok(Command::new(packaged));
     }
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let worker = manifest.join("..").join("sidecar").join("worker.py");
     if worker.exists() {
-        let workspace = manifest.join("..");
-        let local_python = if cfg!(windows) {
-            workspace
-                .join("sidecar")
-                .join(".venv")
-                .join("Scripts")
-                .join("python.exe")
-        } else {
-            workspace
-                .join("sidecar")
-                .join(".venv")
-                .join("bin")
-                .join("python")
-        };
-        let python = std::env::var("AI_JOB_PYTHON").unwrap_or_else(|_| {
-            if local_python.exists() {
-                local_python.to_string_lossy().to_string()
-            } else if cfg!(windows) {
-                "python".to_string()
-            } else {
-                "python3".to_string()
-            }
-        });
-        let mut command = Command::new(python);
-        command.arg(worker);
-        return Ok(command);
+        return Ok(source_sidecar_command(&manifest, &worker));
     }
     Err("job-assistant-sidecar was not found.".into())
+}
+
+fn source_sidecar_command(manifest: &Path, worker: &Path) -> Command {
+    let workspace = manifest.join("..");
+    let local_python = if cfg!(windows) {
+        workspace
+            .join("sidecar")
+            .join(".venv")
+            .join("Scripts")
+            .join("python.exe")
+    } else {
+        workspace
+            .join("sidecar")
+            .join(".venv")
+            .join("bin")
+            .join("python")
+    };
+    let python = std::env::var("AI_JOB_PYTHON").unwrap_or_else(|_| {
+        if local_python.exists() {
+            local_python.to_string_lossy().to_string()
+        } else if cfg!(windows) {
+            "python".to_string()
+        } else {
+            "python3".to_string()
+        }
+    });
+    let mut command = Command::new(python);
+    command.arg(worker);
+    command
 }
 
 #[cfg(test)]

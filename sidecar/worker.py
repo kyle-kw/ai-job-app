@@ -248,23 +248,7 @@ def environment_status(_params: dict[str, Any]) -> dict[str, Any]:
     boss = load_boss_module()
     executable = pathlib.Path(str(boss.DEFAULT_CHROME_PATH)).expanduser()
     installed = executable.is_file()
-    version: str | None = None
-    if installed:
-        kwargs: dict[str, Any] = {
-            "capture_output": True,
-            "text": True,
-            "timeout": 5,
-            "check": False,
-            "encoding": "utf-8",
-            "errors": "replace",
-        }
-        if os.name == "nt":
-            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-        try:
-            completed = subprocess.run([str(executable), "--version"], **kwargs)
-            version = (completed.stdout or completed.stderr).strip() or None
-        except (OSError, subprocess.SubprocessError):
-            version = None
+    version = installed_chrome_version(executable) if installed else None
     return {
         "appVersion": APP_VERSION,
         "protocolVersion": PROTOCOL_VERSION,
@@ -274,6 +258,44 @@ def environment_status(_params: dict[str, Any]) -> dict[str, Any]:
             "executablePath": str(executable) if installed else None,
         },
     }
+
+
+def installed_chrome_version(executable: pathlib.Path) -> str | None:
+    """Read the installed Chrome version using platform-appropriate metadata.
+
+    Chrome's Windows ``--version`` output follows the active system code page,
+    which made UTF-8 sidecars display mojibake and could also activate a browser
+    process. Official Windows installs keep a version-named directory beside
+    chrome.exe, so use that static metadata there. macOS and Linux do not use
+    the Windows directory layout, and their ``--version`` output is UTF-8 safe.
+    """
+    if os.name != "nt":
+        try:
+            completed = subprocess.run(
+                [str(executable), "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+                encoding="utf-8",
+                errors="replace",
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return (completed.stdout or completed.stderr).strip() or None
+
+    version_pattern = re.compile(r"^\d+(?:\.\d+){3}$")
+    try:
+        versions = [
+            child.name
+            for child in executable.parent.iterdir()
+            if child.is_dir() and version_pattern.fullmatch(child.name)
+        ]
+    except OSError:
+        return None
+    if not versions:
+        return None
+    return max(versions, key=lambda value: tuple(int(part) for part in value.split(".")))
 
 
 def clear_boss_data(_params: dict[str, Any]) -> dict[str, Any]:
@@ -329,7 +351,7 @@ def _scrape_jobs(boss: Any, params: dict[str, Any]) -> dict[str, Any]:
     for input_name, scraper_name in mapping.items():
         if params.get(input_name):
             filters[scraper_name] = str(params[input_name])
-    emit("progress", progress=12, message="正在启动或连接 BOSS 专用浏览器")
+    emit("progress", progress=12, message="正在检查 BOSS 登录状态；若出现登录界面，请完成登录")
     ensure_boss_session(boss, int(params.get("loginTimeout", 300)))
     emit("progress", progress=24, message=f"登录状态正常，城市：{city_name}（{city_code}）")
     with tempfile.TemporaryDirectory(prefix="ai-job-scrape-") as temporary:

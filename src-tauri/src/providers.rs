@@ -37,6 +37,9 @@ pub async fn test_provider(
     provider: AiProviderConfig,
 ) -> Result<ProviderTestResult, String> {
     distribution::require_privacy(&state)?;
+    if !crate::provider_policy::provider_allowed(&provider) {
+        return Err("生产版本仅支持自定义 OpenAI 兼容模型配置。".into());
+    }
     let existing = state.db.provider_by_id(&provider.id)?;
     let candidate = with_existing_secret(provider, existing.as_ref());
     Ok(llm::test(&candidate).await.unwrap_or_else(failed_test))
@@ -50,6 +53,9 @@ pub async fn save_provider(
     distribution::require_privacy(&state)?;
     if provider.kind == "openrouter" {
         return Err("OpenRouter 预设已移除，请使用自定义模型。".into());
+    }
+    if !crate::provider_policy::provider_allowed(&provider) {
+        return Err("生产版本仅支持自定义 OpenAI 兼容模型配置。".into());
     }
     let existing = state.db.provider_by_id(&provider.id)?;
     let mut candidate = with_existing_secret(provider, existing.as_ref());
@@ -86,7 +92,7 @@ pub async fn save_provider(
         return Err(error);
     }
     Ok(ProviderSaveResult {
-        providers: state.db.list_providers()?,
+        providers: crate::provider_policy::available_providers(state.db.list_providers()?),
         test_result,
     })
 }
