@@ -201,11 +201,19 @@ jobs:
               Start-Sleep -Milliseconds 250
             }
             if (-not $ready) { throw 'Updater test HTTPS server did not start' }
-            Start-Process $env:UPDATER_E2E_BASE -ArgumentList '/S' -Wait
-            $app = Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -File -Filter '*.exe' |
-              Where-Object { $_.Name -notmatch 'uninstall|sidecar' -and (Test-Path (Join-Path $_.DirectoryName 'job-assistant-sidecar.exe')) } |
-              Sort-Object LastWriteTime -Descending | Select-Object -First 1
-            if (-not $app) { throw 'Installed updater test application was not found' }
+            $install = Start-Process $env:UPDATER_E2E_BASE -ArgumentList '/S' -PassThru -Wait
+            if ($install.ExitCode -ne 0) { throw "Base updater test installer exited with $($install.ExitCode)" }
+            $uninstallRoot = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall'
+            $entry = Get-ChildItem $uninstallRoot | ForEach-Object { Get-ItemProperty $_.PSPath } |
+              Where-Object { $_.DisplayIcon -match 'ai-job-app\.exe' } |
+              Sort-Object DisplayVersion -Descending | Select-Object -First 1
+            if (-not $entry) { throw 'Updater test uninstall registry entry was not found' }
+            $appPath = [Environment]::ExpandEnvironmentVariables([string]$entry.DisplayIcon).Trim()
+            if ($appPath -match '^"([^"]+)"') { $appPath = $Matches[1] } else { $appPath = $appPath -replace ',\d+$', '' }
+            $app = Get-Item -LiteralPath $appPath -ErrorAction Stop
+            if (-not (Test-Path (Join-Path $app.DirectoryName 'job-assistant-sidecar.exe'))) {
+              throw 'Installed updater test sidecar was not found'
+            }
             $marker = Join-Path $env:RUNNER_TEMP 'updater-e2e-result.json'
             $env:AI_JOB_APP_UPDATER_E2E_RESULT = $marker
             $env:AI_JOB_APP_UPDATER_E2E_EXPECTED = '0.2.1'
@@ -311,12 +319,21 @@ jobs:
         shell: pwsh
         run: |
           $installer = Get-ChildItem release-assets -Filter '*-setup.exe' | Select-Object -First 1
-          Start-Process $installer.FullName -ArgumentList '/S' -Wait
-          Start-Process $installer.FullName -ArgumentList '/S' -Wait
-          $app = Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -File -Filter '*.exe' |
-            Where-Object { $_.Name -notmatch 'uninstall|sidecar' -and (Test-Path (Join-Path $_.DirectoryName 'job-assistant-sidecar.exe')) } |
-            Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          if (-not $app) { throw 'Installed application executable was not found' }
+          $firstInstall = Start-Process $installer.FullName -ArgumentList '/S' -PassThru -Wait
+          if ($firstInstall.ExitCode -ne 0) { throw "First NSIS install exited with $($firstInstall.ExitCode)" }
+          $upgradeInstall = Start-Process $installer.FullName -ArgumentList '/S' -PassThru -Wait
+          if ($upgradeInstall.ExitCode -ne 0) { throw "NSIS overwrite upgrade exited with $($upgradeInstall.ExitCode)" }
+          $uninstallRoot = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall'
+          $entry = Get-ChildItem $uninstallRoot | ForEach-Object { Get-ItemProperty $_.PSPath } |
+            Where-Object { $_.DisplayIcon -match 'ai-job-app\.exe' } |
+            Sort-Object DisplayVersion -Descending | Select-Object -First 1
+          if (-not $entry) { throw 'Installed application registry entry was not found' }
+          $appPath = [Environment]::ExpandEnvironmentVariables([string]$entry.DisplayIcon).Trim()
+          if ($appPath -match '^"([^"]+)"') { $appPath = $Matches[1] } else { $appPath = $appPath -replace ',\d+$', '' }
+          $app = Get-Item -LiteralPath $appPath -ErrorAction Stop
+          if (-not (Test-Path (Join-Path $app.DirectoryName 'job-assistant-sidecar.exe'))) {
+            throw 'Installed sidecar executable was not found'
+          }
           $legacyDirectory = Join-Path $env:APPDATA 'com.localfirst.aijobapp'
           New-Item -ItemType Directory -Force -Path $legacyDirectory | Out-Null
           $env:LEGACY_DATABASE = Join-Path $legacyDirectory 'ai-job-app.db'
