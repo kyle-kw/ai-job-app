@@ -30,7 +30,11 @@ if (mismatches.length) {
   throw new Error(`Version mismatch: ${[...versions].map(([name, value]) => `${name}=${value}`).join(', ')}`);
 }
 
-const tag = process.env.GITHUB_REF_NAME || process.argv[2];
+const githubRef = process.env.GITHUB_REF;
+const tag = process.argv[2]
+  || (githubRef?.startsWith('refs/tags/')
+    ? process.env.GITHUB_REF_NAME || githubRef.slice('refs/tags/'.length)
+    : undefined);
 if (tag && tag !== `v${expected}`) throw new Error(`Tag ${tag} does not match v${expected}`);
 if (!readFileSync('CHANGELOG.md', 'utf8').includes(`## [${expected}]`)) {
   throw new Error(`CHANGELOG.md has no ${expected} section`);

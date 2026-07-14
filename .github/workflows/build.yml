@@ -19,7 +19,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Gitleaks full history with redacted output
-        run: docker run --rm -v "$PWD:/repo" gitleaks/gitleaks:v8.27.2 git --redact --no-banner --log-opts="--all" /repo
+        run: docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.27.2 git --redact --no-banner --log-opts="--all" /repo
 
   quality:
     name: Quality checks
