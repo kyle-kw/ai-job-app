@@ -10,6 +10,8 @@ const matchVersion = (path) => {
 const packageJson = readJson('package.json');
 const packageLock = readJson('package-lock.json');
 const tauri = readJson('src-tauri/tauri.conf.json');
+const tauriMacOS = readJson('src-tauri/tauri.macos.conf.json');
+const tauriWindows = readJson('src-tauri/tauri.windows.conf.json');
 const workerVersion = readFileSync('sidecar/worker.py', 'utf8').match(/^APP_VERSION\s*=\s*"([^"]+)"/m)?.[1];
 const uvProjectVersion = readFileSync('sidecar/uv.lock', 'utf8').match(/\[\[package\]\]\s*name\s*=\s*"ai-job-app-sidecar"\s*version\s*=\s*"([^"]+)"/m)?.[1];
 const versions = new Map([
@@ -41,7 +43,8 @@ if (!readFileSync('CHANGELOG.md', 'utf8').includes(`## [${expected}]`)) {
 }
 
 const updater = tauri.plugins?.updater;
-if (!updater?.endpoints?.every((value) => value.startsWith('https://'))) {
+if (!Array.isArray(updater?.endpoints) || updater.endpoints.length === 0
+  || !updater.endpoints.every((value) => value.startsWith('https://'))) {
   throw new Error('Updater endpoints must use HTTPS');
 }
 if (updater.dangerousInsecureTransportProtocol || updater.dangerousAcceptInvalidCerts || updater.dangerousAcceptInvalidHostnames) {
@@ -54,5 +57,17 @@ if (process.env.REQUIRE_UPDATER_KEY === '1') {
   const decoded = Buffer.from(updater.pubkey, 'base64').toString('utf8');
   if (!decoded.includes('minisign public key')) throw new Error('Updater public key is not a valid minisign public key');
 }
+
+if (tauri.bundle?.createUpdaterArtifacts !== true) {
+  throw new Error('Production bundles must create v2 updater artifacts');
+}
+const requireTargets = (label, config, required) => {
+  const targets = config.bundle?.targets;
+  if (!Array.isArray(targets)) throw new Error(`${label} bundle targets must be an explicit array`);
+  const missing = required.filter((target) => !targets.includes(target));
+  if (missing.length) throw new Error(`${label} bundle targets are missing: ${missing.join(', ')}`);
+};
+requireTargets('macOS', tauriMacOS, ['app', 'dmg']);
+requireTargets('Windows', tauriWindows, ['nsis']);
 
 console.log(`Release configuration verified for v${expected}`);
