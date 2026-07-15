@@ -282,7 +282,7 @@ export interface AppInfo {
   chrome: ChromeStatus;
   dataDir: string;
   legacyDataDetected: boolean;
-  lastUpdateCheckStatus?: string | null;
+  lastUpdateCheckAt?: string | null;
 }
 
 export interface AppUpdateInfo {
@@ -329,6 +329,7 @@ export interface BootstrapSnapshot {
   providers: AiProviderConfig[];
   tasks: TaskRun[];
   scrapeRuns: ScrapeRun[];
+  lastSearchSpec: SearchSpec | null;
   settings: AppSettings;
 }
 

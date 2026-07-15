@@ -6,7 +6,7 @@
   import JobSearchDialog from '$lib/components/JobSearchDialog.svelte';
   import MarkdownView from '$lib/components/MarkdownView.svelte';
   import { availableProviderConfigs } from '$lib/provider-policy';
-  import { latestSuccessfulScrapeKeyword } from '$lib/scrape-history';
+  import { createSearchSpec } from '$lib/search-spec';
   import { backend } from '$lib/services/backend';
   import { loading, refresh, snapshot, startScrape } from '$lib/stores/app';
   import type { AiProviderConfig, JobPage, JobQuery, ProviderTestResult, SearchSpec } from '$lib/types';
@@ -27,7 +27,7 @@
   let lastTerminalScrapeKey = '';
   let searchDialogOpen = false;
   let scraping = false;
-  let searchSpec: SearchSpec = { keyword: '', city: '上海', pages: 1, salary: '', companyScale: '' };
+  let searchSpec: SearchSpec = createSearchSpec();
   let toast = '';
 
   const stateLabel = { needs_setup: '待配置', running: '配置中', ready: '已完成', failed: '配置失败' } as const;
@@ -117,7 +117,7 @@
   }
 
   function openSearchDialog() {
-    searchSpec = { ...searchSpec, keyword: latestSuccessfulScrapeKeyword($snapshot.scrapeRuns) };
+    searchSpec = createSearchSpec($snapshot.lastSearchSpec);
     searchDialogOpen = true;
   }
 

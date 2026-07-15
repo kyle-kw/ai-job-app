@@ -276,6 +276,11 @@ pub fn open_job_source(
     open_system_url(url.as_str())
 }
 
+#[tauri::command]
+pub fn open_github_issues() -> Result<(), String> {
+    open_system_url("https://github.com/kyle-kw/ai-job-app/issues")
+}
+
 #[cfg(target_os = "windows")]
 fn open_system_url(url: &str) -> Result<(), String> {
     use std::os::windows::process::CommandExt;

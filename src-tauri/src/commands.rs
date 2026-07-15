@@ -11,39 +11,23 @@ use crate::AppState;
 use base64::Engine;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
-const SUPPORTED_SCRAPE_CITIES: [&str; 25] = [
-    "北京",
-    "上海",
-    "广州",
-    "深圳",
-    "杭州",
-    "天津",
-    "西安",
-    "苏州",
-    "武汉",
-    "厦门",
-    "长沙",
-    "成都",
-    "郑州",
-    "重庆",
-    "佛山",
-    "合肥",
-    "济南",
-    "青岛",
-    "南京",
-    "东莞",
-    "昆明",
-    "南昌",
-    "石家庄",
-    "宁波",
-    "福州",
-];
+const BOSS_CITY_CODES_JSON: &str = include_str!("../../sidecar/vendor/city_codes.json");
+static SUPPORTED_SCRAPE_CITIES: LazyLock<HashSet<String>> = LazyLock::new(|| {
+    let cities = serde_json::from_str::<HashMap<String, String>>(BOSS_CITY_CODES_JSON)
+        .expect("bundled BOSS city map must be valid JSON");
+    assert!(cities.len() >= 100, "bundled BOSS city map is incomplete");
+    cities.into_keys().collect()
+});
+
+fn is_supported_scrape_city(city: &str) -> bool {
+    SUPPORTED_SCRAPE_CITIES.contains(city)
+}
 
 async fn ensure_chrome_available() -> Result<(), String> {
     let environment = sidecar::request(json!({"op":"environment_status","params":{}})).await?;
@@ -206,6 +190,7 @@ pub fn bootstrap(state: State<'_, AppState>) -> Result<BootstrapSnapshot, String
         providers,
         tasks: state.db.list_tasks()?,
         scrape_runs: state.db.list_scrape_runs()?,
+        last_search_spec: state.db.last_search_spec()?,
         settings: state.db.settings()?,
     })
 }
@@ -393,8 +378,8 @@ pub async fn start_scrape(
     if spec.keyword.is_empty() {
         return Err("岗位关键词不能为空。".into());
     }
-    if !SUPPORTED_SCRAPE_CITIES.contains(&spec.city.as_str()) {
-        return Err("城市不在当前支持的热门城市列表中。".into());
+    if !is_supported_scrape_city(&spec.city) {
+        return Err("请选择城市列表中的有效城市。".into());
     }
     if !(1..=5).contains(&spec.pages) {
         return Err("抓取页数只能选择 1 至 5 页。".into());
@@ -413,7 +398,7 @@ pub async fn start_scrape(
         );
     let estimated_minutes = i64::from(spec.pages) * 20;
     let task = new_task("scrape", &format!("抓取 {} · {}", spec.city, spec.keyword));
-    if !state.db.reserve_task(&task)? {
+    if !state.db.reserve_scrape_task(&task, &spec)? {
         return Err("已有同类抓取任务正在排队或运行。".into());
     }
     emit_task(&app, &task);
@@ -1574,6 +1559,15 @@ fn normalize_fact_value(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scrape_city_map_accepts_full_offline_snapshot() {
+        assert!(SUPPORTED_SCRAPE_CITIES.len() >= 300);
+        assert!(is_supported_scrape_city("上海"));
+        assert!(is_supported_scrape_city("赣州"));
+        assert!(is_supported_scrape_city("全国"));
+        assert!(!is_supported_scrape_city("不存在城市"));
+    }
 
     #[test]
     fn resume_import_size_limit_checks_encoded_and_decoded_payloads() {

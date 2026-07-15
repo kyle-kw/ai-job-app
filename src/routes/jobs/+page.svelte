@@ -13,7 +13,7 @@
     type SalaryFilterCode
   } from '$lib/job-filters';
   import { backend } from '$lib/services/backend';
-  import { latestSuccessfulScrapeKeyword } from '$lib/scrape-history';
+  import { createSearchSpec } from '$lib/search-spec';
   import { refresh, snapshot, startScrape } from '$lib/stores/app';
   import type { Job, JobQuery, SearchSpec } from '$lib/types';
 
@@ -36,7 +36,7 @@
   let bulkDeleting = false;
   let deleteConfirmation: { mode: 'single'; job: Job } | { mode: 'bulk'; count: number; query: JobQuery } | null = null;
   let searchDialogOpen = false;
-  let searchSpec: SearchSpec = { keyword: '', city: '上海', pages: 1, salary: '', companyScale: '' };
+  let searchSpec: SearchSpec = createSearchSpec();
   let greetingBusy = false;
   let toast = '';
   let jobs: Job[] = [];
@@ -179,7 +179,7 @@
   }
 
   function openSearchDialog() {
-    searchSpec = { ...searchSpec, keyword: latestSuccessfulScrapeKeyword($snapshot.scrapeRuns) };
+    searchSpec = createSearchSpec($snapshot.lastSearchSpec);
     searchDialogOpen = true;
   }
 

@@ -245,6 +245,7 @@ export const backend = {
 
   async startScrape(spec: SearchSpec): Promise<string> {
     if (browserMode()) {
+      mockState.lastSearchSpec = structuredClone(spec);
       let task = createMockTask('scrape', `抓取 ${spec.city} · ${spec.keyword}`);
       advanceMockTask(task, [
         { progress: 12, message: '正在检查 BOSS 登录状态' },
@@ -563,13 +564,21 @@ export const backend = {
   async getAppInfo(): Promise<AppInfo> {
     if (browserMode()) {
       return {
-        version: '0.2.0', identifier: 'io.github.kylekw.aijobapp', os: 'browser', arch: 'demo',
+        version: '0.2.0', identifier: 'io.github.aijobapp', os: 'browser', arch: 'demo',
         webview: navigator.userAgent, schemaVersion: 5, sidecarProtocol: 'demo',
         chrome: { installed: true, version: '浏览器演示', executablePath: null },
-        dataDir: '<browser-demo>', legacyDataDetected: false, lastUpdateCheckStatus: 'demo'
+        dataDir: '<browser-demo>', legacyDataDetected: false, lastUpdateCheckAt: mockState.settings.lastUpdateCheckAt
       };
     }
     return invoke('get_app_info');
+  },
+
+  async openGitHubIssues(): Promise<void> {
+    if (browserMode()) {
+      window.open('https://github.com/kyle-kw/ai-job-app/issues', '_blank', 'noopener,noreferrer');
+      return;
+    }
+    return invoke('open_github_issues');
   },
 
   async checkForUpdate(manual = true): Promise<AppUpdateInfo | null> {

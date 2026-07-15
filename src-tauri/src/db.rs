@@ -1,7 +1,7 @@
 use crate::models::{
     AiProviderConfig, AppSettings, BossProfileState, InterviewPreparation, Job, JobOption, JobPage,
     JobQuery, ReportKeyword, ResumeCommitResult, ResumeEducation, ResumeProfile,
-    ResumeVersionDetail, ResumeVersionSummary, ScrapeRun, TaskRun,
+    ResumeVersionDetail, ResumeVersionSummary, ScrapeRun, SearchSpec, TaskRun,
 };
 use crate::time;
 use base64::Engine;
@@ -1299,6 +1299,48 @@ impl Database {
             params![task.id, payload, task.updated_at, task.kind],
         ).map_err(|error| error.to_string())?;
         Ok(changed == 1)
+    }
+
+    pub fn reserve_scrape_task(
+        &self,
+        task: &TaskRun,
+        search_spec: &SearchSpec,
+    ) -> Result<bool, String> {
+        let mut connection = self.connect()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| error.to_string())?;
+        let task_payload = serde_json::to_string(task).map_err(|error| error.to_string())?;
+        let changed = transaction.execute(
+            "INSERT INTO task_runs(id,payload_json,updated_at) SELECT ?1,?2,?3 WHERE NOT EXISTS (SELECT 1 FROM task_runs WHERE json_extract(payload_json,'$.kind')=?4 AND json_extract(payload_json,'$.state') IN ('queued','running'))",
+            params![task.id, task_payload, task.updated_at, task.kind],
+        ).map_err(|error| error.to_string())?;
+        if changed == 1 {
+            let spec_payload =
+                serde_json::to_string(search_spec).map_err(|error| error.to_string())?;
+            transaction
+                .execute(
+                    "INSERT INTO app_settings(key,payload_json) VALUES ('last_search_spec',?1) ON CONFLICT(key) DO UPDATE SET payload_json=excluded.payload_json",
+                    [spec_payload],
+                )
+                .map_err(|error| error.to_string())?;
+        }
+        transaction.commit().map_err(|error| error.to_string())?;
+        Ok(changed == 1)
+    }
+
+    pub fn last_search_spec(&self) -> Result<Option<SearchSpec>, String> {
+        let connection = self.connect()?;
+        let json = connection
+            .query_row(
+                "SELECT payload_json FROM app_settings WHERE key='last_search_spec'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?;
+        json.map(|value| serde_json::from_str(&value).map_err(|error| error.to_string()))
+            .transpose()
     }
 
     pub fn list_scrape_runs(&self) -> Result<Vec<ScrapeRun>, String> {
@@ -2697,6 +2739,60 @@ mod tests {
         };
         assert!(db.reserve_task(&task).unwrap());
         assert!(!db.reserve_task(&competing).unwrap());
+    }
+
+    #[test]
+    fn scrape_reservation_persists_the_full_spec_without_competing_overwrites() {
+        let dir = tempdir().unwrap();
+        let db = Database::new(dir.path().join("test.db"));
+        db.initialize().unwrap();
+        let now = time::shanghai_rfc3339();
+        let task = TaskRun {
+            id: "scrape-1".into(),
+            kind: "scrape".into(),
+            title: "first".into(),
+            state: "queued".into(),
+            progress: 0,
+            message: String::new(),
+            recoverable_error: None,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+            logs: vec![],
+        };
+        let competing = TaskRun {
+            id: "scrape-2".into(),
+            ..task.clone()
+        };
+        let first = SearchSpec {
+            keyword: "AI Agent".into(),
+            city: "杭州".into(),
+            pages: 4,
+            salary: Some("405".into()),
+            experience: Some("105".into()),
+            degree: Some("203".into()),
+            company_scale: Some("303".into()),
+        };
+        let second = SearchSpec {
+            keyword: "不应保存".into(),
+            city: "北京".into(),
+            pages: 1,
+            salary: None,
+            experience: None,
+            degree: None,
+            company_scale: None,
+        };
+
+        assert!(db.reserve_scrape_task(&task, &first).unwrap());
+        assert!(!db.reserve_scrape_task(&competing, &second).unwrap());
+
+        let saved = db.last_search_spec().unwrap().unwrap();
+        assert_eq!(saved.keyword, first.keyword);
+        assert_eq!(saved.city, first.city);
+        assert_eq!(saved.pages, first.pages);
+        assert_eq!(saved.salary, first.salary);
+        assert_eq!(saved.experience, first.experience);
+        assert_eq!(saved.degree, first.degree);
+        assert_eq!(saved.company_scale, first.company_scale);
     }
 
     #[test]

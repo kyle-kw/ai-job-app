@@ -696,9 +696,80 @@ class WorkerTests(unittest.TestCase):
 
     def test_vendor_limits_pages_and_has_required_offline_cities(self):
         self.assertEqual(boss_vendor.MAX_PAGES, 5)
+        self.assertGreaterEqual(len(boss_vendor.CITY_MAP), 300)
         self.assertEqual(boss_vendor.CITY_MAP["昆明"], "101290100")
         self.assertEqual(boss_vendor.CITY_MAP["南昌"], "101240100")
         self.assertEqual(boss_vendor.CITY_MAP["石家庄"], "101090100")
+        self.assertEqual(boss_vendor.resolve_city("赣州"), ("赣州", "101240700"))
+        self.assertEqual(boss_vendor.resolve_city("101240700"), ("赣州", "101240700"))
+
+    def test_detail_extractor_removes_page_chrome_and_recruiter_footer(self):
+        description = "负责 AI 产品规划、需求分析、研发协作和上线复盘。\n" * 8
+        page_text = (
+            "微信扫码分享 举报\n职位描述\n"
+            f"{description}"
+            "张女士\n今日活跃\n示例公司\n·\n招聘者\n竞争力分析\n"
+            "查看完整个人竞争力\nBOSS 安全提示\n公司工商信息\n更多职位"
+        )
+
+        jd = boss_vendor.extract_job_description({"jd": page_text, "page_text": page_text})
+
+        self.assertEqual(jd, description.strip())
+        self.assertNotIn("张女士", jd)
+        self.assertNotIn("BOSS 安全提示", jd)
+        self.assertNotIn("jd = body.substring", boss_vendor.EXTRACT_DETAIL_JS)
+        self.assertNotIn("pageText.substring", boss_vendor.EXTRACT_DETAIL_JS)
+        self.assertIn("page_text", boss_vendor.EXTRACT_DETAIL_JS)
+
+    def test_detail_extractor_appends_company_introduction(self):
+        description = "负责 AI 产品规划、需求分析、研发协作和上线复盘。\n" * 8
+        page_text = (
+            "职位描述\n"
+            f"{description}"
+            "张女士\n今日活跃\n示例公司\n·\n招聘者\n竞争力分析\n"
+            "公司介绍\n示例公司专注于企业级人工智能产品。\n"
+            "拥有成熟的研发团队和多个落地案例。\n点击查看地图\n公司工商信息"
+        )
+
+        jd = boss_vendor.extract_job_description({"jd": page_text, "page_text": page_text})
+
+        self.assertEqual(
+            jd,
+            description.strip()
+            + "\n\n公司介绍\n示例公司专注于企业级人工智能产品。\n"
+            "拥有成熟的研发团队和多个落地案例。",
+        )
+        self.assertNotIn("点击查看地图", jd)
+        self.assertNotIn("公司工商信息", jd)
+
+    def test_detail_extractor_uses_more_jobs_as_company_introduction_boundary(self):
+        description = "负责 AI 平台研发、模型部署和业务场景落地。\n" * 8
+        page_text = (
+            f"职位描述\n{description}BOSS 安全提示\n"
+            "公司介绍\n这是一段公司介绍。\n更多职位\n推荐岗位"
+        )
+
+        jd = boss_vendor.extract_job_description({"jd": page_text, "page_text": page_text})
+
+        self.assertTrue(jd.endswith("\n\n公司介绍\n这是一段公司介绍。"))
+        self.assertNotIn("更多职位", jd)
+
+    def test_detail_extractor_does_not_append_without_company_introduction(self):
+        description = "负责 AI 产品规划、需求分析、研发协作和上线复盘。\n" * 8
+        page_text = f"职位描述\n{description}BOSS 安全提示\n更多职位"
+
+        jd = boss_vendor.extract_job_description({"jd": page_text, "page_text": page_text})
+
+        self.assertEqual(jd, description.strip())
+
+    def test_detail_extractor_rejects_navigation_and_short_pages(self):
+        with self.assertRaisesRegex(boss_vendor.DetailExtractionError, "navigation chrome"):
+            boss_vendor.extract_job_description({
+                "jd": "",
+                "page_text": "首页\n职位\n公司\n校园\n无障碍专区\n热门职位",
+            })
+        with self.assertRaisesRegex(boss_vendor.DetailExtractionError, "too short"):
+            boss_vendor.extract_job_description({"jd": "职位描述\n只有一句话"})
 
     def test_detail_failures_and_empty_jd_do_not_stop_later_jobs(self):
         class FakeSession:
@@ -708,9 +779,11 @@ class WorkerTests(unittest.TestCase):
                 self.index = len(self.instances)
                 self.closed = False
                 self.closed_target = False
+                self.calls = []
                 self.instances.append(self)
 
-            def send(self, method, _params, _session_id=None):
+            def send(self, method, params, session_id=None):
+                self.calls.append((method, params, session_id))
                 if method == "Target.createTarget":
                     if self.index == 0:
                         raise RuntimeError("首条导航失败")
@@ -726,7 +799,10 @@ class WorkerTests(unittest.TestCase):
                     return None
                 if self.index == 1:
                     return json.dumps({"jd": "   ", "tags": []})
-                return json.dumps({"jd": "最后一条有效 JD", "tags": ["Python"]})
+                return json.dumps({
+                    "jd": "职位描述\n" + "负责 AI 平台研发、模型部署和业务场景落地。\n" * 8,
+                    "tags": ["Python"],
+                })
 
             def close(self):
                 self.closed = True
@@ -765,6 +841,71 @@ class WorkerTests(unittest.TestCase):
         self.assertFalse(FakeSession.instances[0].closed_target)
         self.assertTrue(FakeSession.instances[1].closed_target)
         self.assertTrue(FakeSession.instances[2].closed_target)
+        calls = FakeSession.instances[2].calls
+        self.assertIn(("Target.createTarget", {"url": "about:blank", "background": True}, None), calls)
+        injection_index = next(index for index, call in enumerate(calls)
+                               if call[0] == "Page.addScriptToEvaluateOnNewDocument")
+        navigation_index = next(index for index, call in enumerate(calls)
+                                if call[0] == "Page.navigate")
+        self.assertLess(injection_index, navigation_index)
+        self.assertIn("visibilityState", calls[injection_index][1]["source"])
+
+    def test_detail_login_wall_stops_run_and_closes_target(self):
+        class FakeSession:
+            instance = None
+
+            def __init__(self, _port):
+                self.closed = False
+                self.closed_target = False
+                FakeSession.instance = self
+
+            def send(self, method, _params, _session_id=None):
+                if method == "Target.createTarget":
+                    return {"result": {"targetId": "target-login"}}
+                if method == "Target.attachToTarget":
+                    return {"result": {"sessionId": "session-login"}}
+                if method == "Target.closeTarget":
+                    self.closed_target = True
+                return {"result": {}}
+
+            def eval_js(self, script, _session_id=None):
+                if script == boss_vendor.EXTRACT_DETAIL_JS:
+                    return json.dumps({
+                        "jd": "",
+                        "page_text": "职位描述\n负责产品规划\n登录查看完整内容",
+                        "tags": [],
+                    })
+                return None
+
+            def close(self):
+                self.closed = True
+
+        job = {
+            "job_id": "blocked",
+            "title": "AI 产品经理",
+            "boss_name": "示例公司",
+            "job_link": "https://www.zhipin.com/job_detail/blocked.html",
+        }
+        progress = []
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(boss_vendor, "CDPSession", FakeSession), \
+                patch.object(boss_vendor, "incr_request"), \
+                patch.object(boss_vendor.time, "sleep"), \
+                patch.object(boss_vendor.random, "uniform", return_value=0), \
+                patch.object(boss_vendor.random, "randint", return_value=0), \
+                patch.object(boss_vendor.random, "random", return_value=1):
+            output = pathlib.Path(temporary) / "details.json"
+            with self.assertRaisesRegex(RuntimeError, "登录状态已失效"):
+                boss_vendor.scrape_details(
+                    {"jobs": [job]},
+                    output_path=str(output),
+                    on_progress=lambda **payload: progress.append(payload),
+                )
+            self.assertFalse(output.exists())
+
+        self.assertEqual(progress[-1]["status"], "failed")
+        self.assertTrue(FakeSession.instance.closed_target)
+        self.assertTrue(FakeSession.instance.closed)
 
     def test_scrape_exception_still_closes_dedicated_chrome(self):
         class FakeBoss:

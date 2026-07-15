@@ -5,6 +5,7 @@
   import { backend } from '$lib/services/backend';
   import BossSetupCard from '$lib/components/BossSetupCard.svelte';
   import ClearDataDialog from '$lib/components/ClearDataDialog.svelte';
+  import { formatLocalDateTime } from '$lib/date-time';
   import { availableProviderConfigs } from '$lib/provider-policy';
   import { shouldReloadAfterClear } from '$lib/clear-data';
   import { checkForUpdate, updateCheckError, updateChecking } from '$lib/stores/distribution';
@@ -143,7 +144,10 @@
   async function manualUpdateCheck() {
     maintenanceError = '';
     const update = await checkForUpdate(true);
-    if (!update && !$updateCheckError) showToast('当前已是最新版本');
+    if (!$updateCheckError) {
+      await loadDistributionInfo();
+      if (!update) showToast('当前已是最新版本');
+    }
   }
 
   async function exportBackup() {
@@ -188,6 +192,16 @@
       maintenanceError = error instanceof Error ? error.message : String(error);
     } finally {
       maintenanceBusy = false;
+    }
+  }
+
+  async function openIssueSupport() {
+    maintenanceError = '';
+    try {
+      await backend.openGitHubIssues();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      maintenanceError = `无法打开 GitHub Issues：${message}`;
     }
   }
 
@@ -313,18 +327,16 @@
       <button class="btn" type="button" on:click={manualUpdateCheck} disabled={$updateChecking}><RefreshCw size={15} class={$updateChecking ? 'animate-spin' : ''} />{$updateChecking ? '正在检查…' : '检查更新'}</button>
     </div>
     {#if appInfo}
-      <div class="grid gap-x-8 gap-y-3 px-6 py-5 text-sm md:grid-cols-2">
-        <p><span class="body-muted">应用 / sidecar</span><br />v{appInfo.version} / protocol {appInfo.sidecarProtocol}</p>
-        <p><span class="body-muted">系统 / 架构 / WebView</span><br />{appInfo.os} · {appInfo.arch} · {appInfo.webview}</p>
-        <p><span class="body-muted">数据库 schema</span><br />{appInfo.schemaVersion}</p>
-        <p><span class="body-muted">Google Chrome</span><br />{appInfo.chrome.installed ? appInfo.chrome.version || '已安装' : '未安装（BOSS 功能已禁用）'}</p>
-        <p class="md:col-span-2"><span class="body-muted">数据目录</span><br /><code class="break-all text-xs">{appInfo.dataDir}</code></p>
-        <p><span class="body-muted">最后更新检查</span><br />{appInfo.lastUpdateCheckStatus || $snapshot.settings.lastUpdateCheckAt || '尚未检查'}</p>
-        <p><span class="body-muted">旧版遗留数据</span><br />{appInfo.legacyDataDetected ? '已发现，保留用于回退' : '未发现'}</p>
-      </div>
+      <dl class="grid gap-x-10 gap-y-5 px-6 py-5 text-sm md:grid-cols-2">
+        <div><dt class="body-muted">应用 / sidecar</dt><dd class="mt-1 font-medium">v{appInfo.version} / protocol {appInfo.sidecarProtocol}</dd></div>
+        <div><dt class="body-muted">系统 / 架构 / WebView</dt><dd class="mt-1 font-medium">{appInfo.os} · {appInfo.arch} · {appInfo.webview}</dd></div>
+        <div><dt class="body-muted">Google Chrome</dt><dd class="mt-1 font-medium">{appInfo.chrome.installed ? appInfo.chrome.version || '已安装' : '未安装（BOSS 功能已禁用）'}</dd></div>
+        <div><dt class="body-muted">最后更新检查</dt><dd class="mt-1 font-medium">{formatLocalDateTime(appInfo.lastUpdateCheckAt) || '尚未检查'}</dd></div>
+        <div class="md:col-span-2"><dt class="body-muted">数据目录</dt><dd class="mt-1.5 rounded-lg border px-3 py-2" style="border-color: var(--line); background: var(--panel-soft);"><code class="break-all text-xs">{appInfo.dataDir}</code></dd></div>
+      </dl>
       {#if !appInfo.chrome.installed}<div class="mx-6 mb-5 rounded-xl border p-3 text-xs text-warning" style="border-color: var(--warning); background: var(--warning-soft);">BOSS 功能需要 Google Chrome，应用不会替你下载浏览器。<a class="ml-1 underline" href="https://www.google.com/chrome/" target="_blank" rel="noreferrer">前往 Chrome 官方网站</a></div>{/if}
     {/if}
-    <div class="flex flex-wrap gap-2 border-t px-6 py-4" style="border-color: var(--line);"><button class="btn" type="button" on:click={exportDiagnostics} disabled={maintenanceBusy}><Download size={15} />导出脱敏诊断</button><a class="btn" href="https://github.com/kyle-kw/ai-job-app/issues" target="_blank" rel="noreferrer">GitHub Issues 支持</a></div>
+    <div class="flex flex-wrap gap-2 border-t px-6 py-4" style="border-color: var(--line);"><button class="btn" type="button" on:click={exportDiagnostics} disabled={maintenanceBusy}><Download size={15} />导出脱敏诊断</button><button class="btn" type="button" on:click={openIssueSupport}>GitHub Issues 支持</button></div>
   </section>
 
   <section class="mt-6 panel overflow-hidden">

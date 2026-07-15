@@ -19,14 +19,15 @@ use uuid::Uuid;
 use zip::write::SimpleFileOptions;
 
 pub const PRIVACY_ACKNOWLEDGED_VERSION: &str = "2026-07-14";
-const IDENTIFIER: &str = "io.github.kylekw.aijobapp";
-const LEGACY_IDENTIFIER: &str = "com.localfirst.aijobapp";
+const IDENTIFIER: &str = "io.github.aijobapp";
+const LEGACY_IDENTIFIERS: [&str; 2] = ["io.github.kylekw.aijobapp", "com.localfirst.aijobapp"];
 const DATABASE_NAME: &str = "ai-job-app.db";
+const IDENTITY_MIGRATION_MARKER: &str = ".identity-migrated-to-io.github.aijobapp";
 const MAX_LOG_BYTES: u64 = 10 * 1024 * 1024;
 
 #[derive(Debug)]
 pub struct LegacyMigration {
-    pub legacy_dir: Option<PathBuf>,
+    pub legacy_dirs: Vec<PathBuf>,
     pub migrated: bool,
 }
 
@@ -43,28 +44,37 @@ fn migrate_legacy_identity_with<F>(
 where
     F: FnOnce(&Path, &str) -> Result<(), String>,
 {
-    let legacy_dir = data_dir
+    let legacy_dirs = data_dir
         .parent()
-        .map(|parent| parent.join(LEGACY_IDENTIFIER))
-        .filter(|path| path.exists());
+        .map(|parent| {
+            LEGACY_IDENTIFIERS
+                .iter()
+                .map(|identifier| parent.join(identifier))
+                .filter(|path| path.exists())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     let current_database = data_dir.join(DATABASE_NAME);
-    let Some(legacy_dir_path) = legacy_dir.as_ref() else {
+    if current_database.exists() {
         return Ok(LegacyMigration {
-            legacy_dir: None,
-            migrated: false,
-        });
-    };
-    let legacy_database = legacy_dir_path.join(DATABASE_NAME);
-    if current_database.exists() || !legacy_database.exists() {
-        return Ok(LegacyMigration {
-            legacy_dir,
+            legacy_dirs,
             migrated: false,
         });
     }
+    let Some(legacy_database) = legacy_dirs
+        .iter()
+        .map(|path| path.join(DATABASE_NAME))
+        .find(|path| path.exists())
+    else {
+        return Ok(LegacyMigration {
+            legacy_dirs,
+            migrated: false,
+        });
+    };
 
     std::fs::create_dir_all(data_dir).map_err(|error| error.to_string())?;
     let temporary = data_dir.join(format!(".{DATABASE_NAME}.identity-migration"));
-    let marker = data_dir.join(".legacy-migrated-v0.2.0");
+    let marker = data_dir.join(IDENTITY_MIGRATION_MARKER);
     let _ = std::fs::remove_file(&temporary);
     let migration_result = (|| {
         Database::copy_database(&legacy_database, &temporary)?;
@@ -85,7 +95,7 @@ where
         return Err(format!("legacy identity migration failed: {error}"));
     }
     Ok(LegacyMigration {
-        legacy_dir,
+        legacy_dirs,
         migrated: true,
     })
 }
@@ -111,6 +121,7 @@ pub fn prepare_database(db: &Database, data_dir: &Path) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn get_app_info(app: AppHandle, state: State<'_, AppState>) -> Result<AppInfo, String> {
+    let settings = state.db.settings()?;
     let environment = sidecar::request(json!({"op":"environment_status","params":{}}))
         .await
         .unwrap_or_else(
@@ -136,15 +147,8 @@ pub async fn get_app_info(app: AppHandle, state: State<'_, AppState>) -> Result<
         sidecar_protocol,
         chrome,
         data_dir: state.data_dir.to_string_lossy().to_string(),
-        legacy_data_detected: state
-            .legacy_data_dir
-            .as_ref()
-            .is_some_and(|path| path.exists()),
-        last_update_check_status: state
-            .last_update_status
-            .lock()
-            .map_err(|_| "update status lock is poisoned".to_string())?
-            .clone(),
+        legacy_data_detected: state.legacy_data_dirs.iter().any(|path| path.exists()),
+        last_update_check_at: settings.last_update_check_at,
     })
 }
 
@@ -171,7 +175,6 @@ pub async fn check_for_update(
         Ok(updater) => updater,
         Err(error) => {
             let safe_error = secrets::redact(&error.to_string());
-            set_update_status(&state, format!("error: {safe_error}"))?;
             return persist_update_check_outcome(
                 &state.db,
                 &mut settings,
@@ -182,10 +185,6 @@ pub async fn check_for_update(
     let update = match updater.check().await {
         Ok(update) => update,
         Err(error) => {
-            set_update_status(
-                &state,
-                format!("error: {}", secrets::redact(&error.to_string())),
-            )?;
             return persist_update_check_outcome(
                 &state.db,
                 &mut settings,
@@ -203,13 +202,11 @@ pub async fn check_for_update(
             update.download_url.as_str(),
             &update.signature,
         ) {
-            set_update_status(&state, "rejected invalid update metadata".into())?;
             return persist_update_check_outcome(&state.db, &mut settings, Err(error));
         }
     }
     let update = persist_update_check_outcome(&state.db, &mut settings, Ok(update))?;
     let Some(update) = update else {
-        set_update_status(&state, "up-to-date".into())?;
         return Ok(None);
     };
     let download_size = reqwest::Client::builder()
@@ -241,7 +238,6 @@ pub async fn check_for_update(
         .pending_update
         .lock()
         .map_err(|_| "update lock is poisoned".to_string())? = Some(update);
-    set_update_status(&state, format!("available: {}", info.version))?;
     Ok(Some(info))
 }
 
@@ -742,14 +738,6 @@ fn validate_update_metadata(
     Ok(())
 }
 
-fn set_update_status(state: &AppState, status: String) -> Result<(), String> {
-    *state
-        .last_update_status
-        .lock()
-        .map_err(|_| "update status lock is poisoned".to_string())? = Some(status);
-    Ok(())
-}
-
 fn persist_update_check_outcome<T>(
     db: &Database,
     settings: &mut AppSettings,
@@ -865,7 +853,7 @@ async fn clear_boss_profile(state: &AppState, items: &mut Vec<ClearDataItemResul
 
 fn clear_legacy_data(state: &AppState, items: &mut Vec<ClearDataItemResult>) {
     let result = (|| {
-        if let Some(path) = state.legacy_data_dir.as_ref().filter(|path| path.exists()) {
+        for path in state.legacy_data_dirs.iter().filter(|path| path.exists()) {
             for provider_id in provider_ids_from_database(&path.join(DATABASE_NAME))? {
                 llm::delete_legacy_secret(&provider_id)?;
             }
@@ -883,7 +871,7 @@ fn provider_ids_for_key_cleanup(state: &AppState) -> Result<HashSet<String>, Str
         .into_iter()
         .map(|provider| provider.id)
         .collect::<HashSet<_>>();
-    if let Some(path) = state.legacy_data_dir.as_ref().filter(|path| path.exists()) {
+    for path in state.legacy_data_dirs.iter().filter(|path| path.exists()) {
         ids.extend(provider_ids_from_database(&path.join(DATABASE_NAME))?);
     }
     Ok(ids)
@@ -1126,9 +1114,8 @@ mod tests {
         let state = AppState {
             db,
             data_dir: directory.path().to_path_buf(),
-            legacy_data_dir: None,
+            legacy_data_dirs: vec![],
             pending_update: std::sync::Mutex::new(None),
-            last_update_status: std::sync::Mutex::new(None),
         };
         assert!(ensure_not_busy(&state).unwrap_err().starts_with("busy:"));
     }
@@ -1141,9 +1128,8 @@ mod tests {
         let state = AppState {
             db: db.clone(),
             data_dir: directory.path().to_path_buf(),
-            legacy_data_dir: None,
+            legacy_data_dirs: vec![],
             pending_update: std::sync::Mutex::new(None),
-            last_update_status: std::sync::Mutex::new(None),
         };
         let mut items = Vec::new();
 
@@ -1163,7 +1149,7 @@ mod tests {
     fn identity_migration_never_overwrites_an_existing_new_database() {
         let root = tempdir().unwrap();
         let current = root.path().join(IDENTIFIER);
-        let legacy = root.path().join(LEGACY_IDENTIFIER);
+        let legacy = root.path().join(LEGACY_IDENTIFIERS[0]);
         std::fs::create_dir_all(&current).unwrap();
         std::fs::create_dir_all(&legacy).unwrap();
         std::fs::write(current.join(DATABASE_NAME), b"current").unwrap();
@@ -1180,7 +1166,7 @@ mod tests {
     fn identity_migration_does_not_activate_a_database_when_marker_write_fails() {
         let root = tempdir().unwrap();
         let current = root.path().join(IDENTIFIER);
-        let legacy = root.path().join(LEGACY_IDENTIFIER);
+        let legacy = root.path().join(LEGACY_IDENTIFIERS[0]);
         std::fs::create_dir_all(&legacy).unwrap();
         let legacy_database = legacy.join(DATABASE_NAME);
         let connection = rusqlite::Connection::open(&legacy_database).unwrap();
@@ -1199,7 +1185,7 @@ mod tests {
         assert!(error.contains("marker denied"));
         assert!(legacy_database.exists());
         assert!(!current.join(DATABASE_NAME).exists());
-        assert!(!current.join(".legacy-migrated-v0.2.0").exists());
+        assert!(!current.join(IDENTITY_MIGRATION_MARKER).exists());
 
         let retried = migrate_legacy_identity(&current).unwrap();
         assert!(retried.migrated);
@@ -1213,7 +1199,7 @@ mod tests {
     fn v0_1_7_fixture_migrates_without_removing_the_legacy_copy() {
         let root = tempdir().unwrap();
         let current = root.path().join(IDENTIFIER);
-        let legacy = root.path().join(LEGACY_IDENTIFIER);
+        let legacy = root.path().join(LEGACY_IDENTIFIERS[1]);
         std::fs::create_dir_all(&legacy).unwrap();
         let legacy_database = legacy.join(DATABASE_NAME);
         let connection = rusqlite::Connection::open(&legacy_database).unwrap();
@@ -1230,7 +1216,74 @@ mod tests {
         assert_eq!(migrated.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
         let settings = migrated.settings().unwrap();
         assert!(settings.privacy_acknowledged_version.is_none());
-        assert!(current.join(".legacy-migrated-v0.2.0").exists());
+        assert!(current.join(IDENTITY_MIGRATION_MARKER).exists());
+    }
+
+    #[test]
+    fn identity_migration_prefers_the_immediately_previous_identifier() {
+        let root = tempdir().unwrap();
+        let current = root.path().join(IDENTIFIER);
+        let previous = root.path().join(LEGACY_IDENTIFIERS[0]);
+        let oldest = root.path().join(LEGACY_IDENTIFIERS[1]);
+        let previous_db = Database::new(previous.join(DATABASE_NAME));
+        let oldest_db = Database::new(oldest.join(DATABASE_NAME));
+        previous_db.initialize().unwrap();
+        oldest_db.initialize().unwrap();
+        previous_db
+            .save_settings(&AppSettings {
+                privacy_acknowledged_version: Some("previous".into()),
+                ..AppSettings::default()
+            })
+            .unwrap();
+        oldest_db
+            .save_settings(&AppSettings {
+                privacy_acknowledged_version: Some("oldest".into()),
+                ..AppSettings::default()
+            })
+            .unwrap();
+
+        let result = migrate_legacy_identity(&current).unwrap();
+
+        assert!(result.migrated);
+        assert_eq!(result.legacy_dirs, vec![previous.clone(), oldest.clone()]);
+        assert_eq!(
+            Database::new(current.join(DATABASE_NAME))
+                .settings()
+                .unwrap()
+                .privacy_acknowledged_version
+                .as_deref(),
+            Some("previous")
+        );
+        assert!(previous.join(DATABASE_NAME).exists());
+        assert!(oldest.join(DATABASE_NAME).exists());
+    }
+
+    #[test]
+    fn clearing_legacy_data_removes_every_detected_identifier_directory() {
+        let root = tempdir().unwrap();
+        let current = root.path().join(IDENTIFIER);
+        std::fs::create_dir_all(&current).unwrap();
+        let db = Database::new(current.join(DATABASE_NAME));
+        db.initialize().unwrap();
+        let legacy_data_dirs = LEGACY_IDENTIFIERS
+            .iter()
+            .map(|identifier| root.path().join(identifier))
+            .collect::<Vec<_>>();
+        for path in &legacy_data_dirs {
+            std::fs::create_dir_all(path).unwrap();
+        }
+        let state = AppState {
+            db,
+            data_dir: current,
+            legacy_data_dirs: legacy_data_dirs.clone(),
+            pending_update: std::sync::Mutex::new(None),
+        };
+        let mut items = Vec::new();
+
+        clear_legacy_data(&state, &mut items);
+
+        assert!(items[0].ok, "{}", items[0].message);
+        assert!(legacy_data_dirs.iter().all(|path| !path.exists()));
     }
 
     #[test]

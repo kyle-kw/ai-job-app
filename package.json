@@ -1,6 +1,6 @@
 {
   "name": "ai-job-app",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "type": "module",
   "engines": {
@@ -15,7 +15,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "version:set": "node scripts/set-version.mjs",
-    "release:verify": "node scripts/verify-release.mjs",
+    "release:verify": "node scripts/verify-release-suite.mjs",
     "tauri": "node scripts/tauri.mjs",
     "tauri:dev": "node scripts/tauri.mjs dev",
     "sidecar:build": "powershell -ExecutionPolicy Bypass -File scripts/build-sidecar.ps1",

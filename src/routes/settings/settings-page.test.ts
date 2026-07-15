@@ -17,6 +17,16 @@ function readySnapshot() {
 }
 
 describe('settings page', () => {
+  it('opens GitHub Issues from the support action', async () => {
+    snapshot.set(readySnapshot());
+    const openGitHubIssues = vi.spyOn(backend, 'openGitHubIssues').mockResolvedValue();
+    render(SettingsPage);
+
+    await fireEvent.click(screen.getByRole('button', { name: 'GitHub Issues 支持' }));
+
+    expect(openGitHubIssues).toHaveBeenCalledTimes(1);
+  });
+
   it('does not start BOSS Chrome when the page opens', async () => {
     snapshot.set(readySnapshot());
     const setupBoss = vi.spyOn(backend, 'setupBoss');
@@ -101,7 +111,7 @@ describe('settings page', () => {
     vi.spyOn(backend, 'bootstrap').mockResolvedValue(ready);
     vi.spyOn(backend, 'getAppInfo').mockResolvedValue({
       version: '0.2.0',
-      identifier: 'io.github.kylekw.aijobapp',
+      identifier: 'io.github.aijobapp',
       os: 'windows',
       arch: 'x86_64',
       webview: 'test',
@@ -110,7 +120,7 @@ describe('settings page', () => {
       chrome: { installed: true, version: 'test', executablePath: 'chrome.exe' },
       dataDir: 'test-data',
       legacyDataDetected: true,
-      lastUpdateCheckStatus: null
+      lastUpdateCheckAt: new Date(2026, 6, 15, 11, 26, 46).toISOString()
     });
     vi.spyOn(backend, 'listAutomaticBackups').mockResolvedValue([]);
     const clearData = vi.spyOn(backend, 'clearData').mockImplementation(async (scope) => ({
@@ -120,6 +130,9 @@ describe('settings page', () => {
     }));
     render(SettingsPage);
     await waitFor(() => expect(screen.getByRole('button', { name: '删除旧版遗留' })).toBeEnabled());
+    expect(screen.getByText('2026-07-15 11:26:46')).toBeInTheDocument();
+    expect(screen.queryByText('数据库 schema')).not.toBeInTheDocument();
+    expect(screen.queryByText('旧版遗留数据')).not.toBeInTheDocument();
 
     const actions = [
       { button: '清除模型密钥', title: '确认清除模型密钥', confirm: '确认清除', scope: 'modelKeys' },
@@ -144,5 +157,35 @@ describe('settings page', () => {
       await waitFor(() => expect(screen.queryByRole('dialog', { name: action.title })).not.toBeInTheDocument());
       await waitFor(() => expect(trigger).toBeEnabled());
     }
+  });
+
+  it('refreshes the successful local update-check time after a manual check', async () => {
+    snapshot.set(readySnapshot());
+    const checkedAt = new Date(2026, 6, 15, 11, 26, 46).toISOString();
+    const baseInfo = {
+      version: '0.2.0',
+      identifier: 'io.github.aijobapp',
+      os: 'windows',
+      arch: 'x86_64',
+      webview: 'test',
+      schemaVersion: 5,
+      sidecarProtocol: '2',
+      chrome: { installed: true, version: 'test', executablePath: 'chrome.exe' },
+      dataDir: 'test-data',
+      legacyDataDetected: false
+    };
+    const getAppInfo = vi.spyOn(backend, 'getAppInfo')
+      .mockResolvedValueOnce({ ...baseInfo, lastUpdateCheckAt: null })
+      .mockResolvedValue({ ...baseInfo, lastUpdateCheckAt: checkedAt });
+    vi.spyOn(backend, 'listAutomaticBackups').mockResolvedValue([]);
+    vi.spyOn(backend, 'checkForUpdate').mockResolvedValue(null);
+    render(SettingsPage);
+    await waitFor(() => expect(getAppInfo).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText('尚未检查')).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole('button', { name: '检查更新' }));
+
+    await waitFor(() => expect(getAppInfo).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText('2026-07-15 11:26:46')).toBeInTheDocument();
   });
 });

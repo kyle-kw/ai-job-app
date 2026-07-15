@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Dashboard from './+page.svelte';
 import { backend } from '$lib/services/backend';
@@ -77,6 +77,24 @@ describe('dashboard', () => {
     render(Dashboard);
 
     expect(await screen.findByText('岗位库还是空的')).toBeInTheDocument();
+  });
+
+  it('restores the same persisted search controls from the dashboard', async () => {
+    const state = readyState();
+    state.lastSearchSpec = {
+      keyword: '财务分析', city: '北京', pages: 3, experience: '106', salary: '406', degree: '', companyScale: '304'
+    };
+    snapshot.set(state);
+    render(Dashboard);
+
+    await fireEvent.click(screen.getByRole('button', { name: '设置搜索条件' }));
+
+    expect(screen.getByLabelText('关键词')).toHaveValue('财务分析');
+    expect(screen.getByLabelText('城市')).toHaveValue('北京');
+    expect(screen.getByLabelText('抓取页数')).toHaveValue('3');
+    expect(screen.getByLabelText('经验要求')).toHaveValue('106');
+    expect(screen.getByLabelText('薪资范围')).toHaveValue('406');
+    expect(screen.getByLabelText('公司规模')).toHaveValue('304');
   });
 
   it('shows a retryable dashboard error and refreshes after a scrape finishes', async () => {

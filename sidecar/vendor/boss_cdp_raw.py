@@ -158,21 +158,46 @@ def require_runtime_dependencies(*names):
 # ============================================================
 # 筛选参数映射
 # Source snapshots:
-# - 城市: https://www.zhipin.com/wapi/zpgeek/search/job/hot/city.json + cityGroup.json
+# - 城市: boss-zhipin-scraper f6bf619 data/city_codes.json
 # - 筛选项: https://www.zhipin.com/wapi/zpgeek/search/job/condition.json
 # ============================================================
-CITY_MAP = {
-    "全国": "100010000",
-    "北京": "101010100", "上海": "101020100", "广州": "101280100",
-    "深圳": "101280600", "杭州": "101210100", "成都": "101270100",
-    "西安": "101110100", "重庆": "101040100", "南京": "101190100",
-    "长沙": "101250100", "福州": "101230100", "武汉": "101200100",
-    "合肥": "101220100", "济南": "101120100", "大连": "101070200",
-    "青岛": "101120200", "宁波": "101210400", "厦门": "101230200",
-    "天津": "101030100", "苏州": "101190400", "郑州": "101180100",
-    "东莞": "101281600", "佛山": "101280800", "沈阳": "101070100",
-    "昆明": "101290100", "南昌": "101240100", "石家庄": "101090100",
-}
+CITY_DATA_FILENAME = "city_codes.json"
+_local_city_map_cache = None
+
+
+def _city_data_path():
+    return os.path.join(os.path.dirname(__file__), CITY_DATA_FILENAME)
+
+
+def load_local_city_map():
+    """Load and validate the bundled offline BOSS city map."""
+    global _local_city_map_cache
+    if _local_city_map_cache is not None:
+        return _local_city_map_cache
+
+    try:
+        with open(_city_data_path(), "r", encoding="utf-8") as file:
+            raw = json.load(file)
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError("BOSS 城市码表缺失或损坏，请重新安装应用。") from error
+
+    if not isinstance(raw, dict) or len(raw) < 100:
+        raise RuntimeError("BOSS 城市码表内容无效，请重新安装应用。")
+
+    name_to_code = {}
+    for name, code in raw.items():
+        city_name = str(name).strip()
+        city_code = str(code).strip()
+        if not city_name or not city_code.isdigit():
+            raise RuntimeError("BOSS 城市码表内容无效，请重新安装应用。")
+        name_to_code[city_name] = city_code
+
+    code_to_name = {code: name for name, code in name_to_code.items()}
+    _local_city_map_cache = name_to_code, code_to_name
+    return _local_city_map_cache
+
+
+CITY_MAP, CITY_R = load_local_city_map()
 
 SCALE_MAP = {
     "0-20人": "301", "20-99人": "302", "100-499人": "303",
@@ -205,10 +230,6 @@ INDUSTRY_MAP = {
     "企业服务": "1005", "教育培训": "1006", "社交网络": "1007",
     "医疗健康": "1008", "生活服务": "1009", "广告营销": "1010",
 }
-
-# 反向映射（code -> 中文名）
-CITY_R = {v: k for k, v in CITY_MAP.items()}
-
 
 # ============================================================
 # 全局请求计数器辅助
@@ -390,11 +411,28 @@ EXTRACT_LIST_JS = """
 """
 
 # ============================================================
-# 详情页提取 JS（过滤福利标签）
+# 详情页提取与校验
 # ============================================================
+DETAIL_LOGIN_MARKER = "登录查看完整内容"
+DETAIL_DESCRIPTION_MARKER = "职位描述"
+DETAIL_COMPETITIVENESS_MARKER = "竞争力分析"
+DETAIL_SAFETY_MARKER = "BOSS 安全提示"
+DETAIL_COMPANY_INTRO_MARKER = "公司介绍"
+DETAIL_COMPANY_INTRO_END_MARKERS = ("点击查看地图", "更多职位")
+MIN_DETAIL_TEXT_LENGTH = 120
+
+
+class DetailExtractionError(ValueError):
+    """The rendered page does not contain a usable job description."""
+
+
+class DetailLoginRequiredError(DetailExtractionError):
+    """The detail page is truncated because the BOSS session is not logged in."""
+
+
 EXTRACT_DETAIL_JS = """
 (function(){
-    var body = document.body.innerText;
+    var pageText = document.body ? document.body.innerText : '';
     var tags = [];
     var benefitWords = ['五险','补充医疗','定期体检','带薪年假','年终奖','零食','餐补',
         '节日福利','加班补助','股票期权','员工旅游','交通补助','通讯补贴','团建',
@@ -416,13 +454,138 @@ EXTRACT_DETAIL_JS = """
         var t = s.innerText.trim();
         if(t && !isBenefit(t)) tags.push(t);
     });
-    var sections = document.querySelectorAll('.job-sec, .job-detail-section');
     var jd = '';
-    sections.forEach(function(s){ jd += s.innerText + '\\n'; });
-    if(!jd) jd = body.substring(0, 3000);
-    return JSON.stringify({jd: jd, tags: tags, url: location.href});
+    var sections = document.querySelectorAll('.job-detail-section, .job-sec');
+    for (var i = 0; i < sections.length; i++) {
+        var text = (sections[i].innerText || '').trim();
+        if (text.indexOf('职位描述') !== -1 && text.length > jd.length) {
+            jd = text;
+        }
+    }
+    return JSON.stringify({
+        jd: jd,
+        page_text: pageText,
+        tags: tags,
+        url: location.href
+    });
 })()
 """
+
+
+def _normalize_detail_whitespace(text):
+    lines = [line.rstrip() for line in text.replace("\r\n", "\n").splitlines()]
+    normalized = "\n".join(lines).strip()
+    normalized = re.sub(r"\n{3,}", "\n\n", normalized)
+    return re.sub(r"[ \t]{2,}", " ", normalized)
+
+
+def _looks_like_navigation_page(text):
+    return (
+        DETAIL_DESCRIPTION_MARKER not in text
+        and "无障碍专区" in text
+        and "首页" in text
+        and "职位" in text
+        and "公司" in text
+    )
+
+
+def _recruiter_footer_start(lines):
+    stripped_lines = [line.strip() for line in lines]
+    end = len(stripped_lines)
+    while end and not stripped_lines[end - 1]:
+        end -= 1
+
+    def card_start(card_end):
+        while card_end and not stripped_lines[card_end - 1]:
+            card_end -= 1
+        if card_end < 4 or stripped_lines[card_end - 2] != "·":
+            return None
+        activity_or_name = stripped_lines[card_end - 4]
+        has_activity_line = (
+            activity_or_name == "在线" or activity_or_name.endswith("活跃")
+        )
+        start = card_end - 5 if has_activity_line else card_end - 4
+        return start if start >= 0 else None
+
+    for marker in (DETAIL_COMPETITIVENESS_MARKER, DETAIL_SAFETY_MARKER):
+        try:
+            marker_index = stripped_lines.index(marker)
+        except ValueError:
+            continue
+        start = card_start(marker_index)
+        if start is not None:
+            return start
+    return card_start(end)
+
+
+def _extract_company_introduction(text):
+    lines = text.replace("\r\n", "\n").splitlines()
+    stripped_lines = [line.strip() for line in lines]
+    try:
+        start = stripped_lines.index(DETAIL_COMPANY_INTRO_MARKER)
+    except ValueError:
+        return ""
+
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        if stripped_lines[index] in DETAIL_COMPANY_INTRO_END_MARKERS:
+            end = index
+            break
+
+    introduction = _normalize_detail_whitespace("\n".join(lines[start:end]))
+    if introduction == DETAIL_COMPANY_INTRO_MARKER:
+        return ""
+    return introduction
+
+
+def extract_job_description(extracted, min_length=MIN_DETAIL_TEXT_LENGTH):
+    """Return validated JD text without BOSS page chrome."""
+    if not isinstance(extracted, dict):
+        raise DetailExtractionError("detail extractor returned non-dict")
+
+    raw_jd = str(extracted.get("jd") or "")
+    page_text = str(extracted.get("page_text") or "")
+    diagnostic_text = "\n".join((raw_jd, page_text))
+
+    if DETAIL_LOGIN_MARKER in diagnostic_text:
+        raise DetailLoginRequiredError(
+            "detail page is truncated at the login wall; refresh the BOSS login session"
+        )
+    if _looks_like_navigation_page(diagnostic_text):
+        raise DetailExtractionError("detail page rendered navigation chrome without a JD")
+
+    company_introduction = _extract_company_introduction(page_text)
+    if not company_introduction:
+        company_introduction = _extract_company_introduction(raw_jd)
+
+    text = raw_jd
+    if not text and DETAIL_DESCRIPTION_MARKER in page_text:
+        text = page_text
+    if DETAIL_DESCRIPTION_MARKER in text:
+        text = text.split(DETAIL_DESCRIPTION_MARKER, 1)[1]
+
+    lines = text.replace("\r\n", "\n").splitlines()
+    for index, line in enumerate(lines):
+        if line.strip() == DETAIL_COMPANY_INTRO_MARKER:
+            lines = lines[:index]
+            break
+    footer_start = _recruiter_footer_start(lines)
+    if footer_start is not None:
+        lines = lines[:footer_start]
+    else:
+        for index, line in enumerate(lines):
+            if line.strip() == DETAIL_SAFETY_MARKER:
+                lines = lines[:index]
+                break
+
+    jd = _normalize_detail_whitespace("\n".join(lines))
+    if len(jd) < min_length:
+        raise DetailExtractionError(
+            f"job description too short after validation: {len(jd)} < {min_length}"
+        )
+    if company_introduction:
+        return f"{jd}\n\n{company_introduction}"
+    return jd
 
 
 # ============================================================
@@ -1126,10 +1289,22 @@ def scrape_details(list_data, max_details=None, output_path=None,
             # 每个详情页用新 session 避免检测。每个岗位独立创建，
             # 这样单条异常不会污染或中断后续岗位。
             ws = CDPSession(cdp_port)
-            r = ws.send("Target.createTarget", {"url": "about:blank"})
+            r = ws.send("Target.createTarget", {"url": "about:blank", "background": True})
             tid = r["result"]["targetId"]
             r = ws.send("Target.attachToTarget", {"targetId": tid, "flatten": True})
             sid = r["result"]["sessionId"]
+
+            # Background tabs report a hidden document, which BOSS treats as an
+            # automated detail request. Override visibility before navigation so
+            # the tab stays in the background without producing empty details.
+            ws.send("Page.addScriptToEvaluateOnNewDocument", {
+                "source": (
+                    "Object.defineProperty(document, 'hidden', {get: () => false});"
+                    "Object.defineProperty(document, 'visibilityState', {get: () => 'visible'});"
+                    "Object.defineProperty(document, 'webkitHidden', {get: () => false});"
+                    "Object.defineProperty(document, 'webkitVisibilityState', {get: () => 'visible'});"
+                )
+            }, sid)
 
             detail_url = build_detail_url(job)
             ws.send("Page.navigate", {"url": detail_url}, sid)
@@ -1169,9 +1344,7 @@ def scrape_details(list_data, max_details=None, output_path=None,
                 d = {"jd": "", "tags": []}
             if not isinstance(d, dict):
                 d = {"jd": "", "tags": []}
-            d["jd"] = str(d.get("jd") or "").strip()
-            if not d["jd"]:
-                raise RuntimeError("详情页未提取到非空 JD")
+            d["jd"] = extract_job_description(d)
 
             detail = build_detail_record(job, d)
             results.append(detail)
@@ -1189,6 +1362,12 @@ def scrape_details(list_data, max_details=None, output_path=None,
                 print(f"  技能: {', '.join(d['tags'])}")
             print(f"  JD: {len(d['jd'])} 字 ({time.time()-t0:.0f}s)")
             report_progress("success", idx, title, "详情抓取成功")
+        except DetailLoginRequiredError as error:
+            failed += 1
+            message = "BOSS 登录状态已失效，请重新登录后重试。"
+            print(f"  ⚠️ {message}")
+            report_progress("failed", idx, title, message)
+            raise RuntimeError(message) from error
         except Exception as error:
             failed += 1
             message = f"详情抓取失败: {company} - {title}: {error}"

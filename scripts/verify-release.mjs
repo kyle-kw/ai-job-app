@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { readChangelogSection } from './changelog-section.mjs';
 
 const readJson = (path) => JSON.parse(readFileSync(path, 'utf8'));
 const matchVersion = (path) => {
@@ -38,9 +39,7 @@ const tag = process.argv[2]
     ? process.env.GITHUB_REF_NAME || githubRef.slice('refs/tags/'.length)
     : undefined);
 if (tag && tag !== `v${expected}`) throw new Error(`Tag ${tag} does not match v${expected}`);
-if (!readFileSync('CHANGELOG.md', 'utf8').includes(`## [${expected}]`)) {
-  throw new Error(`CHANGELOG.md has no ${expected} section`);
-}
+readChangelogSection(expected);
 
 const updater = tauri.plugins?.updater;
 if (!Array.isArray(updater?.endpoints) || updater.endpoints.length === 0

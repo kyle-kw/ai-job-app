@@ -8,7 +8,7 @@ const empty: BootstrapSnapshot = {
     boss: { state: 'needs_setup', message: '需要配置 BOSS 专用浏览器。' },
     llm: { state: 'needs_setup', message: '需要配置默认模型。' }
   },
-  resume: null, providers: [], tasks: [], scrapeRuns: [],
+  resume: null, providers: [], tasks: [], scrapeRuns: [], lastSearchSpec: null,
   settings: { advancedMode: false, automaticUpdateChecks: true, privacyAcknowledgedVersion: null, lastUpdateCheckAt: null }
 };
 

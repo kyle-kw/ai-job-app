@@ -23,9 +23,8 @@ use tauri_plugin_updater::Update;
 pub struct AppState {
     pub db: Database,
     pub data_dir: PathBuf,
-    pub legacy_data_dir: Option<PathBuf>,
+    pub legacy_data_dirs: Vec<PathBuf>,
     pub pending_update: Mutex<Option<Update>>,
-    pub last_update_status: Mutex<Option<String>>,
 }
 
 fn show_startup_error(app: &tauri::App, error: &str) {
@@ -90,6 +89,9 @@ pub fn run() {
                     return Ok(());
                 }
             };
+            if legacy.migrated {
+                eprintln!("migrated application data to the current identifier");
+            }
             let imports = data_dir.join("imports");
             if imports.exists() {
                 if let Err(error) = std::fs::remove_dir_all(&imports) {
@@ -115,13 +117,8 @@ pub fn run() {
             app.manage(AppState {
                 db,
                 data_dir,
-                legacy_data_dir: legacy.legacy_dir,
+                legacy_data_dirs: legacy.legacy_dirs,
                 pending_update: Mutex::new(None),
-                last_update_status: Mutex::new(if legacy.migrated {
-                    Some("legacy data migrated".into())
-                } else {
-                    None
-                }),
             });
             if let (Some(marker), Some(result)) = (smoke_marker, smoke_result) {
                 std::fs::write(
@@ -158,6 +155,7 @@ pub fn run() {
             assistant::start_fit_batch,
             assistant::start_fit_batch_for_query,
             assistant::open_job_source,
+            assistant::open_github_issues,
             assistant::get_interview_preparation_state,
             assistant::generate_interview_preparation,
             assistant::propose_resume_chat_edits,

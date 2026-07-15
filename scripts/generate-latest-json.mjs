@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
+import { readChangelogSection } from './changelog-section.mjs';
 
 const [directory, repository, tag] = process.argv.slice(2);
 if (!directory || !repository || !tag) {
@@ -18,13 +19,7 @@ const windows = requireOne(/windows-x86_64-unsigned-setup\.exe$/, 'Windows NSIS 
 const macIntel = requireOne(/macos-x86_64-unsigned\.app\.tar\.gz$/, 'Intel macOS updater');
 const macArm = requireOne(/macos-aarch64-unsigned\.app\.tar\.gz$/, 'Apple Silicon updater');
 
-const changelog = readFileSync('CHANGELOG.md', 'utf8');
-const heading = `## [${packageJson.version}]`;
-const sectionStart = changelog.indexOf(heading);
-if (sectionStart < 0) throw new Error(`CHANGELOG.md has no ${heading} section`);
-const section = changelog.slice(sectionStart + heading.length).replace(/^[^\n]*\n/, '');
-const nextHeading = section.search(/^## \[/m);
-const notes = (nextHeading >= 0 ? section.slice(0, nextHeading) : section).trim();
+const notes = readChangelogSection(packageJson.version);
 const asset = (file) => {
   const signaturePath = join(directory, `${file}.sig`);
   if (!statSync(signaturePath).size) throw new Error(`Empty updater signature for ${file}`);

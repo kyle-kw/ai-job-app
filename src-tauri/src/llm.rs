@@ -8,8 +8,8 @@ use serde_json::{json, Value};
 use std::time::Duration;
 use std::time::Instant;
 
-const KEYRING_SERVICE: &str = "io.github.kylekw.aijobapp";
-const LEGACY_KEYRING_SERVICE: &str = "com.localfirst.aijobapp";
+const KEYRING_SERVICE: &str = "io.github.aijobapp";
+const LEGACY_KEYRING_SERVICES: [&str; 2] = ["io.github.kylekw.aijobapp", "com.localfirst.aijobapp"];
 
 #[derive(Debug, Deserialize)]
 struct ChatResponse {
@@ -62,33 +62,36 @@ pub fn delete_secret(provider_id: &str) -> Result<(), String> {
 }
 
 pub fn migrate_legacy_secret(provider_id: &str) -> Result<bool, String> {
-    let legacy =
-        Entry::new(LEGACY_KEYRING_SERVICE, provider_id).map_err(|error| error.to_string())?;
-    let password = match legacy.get_password() {
-        Ok(password) => password,
-        Err(keyring::Error::NoEntry) => return Ok(false),
-        Err(error) => return Err(error.to_string()),
-    };
     let current = Entry::new(KEYRING_SERVICE, provider_id).map_err(|error| error.to_string())?;
     match current.get_password() {
-        Ok(_) => Ok(false),
-        Err(keyring::Error::NoEntry) => {
-            current
-                .set_password(&password)
-                .map_err(|error| error.to_string())?;
-            Ok(true)
-        }
-        Err(error) => Err(error.to_string()),
+        Ok(_) => return Ok(false),
+        Err(keyring::Error::NoEntry) => {}
+        Err(error) => return Err(error.to_string()),
     }
+    for service in LEGACY_KEYRING_SERVICES {
+        let legacy = Entry::new(service, provider_id).map_err(|error| error.to_string())?;
+        let password = match legacy.get_password() {
+            Ok(password) => password,
+            Err(keyring::Error::NoEntry) => continue,
+            Err(error) => return Err(error.to_string()),
+        };
+        current
+            .set_password(&password)
+            .map_err(|error| error.to_string())?;
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 pub fn delete_legacy_secret(provider_id: &str) -> Result<(), String> {
-    let entry =
-        Entry::new(LEGACY_KEYRING_SERVICE, provider_id).map_err(|error| error.to_string())?;
-    match entry.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(error) => Err(error.to_string()),
+    for service in LEGACY_KEYRING_SERVICES {
+        let entry = Entry::new(service, provider_id).map_err(|error| error.to_string())?;
+        match entry.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => {}
+            Err(error) => return Err(error.to_string()),
+        }
     }
+    Ok(())
 }
 
 pub async fn test(provider: &AiProviderConfig) -> Result<ProviderTestResult, String> {

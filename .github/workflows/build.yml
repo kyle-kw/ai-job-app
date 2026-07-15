@@ -227,7 +227,7 @@ jobs:
           if (-not (Test-Path (Join-Path $app.DirectoryName 'job-assistant-sidecar.exe'))) {
             throw 'Installed sidecar executable was not found'
           }
-          $legacyDirectory = Join-Path $env:APPDATA 'com.localfirst.aijobapp'
+          $legacyDirectory = Join-Path $env:APPDATA 'io.github.kylekw.aijobapp'
           New-Item -ItemType Directory -Force -Path $legacyDirectory | Out-Null
           $env:LEGACY_DATABASE = Join-Path $legacyDirectory 'ai-job-app.db'
           $env:LEGACY_FIXTURE = Join-Path $PWD 'src-tauri/tests/fixtures/v0.1.7.sql'
@@ -237,7 +237,7 @@ jobs:
           Start-Process $app.FullName -Wait
           $result = Get-Content -Raw -Encoding UTF8 $marker | ConvertFrom-Json
           if (-not $result.ok -or $result.schemaVersion -lt 5) { throw 'Application/database/sidecar smoke failed' }
-          $database = Join-Path $env:APPDATA 'io.github.kylekw.aijobapp\ai-job-app.db'
+          $database = Join-Path $env:APPDATA 'io.github.aijobapp\ai-job-app.db'
           if (-not (Test-Path $database)) { throw 'Application database was not created' }
           if (-not (Test-Path $env:LEGACY_DATABASE)) { throw 'v0.1.7 legacy data was not retained after migration' }
           $uninstaller = Get-ChildItem $app.DirectoryName -Filter 'uninstall*.exe' | Select-Object -First 1
@@ -255,8 +255,8 @@ jobs:
           hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mount"
           app="$(find "$mount" -maxdepth 1 -name '*.app' -print -quit)"
           binary="$(find "$app/Contents/MacOS" -maxdepth 1 -type f -perm +111 ! -name '*sidecar*' -print -quit)"
-          legacy="$HOME/Library/Application Support/com.localfirst.aijobapp/ai-job-app.db"
-          current="$HOME/Library/Application Support/io.github.kylekw.aijobapp/ai-job-app.db"
+          legacy="$HOME/Library/Application Support/io.github.kylekw.aijobapp/ai-job-app.db"
+          current="$HOME/Library/Application Support/io.github.aijobapp/ai-job-app.db"
           mkdir -p "$(dirname "$legacy")"
           LEGACY_DATABASE="$legacy" LEGACY_FIXTURE="$PWD/src-tauri/tests/fixtures/v0.1.7.sql" python3 -c 'import os,sqlite3; c=sqlite3.connect(os.environ["LEGACY_DATABASE"]); c.executescript(open(os.environ["LEGACY_FIXTURE"],encoding="utf-8").read()); c.close()'
           AI_JOB_APP_SMOKE_RESULT="$marker" "$binary"
@@ -300,6 +300,8 @@ jobs:
           node scripts/generate-latest-json.mjs release-assets "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME"
           node -e "const m=require('./release-assets/latest.json'); if(Object.keys(m.platforms).sort().join(',') !== 'darwin-aarch64,darwin-x86_64,windows-x86_64') process.exit(1)"
           version="${GITHUB_REF_NAME#v}"
+          node scripts/write-release-notes.mjs "$version" "$RUNNER_TEMP/release-notes.md"
+          test -s "$RUNNER_TEMP/release-notes.md"
           mkdir release-publish
           public_assets=(
             "ai-job-app-v${version}-macos-aarch64-unsigned.app.tar.gz"
@@ -329,14 +331,14 @@ jobs:
             fi
             echo "Recovering unpublished draft $GITHUB_REF_NAME"
             gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
-              --title "$GITHUB_REF_NAME" --notes-file CHANGELOG.md
+              --title "$GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/release-notes.md"
             mapfile -t existing_assets < <(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
             for asset in "${existing_assets[@]}"; do
               gh release delete-asset "$GITHUB_REF_NAME" "$asset" --repo "$GITHUB_REPOSITORY" --yes
             done
           else
             gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
-              --title "$GITHUB_REF_NAME" --notes-file CHANGELOG.md
+              --title "$GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/release-notes.md"
           fi
           mapfile -d '' assets < <(find release-publish -maxdepth 1 -type f -print0 | sort -z)
           gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --repo "$GITHUB_REPOSITORY"

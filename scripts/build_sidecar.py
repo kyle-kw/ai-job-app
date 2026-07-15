@@ -67,6 +67,7 @@ def main() -> int:
         "--collect-all", "pypdfium2",
         "--collect-all", "PIL",
         "--hidden-import", "vendor.boss_cdp_raw",
+        "--add-data", f"{SIDECAR / 'vendor' / 'city_codes.json'}{os.pathsep}vendor",
         "--distpath", str(dist_path),
         "--workpath", str(work_path),
         "--specpath", str(work_path),

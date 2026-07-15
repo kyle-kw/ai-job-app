@@ -632,7 +632,7 @@ pub struct AppInfo {
     pub data_dir: String,
     pub legacy_data_detected: bool,
     #[serde(default)]
-    pub last_update_check_status: Option<String>,
+    pub last_update_check_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -695,6 +695,8 @@ pub struct BootstrapSnapshot {
     pub providers: Vec<AiProviderConfig>,
     pub tasks: Vec<TaskRun>,
     pub scrape_runs: Vec<ScrapeRun>,
+    #[serde(default)]
+    pub last_search_spec: Option<SearchSpec>,
     pub settings: AppSettings,
 }
 
