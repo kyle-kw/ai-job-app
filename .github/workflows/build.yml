@@ -288,7 +288,7 @@ jobs:
           pattern: desktop-*
           path: release-assets
           merge-multiple: true
-      - name: Verify artifacts and create updater manifest
+      - name: Verify artifacts, create updater manifest, and select public assets
         shell: bash
         run: |
           set -euo pipefail
@@ -298,10 +298,22 @@ jobs:
           test "$(find release-assets -name '*.sig' | wc -l)" -eq 3
           test "$(find release-assets -name '*.cdx.json' | wc -l)" -eq 3
           node scripts/generate-latest-json.mjs release-assets "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME"
-          node scripts/generate-third-party-list.mjs release-assets/third-party-dependencies.txt
-          cp THIRD_PARTY_NOTICES.md LICENSE release-assets/
-          find release-assets -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum > release-assets/SHA256SUMS.txt
           node -e "const m=require('./release-assets/latest.json'); if(Object.keys(m.platforms).sort().join(',') !== 'darwin-aarch64,darwin-x86_64,windows-x86_64') process.exit(1)"
+          version="${GITHUB_REF_NAME#v}"
+          mkdir release-publish
+          public_assets=(
+            "ai-job-app-v${version}-macos-aarch64-unsigned.app.tar.gz"
+            "ai-job-app-v${version}-macos-aarch64-unsigned.dmg"
+            "ai-job-app-v${version}-macos-x86_64-unsigned.app.tar.gz"
+            "ai-job-app-v${version}-macos-x86_64-unsigned.dmg"
+            "ai-job-app-v${version}-windows-x86_64-unsigned-setup.exe"
+            "latest.json"
+          )
+          for asset in "${public_assets[@]}"; do
+            test -f "release-assets/$asset"
+            cp "release-assets/$asset" "release-publish/$asset"
+          done
+          test "$(find release-publish -maxdepth 1 -type f | wc -l)" -eq 6
       - name: Create or recover draft, verify assets, then publish
         shell: bash
         env:
@@ -317,21 +329,21 @@ jobs:
             fi
             echo "Recovering unpublished draft $GITHUB_REF_NAME"
             gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
-              --title "求职舱 $GITHUB_REF_NAME" --notes-file CHANGELOG.md
+              --title "$GITHUB_REF_NAME" --notes-file CHANGELOG.md
             mapfile -t existing_assets < <(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
             for asset in "${existing_assets[@]}"; do
               gh release delete-asset "$GITHUB_REF_NAME" "$asset" --repo "$GITHUB_REPOSITORY" --yes
             done
           else
             gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
-              --title "求职舱 $GITHUB_REF_NAME" --notes-file CHANGELOG.md
+              --title "$GITHUB_REF_NAME" --notes-file CHANGELOG.md
           fi
-          mapfile -d '' assets < <(find release-assets -maxdepth 1 -type f -print0 | sort -z)
+          mapfile -d '' assets < <(find release-publish -maxdepth 1 -type f -print0 | sort -z)
           gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --repo "$GITHUB_REPOSITORY"
           local_count="${#assets[@]}"
           remote_count="$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length')"
           test "$local_count" -eq "$remote_count"
-          find release-assets -maxdepth 1 -type f -printf '%f\n' | sort > "$RUNNER_TEMP/local-assets.txt"
+          find release-publish -maxdepth 1 -type f -printf '%f\n' | sort > "$RUNNER_TEMP/local-assets.txt"
           gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | sort > "$RUNNER_TEMP/remote-assets.txt"
           diff -u "$RUNNER_TEMP/local-assets.txt" "$RUNNER_TEMP/remote-assets.txt"
           gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --latest

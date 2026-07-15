@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1] - 2026-07-15
+
+### Changed
+
+- GitHub Release 仅发布三平台安装/更新包与 `latest.json`。
+- Release 标题统一使用版本号。
+
 ## [0.2.0] - 2026-07-14
 
 ### Added
