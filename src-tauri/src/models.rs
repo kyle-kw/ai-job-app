@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchSpec {
     pub keyword: String,
@@ -616,6 +616,40 @@ pub struct ScrapeRun {
     pub completed_at: Option<String>,
     #[serde(default)]
     pub report_markdown: Option<String>,
+    #[serde(default)]
+    pub search_spec: Option<SearchSpec>,
+    #[serde(default)]
+    pub resolved_city: Option<String>,
+    #[serde(default)]
+    pub detail_summary: Option<ScrapeDetailSummary>,
+    #[serde(default)]
+    pub sample: Option<ScrapeSampleSummary>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ScrapeDetailSummary {
+    pub total: i64,
+    pub processed: i64,
+    pub succeeded: i64,
+    pub skipped: i64,
+    pub failed: i64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ScrapeSampleSummary {
+    #[serde(default)]
+    pub job_ids: Vec<String>,
+    pub total_jobs: i64,
+    pub detail_jobs: i64,
+    pub detail_coverage: f64,
+    pub salary_sample_count: i64,
+    pub median_salary_k: Option<f64>,
+    pub skill_sample_count: i64,
+    pub skill_coverage: f64,
+    #[serde(default)]
+    pub skills: Vec<ReportBucket>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -882,17 +916,41 @@ pub struct SalaryByExperience {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ReportTrendPoint {
-    pub date: String,
+pub struct ReportSampleMetric {
     pub count: i64,
+    pub coverage: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ReportSkillChange {
+pub struct ReportSampleQuality {
+    pub detail: ReportSampleMetric,
+    pub salary: ReportSampleMetric,
+    pub skill: ReportSampleMetric,
+    pub experience: ReportSampleMetric,
+    pub degree: ReportSampleMetric,
+    #[serde(default)]
+    pub limitations: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportBatchSnapshot {
+    pub run_id: String,
+    pub completed_at: String,
+    pub search_spec: SearchSpec,
+    pub total_jobs: i64,
+    pub detail_coverage: f64,
+    pub salary_sample_count: i64,
+    pub median_salary_k: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportBatchSkillChange {
     pub label: String,
-    pub recent_count: i64,
-    pub recent_percentage: f64,
+    pub current_count: i64,
+    pub current_percentage: f64,
     pub previous_count: i64,
     pub previous_percentage: f64,
     pub delta_percentage_points: f64,
@@ -900,26 +958,22 @@ pub struct ReportSkillChange {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ReportTrendWindow {
-    pub window_days: i64,
-    pub recent_new_jobs: i64,
-    pub previous_new_jobs: i64,
-    pub new_jobs_change_percentage: Option<f64>,
-    pub recently_seen_existing_jobs: i64,
-    pub recent_salary_median_k: Option<f64>,
-    pub previous_salary_median_k: Option<f64>,
+pub struct ReportBatchComparison {
+    pub status: String,
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub current: Option<ReportBatchSnapshot>,
+    #[serde(default)]
+    pub previous: Option<ReportBatchSnapshot>,
+    #[serde(default)]
+    pub job_count_change_percentage: Option<f64>,
+    pub newly_observed_jobs: i64,
+    pub not_observed_jobs: i64,
+    #[serde(default)]
     pub salary_median_delta_k: Option<f64>,
-    pub date_sample_count: i64,
-    pub date_coverage: f64,
-    pub daily_new_jobs: Vec<ReportTrendPoint>,
-    pub skill_changes: Vec<ReportSkillChange>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReportTrends {
-    pub seven_days: ReportTrendWindow,
-    pub thirty_days: ReportTrendWindow,
+    #[serde(default)]
+    pub skill_changes: Vec<ReportBatchSkillChange>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -956,7 +1010,8 @@ pub struct JobDataReport {
     pub welfare: Vec<ReportBucket>,
     pub salary_by_experience: Vec<SalaryByExperience>,
     pub insights: Vec<String>,
-    pub trends: ReportTrends,
+    pub sample_quality: ReportSampleQuality,
+    pub batch_comparison: ReportBatchComparison,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1074,6 +1129,8 @@ pub struct ResumeChatProposal {
     pub base_version: i64,
     #[serde(default)]
     pub job: Option<ResumeChatJob>,
+    #[serde(default)]
+    pub market_context: Option<ResumeChatMarketContext>,
     pub assistant_message: String,
     #[serde(default)]
     pub edits: Vec<ResumeFieldEdit>,
@@ -1093,11 +1150,42 @@ pub struct ResumeChatJob {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct MarketResumeContextRequest {
+    #[serde(default)]
+    pub keyword_keys: Vec<String>,
+    #[serde(default)]
+    pub focus_skills: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResumeChatMarketSkill {
+    pub label: String,
+    pub job_count: i64,
+    pub percentage: f64,
+    pub status: String,
+    pub rationale: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResumeChatMarketContext {
+    pub keyword_keys: Vec<String>,
+    pub keyword_labels: Vec<String>,
+    pub total_jobs: i64,
+    #[serde(default)]
+    pub skills: Vec<ResumeChatMarketSkill>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ResumeChatRequest {
     pub target: ResumeTargetRef,
     pub expected_version: i64,
     #[serde(default)]
     pub job_id: Option<String>,
+    #[serde(default)]
+    pub market_context: Option<MarketResumeContextRequest>,
     pub messages: Vec<ResumeChatMessage>,
 }
 
@@ -1171,4 +1259,51 @@ pub struct SidecarJobBatch {
     pub jobs: Vec<Job>,
     #[serde(default)]
     pub report_markdown: Option<String>,
+    #[serde(default)]
+    pub resolved_city: Option<String>,
+    #[serde(default)]
+    pub detail_summary: Option<ScrapeDetailSummary>,
+}
+
+#[cfg(test)]
+mod compatibility_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_scrape_run_json_defaults_new_summary_fields() {
+        let run: ScrapeRun = serde_json::from_value(serde_json::json!({
+            "id": "legacy-run",
+            "keyword": "AI Agent",
+            "city": "上海",
+            "totalSeen": 12,
+            "inserted": 4,
+            "updated": 8,
+            "startedAt": "2026-07-01T10:00:00+08:00",
+            "completedAt": "2026-07-01T10:05:00+08:00",
+            "reportMarkdown": null
+        }))
+        .expect("legacy scrape run should remain readable");
+
+        assert!(run.search_spec.is_none());
+        assert!(run.resolved_city.is_none());
+        assert!(run.detail_summary.is_none());
+        assert!(run.sample.is_none());
+    }
+
+    #[test]
+    fn sidecar_batch_keeps_report_and_detail_summary() {
+        let batch: SidecarJobBatch = serde_json::from_value(serde_json::json!({
+            "jobs": [],
+            "reportMarkdown": "## 本次岗位样本观察",
+            "resolvedCity": "上海",
+            "detailSummary": {"total": 10, "processed": 10, "succeeded": 4, "skipped": 5, "failed": 1}
+        }))
+        .expect("sidecar batch should deserialize");
+
+        assert_eq!(
+            batch.report_markdown.as_deref(),
+            Some("## 本次岗位样本观察")
+        );
+        assert_eq!(batch.detail_summary.expect("detail summary").failed, 1);
+    }
 }

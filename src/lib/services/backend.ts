@@ -3,7 +3,7 @@ import { Channel, invoke } from '@tauri-apps/api/core';
 import { mockJobs, mockResume, mockSnapshot } from '$lib/mock-data';
 import { deterministicFit } from '$lib/fit';
 import { filterJobs } from '$lib/job-filters';
-import { buildClientJobDataReport } from '$lib/report';
+import { buildClientJobDataReport, buildScrapeSampleSummary } from '$lib/report';
 import { buildLocalReportCompetitiveness } from '$lib/report-competitiveness';
 import { flattenProfessionalSkills, suggestedProfessionalSkillGroups } from '$lib/resume-templates';
 import { applyResumeRebase, buildResumeRebasePreview } from '$lib/resume-rebase';
@@ -96,6 +96,8 @@ export function resetBrowserMockState() {
   mockListeners.clear();
   mockState = structuredClone(mockSnapshot);
   mockJobsState = structuredClone(mockJobs);
+  mockKeywordJobs['ai-agent'] = ['job-1', 'job-2', 'job-3', 'job-5'];
+  mockKeywordJobs['data-analysis'] = ['job-3', 'job-4'];
   mockPreparationState = initialMockPreparationState();
   mockCompetitivenessCache = null;
   mockVersions = initialMockVersions();
@@ -214,7 +216,7 @@ export const backend = {
   async getJobDataReport(keywordKeys: string[]): Promise<JobDataReport> {
     if (browserMode()) {
       const selected = currentMockReportKeywords().filter((keyword) => keywordKeys.includes(keyword.key));
-      return buildClientJobDataReport(mockJobsForKeywords(keywordKeys), selected);
+      return buildClientJobDataReport(mockJobsForKeywords(keywordKeys), selected, mockState.scrapeRuns);
     }
     return invoke('get_job_data_report', { keywordKeys });
   },
@@ -224,9 +226,9 @@ export const backend = {
     return invoke('export_jobs_json', { outputPath });
   },
 
-  async exportJobDataReport(keywordKeys: string[], trendWindowDays: 7 | 30, outputPath: string): Promise<RenderResult> {
+  async exportJobDataReport(keywordKeys: string[], outputPath: string): Promise<RenderResult> {
     if (browserMode()) return { path: outputPath || 'browser-demo://岗位数据报告.html', fileName: outputPath.split(/[\\/]/).at(-1) || '岗位数据报告_demo.html' };
-    return invoke('export_job_data_report', { keywordKeys, trendWindowDays, outputPath });
+    return invoke('export_job_data_report', { keywordKeys, outputPath });
   },
 
   async getReportCompetitivenessState(keywordKeys: string[]): Promise<ReportCompetitivenessState> {
@@ -236,7 +238,7 @@ export const backend = {
       const jobs = mockJobsForKeywords(keywordKeys);
       if (!hasResume) return { status: 'missing', reason: 'no_resume', hasResume, hasProvider, local: null, ai: null, effectiveSource: null };
       if (!jobs.length) return { status: 'missing', reason: 'no_jobs', hasResume, hasProvider, local: null, ai: null, effectiveSource: null };
-      const report = buildClientJobDataReport(jobs, currentMockReportKeywords().filter((keyword) => keywordKeys.includes(keyword.key)));
+      const report = buildClientJobDataReport(jobs, currentMockReportKeywords().filter((keyword) => keywordKeys.includes(keyword.key)), mockState.scrapeRuns);
       const local = buildLocalReportCompetitiveness(report.topSkills, mockState.resume!);
       const scope = [...keywordKeys].sort().join('|');
       const signature = report.topSkills.slice(0, 12).map((item) => `${item.label}:${item.count}`).join('|');
@@ -261,7 +263,7 @@ export const backend = {
     if (browserMode()) {
       if (!mockState.resume) throw new Error('请先导入主简历');
       if (!mockState.readiness.ai) throw new Error('请先配置并验证默认模型');
-      const report = buildClientJobDataReport(mockJobsForKeywords(keywordKeys), currentMockReportKeywords().filter((keyword) => keywordKeys.includes(keyword.key)));
+      const report = buildClientJobDataReport(mockJobsForKeywords(keywordKeys), currentMockReportKeywords().filter((keyword) => keywordKeys.includes(keyword.key)), mockState.scrapeRuns);
       const local = buildLocalReportCompetitiveness(report.topSkills, mockState.resume);
       const analysis: ReportCompetitivenessAnalysis = {
         ...local,
@@ -299,7 +301,7 @@ export const backend = {
       if (!scopedJobs.length) throw new Error('所选关键词暂无岗位数据');
       if (!mockState.readiness.ai) throw new Error('请先配置并验证默认模型');
       if (!force && mockPreparationState.status === 'fresh') return structuredClone(mockPreparationState);
-      const report = buildClientJobDataReport(scopedJobs, currentMockReportKeywords().filter((keyword) => keywordKeys.includes(keyword.key)));
+      const report = buildClientJobDataReport(scopedJobs, currentMockReportKeywords().filter((keyword) => keywordKeys.includes(keyword.key)), mockState.scrapeRuns);
       mockPreparationState = {
         status: 'fresh', hasProvider: true, hasResume: Boolean(mockState.resume),
         reason: mockState.resume ? null : 'no_resume', generatedAt: new Date().toISOString(),
@@ -341,10 +343,19 @@ export const backend = {
       ], () => {
         mockState.readiness.boss = true;
         const completedAt = new Date().toISOString();
+        const knownKeyword = mockReportKeywords.find((keyword) => keyword.label.trim().toLowerCase() === spec.keyword.trim().toLowerCase());
+        if (knownKeyword) mockKeywordJobs[knownKeyword.key] = mockJobsState.map((job) => job.id);
         mockState.scrapeRuns.unshift({
           id: crypto.randomUUID(), keyword: spec.keyword.trim(), city: spec.city,
           totalSeen: mockJobsState.length, inserted: 0, updated: mockJobsState.length,
-          startedAt: task.createdAt, completedAt, reportMarkdown: null
+          startedAt: task.createdAt, completedAt,
+          reportMarkdown: `## 本次岗位样本观察\n\n- 本次整理 **${mockJobsState.length}** 个本地去重岗位样本。`,
+          searchSpec: structuredClone(spec), resolvedCity: spec.city,
+          detailSummary: {
+            total: mockJobsState.length, processed: mockJobsState.length,
+            succeeded: 0, skipped: mockJobsState.length, failed: 0
+          },
+          sample: buildScrapeSampleSummary(mockJobsState)
         });
       });
       return task.id;
@@ -684,6 +695,8 @@ export const backend = {
 
   async proposeResumeChatEdits(request: ResumeChatRequest): Promise<ResumeChatProposal> {
     if (browserMode()) {
+      if (request.jobId && request.marketContext) throw new Error('invalid_request: 关联岗位与市场样本上下文不能同时使用');
+      if (request.marketContext && request.target.kind !== 'master') throw new Error('invalid_request: 市场样本上下文仅可用于主简历');
       const variant = request.target.kind === 'variant' ? mockVariants.find((item) => item.id === request.target.id) : null;
       const resume = variant?.profile ?? mockState.resume;
       if (!resume) throw new Error('请先导入主简历');
@@ -693,11 +706,41 @@ export const backend = {
       const shouldShorten = /精简|缩短|简洁/.test(last);
       const after = shouldShorten ? resume.summary.slice(0, Math.max(40, Math.floor(resume.summary.length * 0.75))) : resume.summary;
       const jobId = variant?.jobId ?? request.jobId;
+      let marketContext = null;
+      if (request.marketContext) {
+        const keywordKeys = [...new Set(request.marketContext.keywordKeys.map((key) => key.trim().toLowerCase()).filter(Boolean))].sort();
+        if (!keywordKeys.length || keywordKeys.length > 8) throw new Error('invalid_market_context: 请选择 1 至 8 个有效报告关键词');
+        const selectedKeywords = currentMockReportKeywords().filter((keyword) => keywordKeys.includes(keyword.key));
+        if (selectedKeywords.length !== keywordKeys.length) throw new Error('invalid_market_context: 包含未知或已失效的报告关键词');
+        if (request.marketContext.focusSkills.length > 12) throw new Error('invalid_market_context: 最多关注 12 个当前报告技能');
+        const jobs = mockJobsForKeywords(keywordKeys);
+        const report = buildClientJobDataReport(jobs, selectedKeywords, mockState.scrapeRuns);
+        const analysis = buildLocalReportCompetitiveness(report.topSkills, resume);
+        const focusSkills = request.marketContext.focusSkills.map((skill) => skill.trim()).filter(Boolean);
+        const items = focusSkills.length
+          ? focusSkills.map((skill) => {
+              const item = analysis.items.find((candidate) => candidate.label.toLowerCase() === skill.toLowerCase());
+              if (!item) throw new Error(`invalid_market_context: 技能“${skill}”不在当前报告范围内`);
+              return item;
+            })
+          : analysis.items.slice(0, 12);
+        marketContext = {
+          keywordKeys,
+          keywordLabels: selectedKeywords.map((keyword) => keyword.label),
+          totalJobs: jobs.length,
+          skills: [...new Map(items.map((item) => [item.id, {
+            label: item.label, jobCount: item.jobCount, percentage: item.percentage,
+            status: item.status, rationale: item.rationale
+          }])).values()]
+        };
+      }
+      const allowMockEdit = shouldShorten && !marketContext;
       return {
         proposalId: crypto.randomUUID(), target: request.target, baseVersion: resume.version,
         job: jobId ? (() => { const job = mockJobsState.find((item) => item.id === jobId); return job ? { id: job.id, title: job.title, company: job.company } : null; })() : null,
-        assistantMessage: shouldShorten ? '我整理了一版更精简的个人简介，请审核后应用。' : '请告诉我希望修改的具体字段或目标；我不会在没有事实依据时改写。',
-        edits: shouldShorten ? [{
+        marketContext,
+        assistantMessage: marketContext ? '我已读取后端确认的本地市场样本。缺少候选人事实依据时，我会先核对经历，不会把市场要求直接写进简历。' : shouldShorten ? '我整理了一版更精简的个人简介，请审核后应用。' : '请告诉我希望修改的具体字段或目标；我不会在没有事实依据时改写。',
+        edits: allowMockEdit ? [{
           id: crypto.randomUUID(), path: '/summary', label: '个人简介', operation: 'replace',
           before: resume.summary, after, rationale: '压缩重复表述，保留现有事实。',
           evidenceFactIds: [], requiredFactCandidateIds: []
@@ -733,8 +776,8 @@ export const backend = {
       mockState.resume = next;
       const version: ResumeVersionSummary = {
         id: crypto.randomUUID(), resumeId: next.id, version: next.version,
-        parentVersion: request.expectedVersion, createdAt: next.updatedAt, source: 'ai-chat',
-        summary: `AI 对话应用 ${request.selectedEditIds.length} 项修改`,
+        parentVersion: request.expectedVersion, createdAt: next.updatedAt, source: request.proposal.marketContext ? 'market-ai-chat' : 'ai-chat',
+        summary: request.proposal.marketContext ? `市场样本 AI 修改 · 应用 ${request.selectedEditIds.length} 项修改` : `AI 对话应用 ${request.selectedEditIds.length} 项修改`,
         jobId: request.proposal.job?.id ?? null, proposalId: request.proposal.proposalId
       };
       mockVersions.unshift({ ...version, profile: structuredClone(next) });
@@ -816,7 +859,7 @@ export const backend = {
     if (browserMode()) {
       return {
         version: '0.2.0', identifier: 'io.github.aijobapp', os: 'browser', arch: 'demo',
-        webview: navigator.userAgent, schemaVersion: 5, sidecarProtocol: 'demo',
+        webview: navigator.userAgent, schemaVersion: 7, sidecarProtocol: 'demo',
         chrome: { installed: true, version: '浏览器演示', executablePath: null },
         dataDir: '<browser-demo>', legacyDataDetected: false, lastUpdateCheckAt: mockState.settings.lastUpdateCheckAt
       };

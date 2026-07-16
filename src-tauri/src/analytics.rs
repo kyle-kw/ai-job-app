@@ -1,11 +1,12 @@
 use crate::models::{
-    Job, JobDataReport, ReportBucket, ReportCompetitivenessAnalysis, ReportKeyword,
-    ReportSkillChange, ReportTrendPoint, ReportTrendWindow, ReportTrends, SalaryByExperience,
-    SalarySummary,
+    Job, JobDataReport, ReportBatchComparison, ReportBatchSkillChange, ReportBatchSnapshot,
+    ReportBucket, ReportCompetitivenessAnalysis, ReportKeyword, ReportSampleMetric,
+    ReportSampleQuality, SalaryByExperience, SalarySummary, ScrapeRun, ScrapeSampleSummary,
+    SearchSpec,
 };
 use crate::time;
-use chrono::{DateTime, Duration, FixedOffset, NaiveDate};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use chrono::{DateTime, FixedOffset, NaiveDate};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 const SKILL_TAXONOMY: &[(&str, &[&str])] = &[
     ("RAG / 检索增强", &["rag", "检索增强"]),
@@ -87,12 +88,21 @@ pub fn build_report_for_keywords(
     jobs: &[Job],
     selected_keywords: Vec<ReportKeyword>,
 ) -> JobDataReport {
-    build_report_for_keywords_at(jobs, selected_keywords, time::shanghai_now())
+    build_report_for_keywords_with_runs(jobs, selected_keywords, &[])
+}
+
+pub fn build_report_for_keywords_with_runs(
+    jobs: &[Job],
+    selected_keywords: Vec<ReportKeyword>,
+    scrape_runs: &[ScrapeRun],
+) -> JobDataReport {
+    build_report_for_keywords_at(jobs, selected_keywords, scrape_runs, time::shanghai_now())
 }
 
 fn build_report_for_keywords_at(
     jobs: &[Job],
     selected_keywords: Vec<ReportKeyword>,
+    scrape_runs: &[ScrapeRun],
     now: DateTime<FixedOffset>,
 ) -> JobDataReport {
     let total = jobs.len() as i64;
@@ -113,6 +123,9 @@ fn build_report_for_keywords_at(
     let mut salary_by_experience: HashMap<String, Vec<f64>> = HashMap::new();
     let mut extra_months_count = 0_i64;
     let mut detail_jobs = 0_i64;
+    let mut skill_jobs = 0_i64;
+    let mut experience_jobs = 0_i64;
+    let mut degree_jobs = 0_i64;
     let mut first_dates = vec![];
     let mut last_dates = vec![];
 
@@ -121,6 +134,12 @@ fn build_report_for_keywords_at(
             companies.insert(job.company.trim().to_string());
         }
         increment(&mut city_counter, first_segment(&job.location));
+        if !job.experience.trim().is_empty() {
+            experience_jobs += 1;
+        }
+        if !job.degree.trim().is_empty() {
+            degree_jobs += 1;
+        }
         increment(&mut experience_counter, fallback(&job.experience));
         increment(&mut degree_counter, fallback(&job.degree));
         increment(&mut role_counter, classify_role(&job.title));
@@ -141,6 +160,9 @@ fn build_report_for_keywords_at(
         }
 
         let detected = detected_skills(job);
+        if !detected.is_empty() {
+            skill_jobs += 1;
+        }
         for skill in &detected {
             increment(&mut skill_counter, skill.clone());
         }
@@ -195,20 +217,20 @@ fn build_report_for_keywords_at(
         insights.push("当前关键词范围暂无岗位数据，请调整筛选或先完成抓取。".to_string());
     } else {
         insights.push(format!(
-            "当前关键词范围按岗位去重后共有 {total} 个岗位，覆盖 {} 家公司、{} 个城市。",
+            "当前 {total} 个本地去重岗位样本覆盖 {} 家公司、{} 个城市。",
             companies.len(),
             city_counter.len()
         ));
         if let Some(value) = median(&salary_mids) {
             insights.push(format!(
-                "可解析薪资的岗位有 {} 个，月薪区间中点中位数为 {:.1}K。",
+                "当前样本中可解析薪资的岗位有 {} 个，月薪区间中点中位数为 {:.1}K。",
                 salary_mids.len(),
                 value
             ));
         }
         if !top_skills.is_empty() {
             insights.push(format!(
-                "最常出现的技能是 {}。",
+                "当前样本中反复出现的技能包括 {}。",
                 top_skills
                     .iter()
                     .take(5)
@@ -219,7 +241,7 @@ fn build_report_for_keywords_at(
         }
         if let Some(item) = experience.first() {
             insights.push(format!(
-                "经验要求以“{}”为主，占全部岗位的 {:.1}%。",
+                "当前样本的经验要求以“{}”为主，占全部岗位的 {:.1}%。",
                 item.label, item.percentage
             ));
         }
@@ -227,6 +249,16 @@ fn build_report_for_keywords_at(
 
     first_dates.sort();
     last_dates.sort();
+    let salary_sample_count = salary_mids.len() as i64;
+    let sample_quality = build_sample_quality(
+        total,
+        detail_jobs,
+        salary_sample_count,
+        skill_jobs,
+        experience_jobs,
+        degree_jobs,
+    );
+    let batch_comparison = build_batch_comparison(&selected_keywords, scrape_runs);
     JobDataReport {
         generated_at: now.to_rfc3339(),
         selected_keywords,
@@ -238,7 +270,7 @@ fn build_report_for_keywords_at(
         detail_jobs,
         detail_coverage: percentage(detail_jobs, total),
         salary: SalarySummary {
-            sample_count: salary_mids.len() as i64,
+            sample_count: salary_sample_count,
             median_low_k: median(&salary_lows),
             median_mid_k: median(&salary_mids),
             median_high_k: median(&salary_highs),
@@ -256,69 +288,198 @@ fn build_report_for_keywords_at(
         welfare: buckets(welfare_counter, total, 12),
         salary_by_experience,
         insights,
-        trends: ReportTrends {
-            seven_days: build_trend_window(jobs, now.date_naive(), 7),
-            thirty_days: build_trend_window(jobs, now.date_naive(), 30),
-        },
+        sample_quality,
+        batch_comparison,
     }
 }
 
-fn build_trend_window(jobs: &[Job], today: NaiveDate, window_days: i64) -> ReportTrendWindow {
-    let recent_start = today - Duration::days(window_days - 1);
-    let previous_start = recent_start - Duration::days(window_days);
-    let mut recent_jobs = Vec::new();
-    let mut previous_jobs = Vec::new();
-    let mut daily_counts = BTreeMap::<NaiveDate, i64>::new();
-    let mut date_sample_count = 0_i64;
-    let mut recently_seen_existing_jobs = 0_i64;
-
-    for job in jobs {
-        let first = shanghai_date(&job.first_seen);
-        let last = shanghai_date(&job.last_seen);
-        if let Some(first) = first {
-            date_sample_count += 1;
-            if first >= recent_start && first <= today {
-                recent_jobs.push(job);
-                *daily_counts.entry(first).or_default() += 1;
-            } else if first >= previous_start && first < recent_start {
-                previous_jobs.push(job);
-            }
-            if first < recent_start
-                && last.is_some_and(|last| last >= recent_start && last <= today)
-            {
-                recently_seen_existing_jobs += 1;
-            }
+pub fn build_scrape_sample(jobs: &[Job]) -> ScrapeSampleSummary {
+    let mut seen = HashSet::new();
+    let jobs = jobs
+        .iter()
+        .filter(|job| seen.insert(job.id.as_str()))
+        .collect::<Vec<_>>();
+    let total = jobs.len() as i64;
+    let mut job_ids = jobs.iter().map(|job| job.id.clone()).collect::<Vec<_>>();
+    job_ids.sort();
+    let detail_jobs = jobs
+        .iter()
+        .filter(|job| !job.description.trim().is_empty())
+        .count() as i64;
+    let salary_mids = jobs
+        .iter()
+        .filter_map(|job| parse_salary(&job.salary).map(|(_, middle, _, _)| middle))
+        .collect::<Vec<_>>();
+    let mut skill_counter = HashMap::new();
+    let mut skill_sample_count = 0_i64;
+    for job in &jobs {
+        let skills = detected_skills(job);
+        if !skills.is_empty() {
+            skill_sample_count += 1;
+        }
+        for skill in skills {
+            increment(&mut skill_counter, skill);
         }
     }
+    ScrapeSampleSummary {
+        job_ids,
+        total_jobs: total,
+        detail_jobs,
+        detail_coverage: percentage(detail_jobs, total),
+        salary_sample_count: salary_mids.len() as i64,
+        median_salary_k: median(&salary_mids),
+        skill_sample_count,
+        skill_coverage: percentage(skill_sample_count, total),
+        skills: buckets(skill_counter, total, usize::MAX),
+    }
+}
 
-    let skill_counts = |items: &[&Job]| {
-        let mut counter = HashMap::new();
-        for job in items {
-            for skill in detected_skills(job) {
-                increment(&mut counter, skill);
-            }
-        }
-        counter
+fn build_sample_quality(
+    total: i64,
+    detail: i64,
+    salary: i64,
+    skill: i64,
+    experience: i64,
+    degree: i64,
+) -> ReportSampleQuality {
+    let metric = |count| ReportSampleMetric {
+        count,
+        coverage: percentage(count, total),
     };
-    let recent_skills = skill_counts(&recent_jobs);
-    let previous_skills = skill_counts(&previous_jobs);
+    let mut limitations =
+        vec!["本报告仅反映本机保存的有限页 BOSS 岗位样本，不代表完整招聘市场。".to_string()];
+    if total < 20 {
+        limitations.push("当前少于 20 个岗位，比例和排序仅适合作为方向提示。".into());
+    }
+    for (count, threshold, message) in [
+        (
+            detail,
+            60.0,
+            "岗位详情覆盖不足 60%，职责和要求统计可能不完整。",
+        ),
+        (
+            salary,
+            50.0,
+            "可解析薪资覆盖不足 50%，薪资统计可能偏离当前样本。",
+        ),
+        (
+            skill,
+            60.0,
+            "技能信息覆盖不足 60%，高频技能排序可能受缺失字段影响。",
+        ),
+        (experience, 60.0, "经验要求覆盖不足 60%，经验分布仅供参考。"),
+        (degree, 60.0, "学历要求覆盖不足 60%，学历分布仅供参考。"),
+    ] {
+        if percentage(count, total) < threshold {
+            limitations.push(message.into());
+        }
+    }
+    ReportSampleQuality {
+        detail: metric(detail),
+        salary: metric(salary),
+        skill: metric(skill),
+        experience: metric(experience),
+        degree: metric(degree),
+        limitations,
+    }
+}
+
+fn unavailable_batch_comparison(reason: &str) -> ReportBatchComparison {
+    ReportBatchComparison {
+        status: "unavailable".into(),
+        reason: Some(reason.into()),
+        current: None,
+        previous: None,
+        job_count_change_percentage: None,
+        newly_observed_jobs: 0,
+        not_observed_jobs: 0,
+        salary_median_delta_k: None,
+        skill_changes: vec![],
+    }
+}
+
+fn build_batch_comparison(
+    selected_keywords: &[ReportKeyword],
+    scrape_runs: &[ScrapeRun],
+) -> ReportBatchComparison {
+    if selected_keywords.len() != 1 {
+        return unavailable_batch_comparison("multi_keyword");
+    }
+    let selected_keys = [
+        normalize_keyword(&selected_keywords[0].key),
+        normalize_keyword(&selected_keywords[0].label),
+    ];
+    let mut candidates = scrape_runs
+        .iter()
+        .filter(|run| {
+            run.completed_at.is_some()
+                && run.search_spec.is_some()
+                && run.sample.is_some()
+                && selected_keys.contains(&normalize_keyword(&run.keyword))
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| {
+        run_timestamp(right)
+            .cmp(&run_timestamp(left))
+            .then_with(|| right.id.cmp(&left.id))
+    });
+    let Some(current) = candidates.first().copied() else {
+        return unavailable_batch_comparison("no_captured_run");
+    };
+    let current_spec = current.search_spec.as_ref().expect("filtered search spec");
+    let current_date = current.completed_at.as_deref().and_then(shanghai_date);
+    let previous = candidates.into_iter().skip(1).find(|run| {
+        let Some(spec) = run.search_spec.as_ref() else {
+            return false;
+        };
+        same_search_scope(current_spec, spec)
+            && current_date.is_some()
+            && run.completed_at.as_deref().and_then(shanghai_date) != current_date
+    });
+    let Some(previous) = previous else {
+        return unavailable_batch_comparison("no_comparable_run");
+    };
+    let current_sample = current.sample.as_ref().expect("filtered sample");
+    let previous_sample = previous.sample.as_ref().expect("filtered sample");
+    let current_ids = current_sample
+        .job_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+    let previous_ids = previous_sample
+        .job_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+    let current_skills = current_sample
+        .skills
+        .iter()
+        .map(|item| (item.label.as_str(), item))
+        .collect::<HashMap<_, _>>();
+    let previous_skills = previous_sample
+        .skills
+        .iter()
+        .map(|item| (item.label.as_str(), item))
+        .collect::<HashMap<_, _>>();
     let mut labels = BTreeSet::new();
-    labels.extend(recent_skills.keys().cloned());
-    labels.extend(previous_skills.keys().cloned());
+    labels.extend(current_skills.keys().copied());
+    labels.extend(previous_skills.keys().copied());
     let mut skill_changes = labels
         .into_iter()
         .map(|label| {
-            let recent_count = recent_skills.get(&label).copied().unwrap_or(0);
-            let previous_count = previous_skills.get(&label).copied().unwrap_or(0);
-            let recent_percentage = percentage(recent_count, recent_jobs.len() as i64);
-            let previous_percentage = percentage(previous_count, previous_jobs.len() as i64);
-            ReportSkillChange {
-                label,
-                recent_count,
-                recent_percentage,
+            let current = current_skills.get(label).copied();
+            let previous = previous_skills.get(label).copied();
+            let current_count = current.map_or(0, |item| item.count);
+            let previous_count = previous.map_or(0, |item| item.count);
+            let current_percentage = current.map_or(0.0, |item| item.percentage);
+            let previous_percentage = previous.map_or(0.0, |item| item.percentage);
+            ReportBatchSkillChange {
+                label: label.to_string(),
+                current_count,
+                current_percentage,
                 previous_count,
                 previous_percentage,
-                delta_percentage_points: round_one(recent_percentage - previous_percentage),
+                delta_percentage_points: round_one(current_percentage - previous_percentage),
             }
         })
         .collect::<Vec<_>>();
@@ -327,52 +488,77 @@ fn build_trend_window(jobs: &[Job], today: NaiveDate, window_days: i64) -> Repor
             .delta_percentage_points
             .abs()
             .total_cmp(&left.delta_percentage_points.abs())
-            .then_with(|| right.recent_count.cmp(&left.recent_count))
+            .then_with(|| right.current_count.cmp(&left.current_count))
             .then_with(|| left.label.cmp(&right.label))
     });
     skill_changes.truncate(8);
-
-    let salary_mids = |items: &[&Job]| {
-        items
-            .iter()
-            .filter_map(|job| parse_salary(&job.salary).map(|(_, mid, _, _)| mid))
-            .collect::<Vec<_>>()
-    };
-    let recent_salary_median_k = median(&salary_mids(&recent_jobs));
-    let previous_salary_median_k = median(&salary_mids(&previous_jobs));
-
-    ReportTrendWindow {
-        window_days,
-        recent_new_jobs: recent_jobs.len() as i64,
-        previous_new_jobs: previous_jobs.len() as i64,
-        new_jobs_change_percentage: if previous_jobs.is_empty() {
+    ReportBatchComparison {
+        status: "available".into(),
+        reason: None,
+        current: Some(batch_snapshot(current)),
+        previous: Some(batch_snapshot(previous)),
+        job_count_change_percentage: if previous_sample.total_jobs == 0 {
             None
         } else {
             Some(round_one(
-                (recent_jobs.len() as f64 - previous_jobs.len() as f64)
-                    / previous_jobs.len() as f64
+                (current_sample.total_jobs - previous_sample.total_jobs) as f64
+                    / previous_sample.total_jobs as f64
                     * 100.0,
             ))
         },
-        recently_seen_existing_jobs,
-        recent_salary_median_k,
-        previous_salary_median_k,
-        salary_median_delta_k: recent_salary_median_k
-            .zip(previous_salary_median_k)
-            .map(|(recent, previous)| round_one(recent - previous)),
-        date_sample_count,
-        date_coverage: percentage(date_sample_count, jobs.len() as i64),
-        daily_new_jobs: (0..window_days)
-            .map(|index| {
-                let date = recent_start + Duration::days(index);
-                ReportTrendPoint {
-                    date: date.format("%Y-%m-%d").to_string(),
-                    count: daily_counts.get(&date).copied().unwrap_or(0),
-                }
-            })
-            .collect(),
+        newly_observed_jobs: current_ids.difference(&previous_ids).count() as i64,
+        not_observed_jobs: previous_ids.difference(&current_ids).count() as i64,
+        salary_median_delta_k: current_sample
+            .median_salary_k
+            .zip(previous_sample.median_salary_k)
+            .map(|(current, previous)| round_one(current - previous)),
         skill_changes,
     }
+}
+
+fn batch_snapshot(run: &ScrapeRun) -> ReportBatchSnapshot {
+    let sample = run.sample.as_ref().expect("batch snapshot requires sample");
+    ReportBatchSnapshot {
+        run_id: run.id.clone(),
+        completed_at: run.completed_at.clone().unwrap_or_default(),
+        search_spec: run
+            .search_spec
+            .clone()
+            .expect("batch snapshot requires spec"),
+        total_jobs: sample.total_jobs,
+        detail_coverage: sample.detail_coverage,
+        salary_sample_count: sample.salary_sample_count,
+        median_salary_k: sample.median_salary_k,
+    }
+}
+
+fn normalize_keyword(value: &str) -> String {
+    value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+fn normalized_option(value: &Option<String>) -> String {
+    value.as_deref().unwrap_or_default().trim().to_lowercase()
+}
+
+fn same_search_scope(left: &SearchSpec, right: &SearchSpec) -> bool {
+    normalize_keyword(&left.keyword) == normalize_keyword(&right.keyword)
+        && left.city.trim() == right.city.trim()
+        && left.pages == right.pages
+        && normalized_option(&left.salary) == normalized_option(&right.salary)
+        && normalized_option(&left.experience) == normalized_option(&right.experience)
+        && normalized_option(&left.degree) == normalized_option(&right.degree)
+        && normalized_option(&left.company_scale) == normalized_option(&right.company_scale)
+}
+
+fn run_timestamp(run: &ScrapeRun) -> i64 {
+    run.completed_at
+        .as_deref()
+        .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+        .map_or(i64::MIN, |value| value.timestamp_millis())
 }
 
 fn shanghai_date(value: &str) -> Option<NaiveDate> {
@@ -396,6 +582,31 @@ pub fn render_html(report: &JobDataReport) -> String {
         .map(|item| format!("<li>{}</li>", escape_html(item)))
         .collect::<Vec<_>>()
         .join("");
+    let quality = [
+        ("岗位详情", &report.sample_quality.detail),
+        ("可解析薪资", &report.sample_quality.salary),
+        ("技能信息", &report.sample_quality.skill),
+        ("经验要求", &report.sample_quality.experience),
+        ("学历要求", &report.sample_quality.degree),
+    ]
+    .iter()
+    .map(|(label, metric)| {
+        format!(
+            "<div><strong>{}</strong><p>{} 个 · 覆盖 {:.1}%</p></div>",
+            escape_html(label),
+            metric.count,
+            metric.coverage
+        )
+    })
+    .collect::<Vec<_>>()
+    .join("");
+    let limitations = report
+        .sample_quality
+        .limitations
+        .iter()
+        .map(|item| format!("<li>{}</li>", escape_html(item)))
+        .collect::<Vec<_>>()
+        .join("");
     let period = match (&report.data_from, &report.data_to) {
         (Some(from), Some(to)) => format!("{} 至 {}", escape_html(from), escape_html(to)),
         _ => "暂无时间范围".to_string(),
@@ -414,9 +625,11 @@ pub fn render_html(report: &JobDataReport) -> String {
     format!(
         r#"<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title><style>
 :root{{font-family:Inter,"PingFang SC","Microsoft YaHei",sans-serif;color:#18302a;background:#f4f6f2}}*{{box-sizing:border-box}}body{{margin:0}}main{{max-width:1200px;margin:auto;padding:40px 24px 80px}}header{{padding:34px;border-radius:24px;background:#176b57;color:#fff}}h1{{margin:0 0 10px;font-size:34px}}header p{{margin:0;opacity:.82}}.kpis{{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:20px 0}}.card,.section{{background:#fff;border:1px solid #dfe4de;border-radius:18px}}.card{{padding:18px}}.card strong{{display:block;font-size:27px}}.card span{{color:#68736e;font-size:13px}}.section{{padding:24px;margin-top:18px}}h2{{font-size:20px;margin:0 0 18px}}.grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}}.bars{{display:grid;gap:10px}}.bar{{display:grid;grid-template-columns:150px 1fr 88px;gap:10px;align-items:center;font-size:13px}}.track{{height:9px;background:#edf1ed;border-radius:99px;overflow:hidden}}.fill{{height:100%;background:#2d8b70;border-radius:99px}}.value{{text-align:right;color:#68736e}}ul{{margin:0;padding-left:20px;line-height:1.8}}.meta{{margin-top:10px;font-size:12px;color:#68736e}}@media(max-width:760px){{.kpis,.grid{{grid-template-columns:1fr 1fr}}.bar{{grid-template-columns:110px 1fr 74px}}}}@media(max-width:520px){{.kpis,.grid{{grid-template-columns:1fr}}}}
-</style></head><body><main><header><h1>{title}</h1><p>关键词范围：{scope} · 基于本地 SQLite 去重岗位 · {period}</p></header><section class="kpis"><div class="card"><strong>{jobs}</strong><span>有效岗位样本</span></div><div class="card"><strong>{companies}</strong><span>招聘公司</span></div><div class="card"><strong>{salary}</strong><span>月薪中点中位数</span></div><div class="card"><strong>{coverage:.1}%</strong><span>岗位详情覆盖率</span></div></section><section class="section"><h2>先看结论</h2><ul>{insights}</ul></section><div class="grid"><section class="section"><h2>高频技能</h2>{skills}</section><section class="section"><h2>技能共现组合</h2>{pairs}</section><section class="section"><h2>经验要求</h2>{experience}</section><section class="section"><h2>学历要求</h2>{degree}</section><section class="section"><h2>薪资分布</h2>{salary_bands}</section><section class="section"><h2>岗位方向</h2>{roles}</section><section class="section"><h2>城市分布</h2>{cities}</section><section class="section"><h2>行业分布</h2>{industries}</section><section class="section"><h2>公司规模</h2>{scales}</section><section class="section"><h2>常见福利</h2>{welfare}</section></div><p class="meta">生成时间：{generated}（Asia/Shanghai） · 按岗位去重计数 · 文件编码 UTF-8</p></main></body></html>"#,
+</style></head><body><main><header><h1>{title}</h1><p>关键词范围：{scope} · 本机保存的有限页 BOSS 样本 · {period}</p></header><section class="kpis"><div class="card"><strong>{jobs}</strong><span>本地去重岗位样本</span></div><div class="card"><strong>{companies}</strong><span>样本内招聘公司</span></div><div class="card"><strong>{salary}</strong><span>样本月薪中点中位数</span></div><div class="card"><strong>{coverage:.1}%</strong><span>岗位详情覆盖率</span></div></section><section class="section"><h2>先看本地样本结论</h2><ul>{insights}</ul></section><section class="section"><h2>样本范围与可用性</h2><div class="grid">{quality}</div><h3>使用限制</h3><ul>{limitations}</ul></section><div class="grid"><section class="section"><h2>高频技能</h2>{skills}</section><section class="section"><h2>技能共现组合</h2>{pairs}</section><section class="section"><h2>经验要求</h2>{experience}</section><section class="section"><h2>学历要求</h2>{degree}</section><section class="section"><h2>薪资分布</h2>{salary_bands}</section><section class="section"><h2>岗位方向</h2>{roles}</section><section class="section"><h2>城市分布</h2>{cities}</section><section class="section"><h2>行业分布</h2>{industries}</section><section class="section"><h2>公司规模</h2>{scales}</section><section class="section"><h2>常见福利</h2>{welfare}</section></div><p class="meta">生成时间：{generated}（Asia/Shanghai） · 按本地岗位 ID 去重 · 文件编码 UTF-8</p></main></body></html>"#,
         title = escape_html(&title),
         scope = escape_html(&keyword_scope),
+        quality = quality,
+        limitations = limitations,
         jobs = report.total_jobs,
         companies = report.total_companies,
         salary = report
@@ -442,49 +655,66 @@ pub fn render_html(report: &JobDataReport) -> String {
 pub fn append_decision_sections(
     html: String,
     report: &JobDataReport,
-    trend_window_days: i64,
     competitiveness: Option<&ReportCompetitivenessAnalysis>,
 ) -> String {
-    let trend = if trend_window_days == 30 {
-        &report.trends.thirty_days
-    } else {
-        &report.trends.seven_days
-    };
-    let change = trend
-        .new_jobs_change_percentage
-        .map(|value| format!("{value:+.1}%"))
-        .unwrap_or_else(|| "暂无可比数据".into());
-    let salary_change = trend
-        .salary_median_delta_k
-        .map(|value| format!("{value:+.1}K"))
-        .unwrap_or_else(|| "暂无可比数据".into());
-    let skill_changes = if trend.skill_changes.is_empty() {
-        "<p>当前窗口暂无足够的技能变化样本。</p>".to_string()
-    } else {
+    let comparison_section = if report.batch_comparison.status == "available" {
+        let comparison = &report.batch_comparison;
+        let current = comparison
+            .current
+            .as_ref()
+            .expect("available current batch");
+        let previous = comparison
+            .previous
+            .as_ref()
+            .expect("available previous batch");
+        let total_change = comparison
+            .job_count_change_percentage
+            .map(|value| format!("{value:+.1}%"))
+            .unwrap_or_else(|| "暂无可比比例".into());
+        let salary_change = comparison
+            .salary_median_delta_k
+            .map(|value| format!("{value:+.1}K"))
+            .unwrap_or_else(|| "暂无可比薪资".into());
+        let skill_changes = if comparison.skill_changes.is_empty() {
+            "<p>两个批次暂无可展示的技能占比变化。</p>".to_string()
+        } else {
+            format!(
+                "<ul>{}</ul>",
+                comparison
+                    .skill_changes
+                    .iter()
+                    .map(|item| format!(
+                        "<li><strong>{}</strong>：{:+.1} 个百分点（本次 {} 个，上次 {} 个）</li>",
+                        escape_html(&item.label),
+                        item.delta_percentage_points,
+                        item.current_count,
+                        item.previous_count
+                    ))
+                    .collect::<Vec<_>>()
+                    .join("")
+            )
+        };
         format!(
-            "<ul>{}</ul>",
-            trend
-                .skill_changes
-                .iter()
-                .map(|item| format!(
-                    "<li><strong>{}</strong>：{:+.1} 个百分点（近期 {} 个，前期 {} 个）</li>",
-                    escape_html(&item.label),
-                    item.delta_percentage_points,
-                    item.recent_count,
-                    item.previous_count
-                ))
-                .collect::<Vec<_>>()
-                .join("")
+            "<section class=\"section\"><h2>最近两次同条件样本对比</h2><p>{previous_time} 与 {current_time}，关键词、城市、页数和筛选条件完全一致。</p><div class=\"grid\"><div><strong>{current_jobs}</strong><p>本次岗位 · 较上次 {total_change}</p></div><div><strong>{new_jobs}</strong><p>本次新出现</p></div><div><strong>{missing_jobs}</strong><p>本次有限结果未再次出现</p></div><div><strong>{salary_change}</strong><p>薪资中点中位数变化</p></div></div><p><small>“未再次出现”仅表示不在本次有限页结果中，不能据此判断岗位下架。</small></p><h3>技能占比变化</h3>{skill_changes}</section>",
+            previous_time = escape_html(&previous.completed_at),
+            current_time = escape_html(&current.completed_at),
+            current_jobs = current.total_jobs,
+            new_jobs = comparison.newly_observed_jobs,
+            missing_jobs = comparison.not_observed_jobs,
+        )
+    } else {
+        let reason = match report.batch_comparison.reason.as_deref() {
+            Some("multi_keyword") => "当前选择了多个关键词，合并样本不能进行同条件批次比较。",
+            Some("no_captured_run") => {
+                "历史抓取记录没有完整的搜索条件和样本摘要；完成一次新抓取后开始积累。"
+            }
+            _ => "暂时没有跨日、且搜索条件完全相同的两个成功批次。",
+        };
+        format!(
+            "<section class=\"section\"><h2>同条件样本对比</h2><p>{}</p><p><small>应用不会为了生成批次对比而自动或重复访问 BOSS。</small></p></section>",
+            escape_html(reason)
         )
     };
-    let trend_section = format!(
-        "<section class=\"section\"><h2>最近 {days} 天本地样本观察</h2><div class=\"grid\"><div><strong>{recent}</strong><p>近期新增岗位 · 较前期 {change}</p></div><div><strong>{seen}</strong><p>近期再次观察到的存量岗位</p></div><div><strong>{salary}</strong><p>近期薪资中点中位数 · 变化 {salary_change}</p></div><div><strong>{coverage:.1}%</strong><p>有效日期覆盖率</p></div></div><h3>技能需求变化</h3>{skill_changes}</section>",
-        days = trend.window_days,
-        recent = trend.recent_new_jobs,
-        seen = trend.recently_seen_existing_jobs,
-        salary = trend.recent_salary_median_k.map(|value| format!("{value:.1}K")).unwrap_or_else(|| "—".into()),
-        coverage = trend.date_coverage,
-    );
     let competitiveness_section = competitiveness.map(|analysis| {
         let rows = analysis
             .items
@@ -514,7 +744,7 @@ pub fn append_decision_sections(
     }).unwrap_or_default();
     html.replacen(
         "</main>",
-        &format!("{trend_section}{competitiveness_section}</main>"),
+        &format!("{comparison_section}{competitiveness_section}</main>"),
         1,
     )
 }
@@ -853,64 +1083,174 @@ mod tests {
             .any(|item| item.label.contains('×')));
     }
 
-    #[test]
-    fn trend_windows_use_shanghai_dates_and_fill_missing_days() {
-        let mut boundary = sample_job("boundary", "20-30K", &["Python"]);
-        boundary.description.clear();
-        boundary.first_seen = "2026-07-09T16:30:00Z".into();
-        boundary.last_seen = "2026-07-10T01:00:00+08:00".into();
-        let mut recent = sample_job("recent", "30-40K", &["RAG"]);
-        recent.description.clear();
-        recent.first_seen = "2026-07-12T08:00:00+08:00".into();
-        recent.last_seen = recent.first_seen.clone();
-        let mut previous = sample_job("previous", "10-20K", &["Python"]);
-        previous.description.clear();
-        previous.first_seen = "2026-07-05T08:00:00+08:00".into();
-        previous.last_seen = "2026-07-15T08:00:00+08:00".into();
-        let mut invalid = sample_job("invalid", "50-60K", &["Java"]);
-        invalid.description.clear();
-        invalid.first_seen = "not-a-date".into();
-        let now = DateTime::parse_from_rfc3339("2026-07-16T12:00:00+08:00").unwrap();
-
-        let report =
-            build_report_for_keywords_at(&[boundary, recent, previous, invalid], vec![], now);
-        let trend = &report.trends.seven_days;
-        assert_eq!(trend.daily_new_jobs.len(), 7);
-        assert_eq!(trend.daily_new_jobs[0].date, "2026-07-10");
-        assert_eq!(trend.daily_new_jobs[0].count, 1);
-        assert!(trend.daily_new_jobs.iter().any(|point| point.count == 0));
-        assert_eq!(trend.recent_new_jobs, 2);
-        assert_eq!(trend.previous_new_jobs, 1);
-        assert_eq!(trend.new_jobs_change_percentage, Some(100.0));
-        assert_eq!(trend.recently_seen_existing_jobs, 1);
-        assert_eq!(trend.recent_salary_median_k, Some(30.0));
-        assert_eq!(trend.previous_salary_median_k, Some(15.0));
-        assert_eq!(trend.salary_median_delta_k, Some(15.0));
-        assert_eq!(trend.date_sample_count, 3);
-        assert_eq!(trend.date_coverage, 75.0);
-        assert_eq!(report.trends.thirty_days.daily_new_jobs.len(), 30);
+    fn sample_run(id: &str, completed_at: &str, jobs: &[Job], spec: &SearchSpec) -> ScrapeRun {
+        ScrapeRun {
+            id: id.into(),
+            keyword: spec.keyword.clone(),
+            city: spec.city.clone(),
+            total_seen: jobs.len() as i64,
+            inserted: jobs.len() as i64,
+            updated: 0,
+            started_at: completed_at.into(),
+            completed_at: Some(completed_at.into()),
+            report_markdown: None,
+            search_spec: Some(spec.clone()),
+            resolved_city: Some(spec.city.clone()),
+            detail_summary: None,
+            sample: Some(build_scrape_sample(jobs)),
+        }
     }
 
     #[test]
-    fn trend_without_previous_jobs_has_no_comparison() {
-        let mut job = sample_job("current", "20-30K", &["Python"]);
-        job.first_seen = "2026-07-16T08:00:00+08:00".into();
-        job.last_seen = job.first_seen.clone();
-        let now = DateTime::parse_from_rfc3339("2026-07-16T12:00:00+08:00").unwrap();
-        let report = build_report_for_keywords_at(&[job], vec![], now);
-        assert_eq!(report.trends.seven_days.previous_new_jobs, 0);
-        assert_eq!(report.trends.seven_days.new_jobs_change_percentage, None);
+    fn compares_latest_identical_cross_day_batches() {
+        let spec = SearchSpec {
+            keyword: "AI Agent".into(),
+            city: "上海".into(),
+            pages: 3,
+            salary: Some("20-40K".into()),
+            experience: Some("3-5年".into()),
+            degree: Some("本科".into()),
+            company_scale: None,
+        };
+        let previous = vec![
+            sample_job("shared", "20-30K", &["Python"]),
+            sample_job("previous-only", "10-20K", &["Python"]),
+        ];
+        let current = vec![
+            sample_job("shared", "30-40K", &["Python", "RAG"]),
+            sample_job("current-new-1", "40-50K", &["RAG"]),
+            sample_job("current-new-2", "50-60K", &["RAG"]),
+        ];
+        let runs = vec![
+            sample_run("current", "2026-07-16T10:00:00+08:00", &current, &spec),
+            sample_run("previous", "2026-07-15T10:00:00+08:00", &previous, &spec),
+        ];
+        let report = build_report_for_keywords_at(
+            &current,
+            vec![ReportKeyword {
+                key: "ai agent".into(),
+                label: "AI Agent".into(),
+                job_count: 3,
+                last_seen: "2026-07-16T10:00:00+08:00".into(),
+            }],
+            &runs,
+            DateTime::parse_from_rfc3339("2026-07-16T12:00:00+08:00").unwrap(),
+        );
+        let comparison = report.batch_comparison;
+        assert_eq!(comparison.status, "available");
+        assert_eq!(comparison.job_count_change_percentage, Some(50.0));
+        assert_eq!(comparison.newly_observed_jobs, 2);
+        assert_eq!(comparison.not_observed_jobs, 1);
+        assert_eq!(comparison.salary_median_delta_k, Some(25.0));
+        assert!(comparison
+            .skill_changes
+            .iter()
+            .any(|item| item.label == "RAG / 检索增强"));
+    }
+
+    #[test]
+    fn reports_quality_limits_and_non_comparable_scopes() {
+        let mut job = sample_job("sparse", "面议", &[]);
+        job.description.clear();
+        job.experience.clear();
+        job.degree.clear();
+        let report = build_report_for_keywords(
+            &[job],
+            vec![
+                ReportKeyword {
+                    key: "ai-agent".into(),
+                    label: "AI Agent".into(),
+                    job_count: 1,
+                    last_seen: "2026-07-16".into(),
+                },
+                ReportKeyword {
+                    key: "data".into(),
+                    label: "数据".into(),
+                    job_count: 1,
+                    last_seen: "2026-07-16".into(),
+                },
+            ],
+        );
+        assert_eq!(
+            report.batch_comparison.reason.as_deref(),
+            Some("multi_keyword")
+        );
+        assert_eq!(report.sample_quality.detail.coverage, 0.0);
+        assert!(report
+            .sample_quality
+            .limitations
+            .iter()
+            .any(|item| item.contains("有限页 BOSS")));
+        assert!(report
+            .sample_quality
+            .limitations
+            .iter()
+            .any(|item| item.contains("少于 20")));
+    }
+
+    #[test]
+    fn batch_comparison_rejects_same_day_changed_scope_and_legacy_runs() {
+        let keywords = vec![ReportKeyword {
+            key: "ai agent".into(),
+            label: "AI Agent".into(),
+            job_count: 1,
+            last_seen: "2026-07-16".into(),
+        }];
+        assert_eq!(
+            build_batch_comparison(&keywords, &[]).reason.as_deref(),
+            Some("no_captured_run")
+        );
+        let spec = SearchSpec {
+            keyword: "AI Agent".into(),
+            city: "上海".into(),
+            pages: 2,
+            salary: None,
+            experience: None,
+            degree: None,
+            company_scale: None,
+        };
+        let jobs = vec![sample_job("one", "20-30K", &["Python"])];
+        let current = sample_run("current", "2026-07-16T12:00:00+08:00", &jobs, &spec);
+        let same_day = sample_run("same-day", "2026-07-16T08:00:00+08:00", &jobs, &spec);
+        assert_eq!(
+            build_batch_comparison(&keywords, &[current.clone(), same_day])
+                .reason
+                .as_deref(),
+            Some("no_comparable_run")
+        );
+
+        let mut changed_spec = spec.clone();
+        changed_spec.pages = 3;
+        let changed = sample_run("changed", "2026-07-15T08:00:00+08:00", &jobs, &changed_spec);
+        assert_eq!(
+            build_batch_comparison(&keywords, &[current.clone(), changed])
+                .reason
+                .as_deref(),
+            Some("no_comparable_run")
+        );
+
+        let mut legacy = current;
+        legacy.id = "legacy".into();
+        legacy.sample = None;
+        assert_eq!(
+            build_batch_comparison(&keywords, &[legacy])
+                .reason
+                .as_deref(),
+            Some("no_captured_run")
+        );
     }
 
     #[test]
     fn exported_report_is_utf8_and_self_contained() {
-        let html = render_html(&build_report_for_keywords(
-            &[sample_job("1", "20-30K", &["Python"])],
-            vec![],
-        ));
+        let report = build_report_for_keywords(&[sample_job("1", "20-30K", &["Python"])], vec![]);
+        let html = append_decision_sections(render_html(&report), &report, None);
         assert!(html.contains("<meta charset=\"utf-8\">"));
         assert!(html.contains("岗位数据报告"));
         assert!(html.contains("上海"));
+        assert!(html.contains("本机保存的有限页 BOSS 样本"));
+        assert!(html.contains("同条件样本对比"));
+        assert!(html.contains("不会为了生成批次对比而自动或重复访问 BOSS"));
+        assert!(!html.contains("本次岗位 · 较上次"));
     }
 
     #[test]

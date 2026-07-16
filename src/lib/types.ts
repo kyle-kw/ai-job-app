@@ -237,6 +237,30 @@ export interface ScrapeRun {
   startedAt: string;
   completedAt?: string | null;
   reportMarkdown?: string | null;
+  searchSpec?: SearchSpec | null;
+  resolvedCity?: string | null;
+  detailSummary?: ScrapeDetailSummary | null;
+  sample?: ScrapeSampleSummary | null;
+}
+
+export interface ScrapeDetailSummary {
+  total: number;
+  processed: number;
+  succeeded: number;
+  skipped: number;
+  failed: number;
+}
+
+export interface ScrapeSampleSummary {
+  jobIds: string[];
+  totalJobs: number;
+  detailJobs: number;
+  detailCoverage: number;
+  salarySampleCount: number;
+  medianSalaryK?: number | null;
+  skillSampleCount: number;
+  skillCoverage: number;
+  skills: ReportBucket[];
 }
 
 export interface Readiness {
@@ -435,38 +459,46 @@ export interface SalaryByExperience {
 
 export type ReportSalaryBand = '' | 'under-15' | '15-25' | '25-35' | '35-50' | '50-plus';
 
-export interface ReportTrendPoint {
-  date: string;
-  count: number;
+export interface ReportSampleMetric { count: number; coverage: number; }
+
+export interface ReportSampleQuality {
+  detail: ReportSampleMetric;
+  salary: ReportSampleMetric;
+  skill: ReportSampleMetric;
+  experience: ReportSampleMetric;
+  degree: ReportSampleMetric;
+  limitations: string[];
 }
 
-export interface ReportSkillChange {
+export interface ReportBatchSnapshot {
+  runId: string;
+  completedAt: string;
+  searchSpec: SearchSpec;
+  totalJobs: number;
+  detailCoverage: number;
+  salarySampleCount: number;
+  medianSalaryK?: number | null;
+}
+
+export interface ReportBatchSkillChange {
   label: string;
-  recentCount: number;
-  recentPercentage: number;
+  currentCount: number;
+  currentPercentage: number;
   previousCount: number;
   previousPercentage: number;
   deltaPercentagePoints: number;
 }
 
-export interface ReportTrendWindow {
-  windowDays: 7 | 30;
-  recentNewJobs: number;
-  previousNewJobs: number;
-  newJobsChangePercentage?: number | null;
-  recentlySeenExistingJobs: number;
-  recentSalaryMedianK?: number | null;
-  previousSalaryMedianK?: number | null;
+export interface ReportBatchComparison {
+  status: 'available' | 'unavailable';
+  reason?: 'multi_keyword' | 'no_captured_run' | 'no_comparable_run' | null;
+  current?: ReportBatchSnapshot | null;
+  previous?: ReportBatchSnapshot | null;
+  jobCountChangePercentage?: number | null;
+  newlyObservedJobs: number;
+  notObservedJobs: number;
   salaryMedianDeltaK?: number | null;
-  dateSampleCount: number;
-  dateCoverage: number;
-  dailyNewJobs: ReportTrendPoint[];
-  skillChanges: ReportSkillChange[];
-}
-
-export interface ReportTrends {
-  sevenDays: ReportTrendWindow;
-  thirtyDays: ReportTrendWindow;
+  skillChanges: ReportBatchSkillChange[];
 }
 
 export interface JobDataReport {
@@ -491,7 +523,8 @@ export interface JobDataReport {
   welfare: ReportBucket[];
   salaryByExperience: SalaryByExperience[];
   insights: string[];
-  trends: ReportTrends;
+  sampleQuality: ReportSampleQuality;
+  batchComparison: ReportBatchComparison;
 }
 
 export interface ReportCompetitivenessItem {
@@ -670,16 +703,38 @@ export interface ResumeChatProposal {
   target: ResumeTargetRef;
   baseVersion: number;
   job?: { id: string; title: string; company: string } | null;
+  marketContext?: ResumeChatMarketContext | null;
   assistantMessage: string;
   edits: ResumeFieldEdit[];
   factCandidates: ResumeFactCandidate[];
   warnings: string[];
 }
 
+export interface MarketResumeContextRequest {
+  keywordKeys: string[];
+  focusSkills: string[];
+}
+
+export interface ResumeChatMarketSkill {
+  label: string;
+  jobCount: number;
+  percentage: number;
+  status: ResumeCoverageStatus;
+  rationale: string;
+}
+
+export interface ResumeChatMarketContext {
+  keywordKeys: string[];
+  keywordLabels: string[];
+  totalJobs: number;
+  skills: ResumeChatMarketSkill[];
+}
+
 export interface ResumeChatRequest {
   target: ResumeTargetRef;
   expectedVersion: number;
   jobId?: string | null;
+  marketContext?: MarketResumeContextRequest | null;
   messages: ResumeChatMessage[];
 }
 
@@ -692,7 +747,7 @@ export interface ApplyResumeEditsRequest {
 
 export type ResumeEditCommitResult = ResumeCommitResult | ResumeVariantCommitResult;
 
-export type ResumeVersionSource = 'legacy' | 'import' | 'template' | 'manual' | 'ai-chat' | 'rollback'
+export type ResumeVersionSource = 'legacy' | 'import' | 'template' | 'manual' | 'ai-chat' | 'market-ai-chat' | 'rollback'
   | 'variant-create' | 'variant-manual' | 'variant-ai' | 'variant-rebase' | 'variant-rollback';
 
 export interface ResumeVersionSummary {

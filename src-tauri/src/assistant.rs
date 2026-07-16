@@ -1033,6 +1033,141 @@ struct ModelResumeEdit {
     required_fact_candidate_ids: Vec<String>,
 }
 
+fn resolve_resume_market_context(
+    db: &Database,
+    request: &MarketResumeContextRequest,
+) -> Result<ResumeChatMarketContext, String> {
+    let mut keyword_keys = request
+        .keyword_keys
+        .iter()
+        .map(|value| crate::db::normalize_keyword_key(value))
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    keyword_keys.sort();
+    keyword_keys.dedup();
+    if keyword_keys.is_empty() || keyword_keys.len() > 8 {
+        return Err("invalid_market_context: 请选择 1 至 8 个有效报告关键词。".into());
+    }
+    if request.focus_skills.len() > 12 {
+        return Err("invalid_market_context: 最多关注 12 个当前报告技能。".into());
+    }
+
+    let selected_keywords = db.report_keywords_for_keys(&keyword_keys)?;
+    if selected_keywords.len() != keyword_keys.len() {
+        return Err("invalid_market_context: 包含未知或已失效的报告关键词。".into());
+    }
+    let jobs = db.list_jobs_by_keyword_keys(&keyword_keys)?;
+    if jobs.is_empty() {
+        return Err("invalid_market_context: 当前关键词范围没有本地岗位样本。".into());
+    }
+    let analysis = effective_report_competitiveness(db, &keyword_keys)?
+        .ok_or_else(|| "invalid_market_context: 当前范围无法生成竞争力矩阵。".to_string())?;
+
+    let mut requested_skills = request
+        .focus_skills
+        .iter()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    requested_skills.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+    if requested_skills.len() > 12 {
+        return Err("invalid_market_context: 最多关注 12 个当前报告技能。".into());
+    }
+    let selected_items = if requested_skills.is_empty() {
+        analysis.items.iter().take(12).collect::<Vec<_>>()
+    } else {
+        let mut items = Vec::with_capacity(requested_skills.len());
+        for requested in requested_skills {
+            let item = analysis
+                .items
+                .iter()
+                .find(|item| item.label.eq_ignore_ascii_case(requested))
+                .ok_or_else(|| {
+                    format!("invalid_market_context: 技能“{requested}”不在当前报告范围内。")
+                })?;
+            if !items
+                .iter()
+                .any(|existing: &&ReportCompetitivenessItem| existing.id == item.id)
+            {
+                items.push(item);
+            }
+        }
+        items
+    };
+
+    Ok(ResumeChatMarketContext {
+        keyword_keys,
+        keyword_labels: selected_keywords
+            .iter()
+            .map(|keyword| keyword.label.clone())
+            .collect(),
+        total_jobs: jobs.len() as i64,
+        skills: selected_items
+            .into_iter()
+            .map(|item| ResumeChatMarketSkill {
+                label: item.label.clone(),
+                job_count: item.job_count,
+                percentage: item.percentage,
+                status: item.status.clone(),
+                rationale: item.rationale.clone(),
+            })
+            .collect(),
+    })
+}
+
+fn validate_resume_chat_context_mode(
+    target: &ResumeTargetRef,
+    job_id: Option<&str>,
+    market_context: Option<&MarketResumeContextRequest>,
+) -> Result<(), String> {
+    if job_id.is_some() && market_context.is_some() {
+        return Err("invalid_request: 关联岗位与市场样本上下文不能同时使用。".into());
+    }
+    if market_context.is_some() && target.kind != "master" {
+        return Err("invalid_request: 市场样本上下文仅可用于主简历。".into());
+    }
+    Ok(())
+}
+
+fn validate_market_edit_evidence(
+    market_factual_edit: bool,
+    gap_only_context: bool,
+    strengthenable_only_context: bool,
+    evidence_fact_ids: &[String],
+    required_fact_candidate_ids: &[String],
+) -> Result<(), String> {
+    if market_factual_edit && evidence_fact_ids.is_empty() && required_fact_candidate_ids.is_empty()
+    {
+        return Err("unsafe_proposal: 市场样本只能指导排序和措辞，事实性修改必须引用已确认事实或待确认事实。".into());
+    }
+    if market_factual_edit && gap_only_context && required_fact_candidate_ids.is_empty() {
+        return Err(
+            "unsafe_proposal: 市场缺口首次只能核实经历；用户明确补充事实并形成待确认候选后才能修改。"
+                .into(),
+        );
+    }
+    if market_factual_edit && strengthenable_only_context && evidence_fact_ids.is_empty() {
+        return Err(
+            "unsafe_proposal: 可强化项只能依据已确认事实生成修改，不能仅依赖新事实候选。".into(),
+        );
+    }
+    Ok(())
+}
+
+fn resume_edit_introduces_factual_content(before: &Value, after: &Value) -> bool {
+    if before == after {
+        return false;
+    }
+    match (before, after) {
+        (_, Value::String(value)) if value.trim().is_empty() => false,
+        (Value::String(before), Value::String(after)) if before.contains(after) => false,
+        (Value::Array(before), Value::Array(after)) => {
+            !after.iter().all(|item| before.contains(item))
+        }
+        _ => true,
+    }
+}
+
 #[tauri::command]
 pub async fn propose_resume_chat_edits(
     state: State<'_, AppState>,
@@ -1041,6 +1176,11 @@ pub async fn propose_resume_chat_edits(
     distribution::require_privacy(&state)?;
     validate_chat_messages(&request.messages)?;
     let target = request.target.clone();
+    validate_resume_chat_context_mode(
+        &target,
+        request.job_id.as_deref(),
+        request.market_context.as_ref(),
+    )?;
     let (resume, fixed_job_id) = match target.kind.as_str() {
         "variant" => {
             let detail = state
@@ -1082,10 +1222,16 @@ pub async fn propose_resume_chat_edits(
     if effective_job_id.is_some() && job.is_none() {
         return Err("job_not_found: 关联岗位已不存在。".into());
     }
+    let market_context = request
+        .market_context
+        .as_ref()
+        .map(|context| resolve_resume_market_context(&state.db, context))
+        .transpose()?;
     let input = json!({
         "resume": &resume,
         "confirmedFacts": resume.facts.iter().filter(|fact| fact.confirmed).collect::<Vec<_>>(),
         "job": job.as_ref().map(sanitized_job_for_ai),
+        "marketContext": market_context,
         "messages": request.messages,
         "allowedPaths": allowed_resume_paths()
     });
@@ -1169,6 +1315,23 @@ pub async fn propose_resume_chat_edits(
             .get(edit.path.trim_start_matches('/'))
             .cloned()
             .ok_or_else(|| "unsafe_proposal: 无法读取修改前字段。".to_string())?;
+        validate_market_edit_evidence(
+            market_context.is_some()
+                && resume_edit_introduces_factual_content(&before, &edit.after),
+            market_context.as_ref().is_some_and(|context| {
+                !context.skills.is_empty()
+                    && context.skills.iter().all(|skill| skill.status == "gap")
+            }),
+            market_context.as_ref().is_some_and(|context| {
+                !context.skills.is_empty()
+                    && context
+                        .skills
+                        .iter()
+                        .all(|skill| skill.status == "strengthenable")
+            }),
+            &edit.evidence_fact_ids,
+            &edit.required_fact_candidate_ids,
+        )?;
         validate_numeric_claims(&before, &edit.after, &confirmed_text, &candidate_text)?;
         validate_new_skills(
             &edit.path,
@@ -1198,6 +1361,7 @@ pub async fn propose_resume_chat_edits(
             title: job.title,
             company: job.company,
         }),
+        market_context,
         assistant_message: output.assistant_message.chars().take(2_000).collect(),
         edits,
         fact_candidates: output.fact_candidates,
@@ -1333,13 +1497,21 @@ pub fn apply_resume_chat_edits(
             )
             .map(|result| ResumeEditCommitResult::Variant(Box::new(result)))
     } else {
+        let (source, summary) = if request.proposal.market_context.is_some() {
+            (
+                "market-ai-chat",
+                format!("市场样本 AI 修改 · 应用 {applied} 项修改"),
+            )
+        } else {
+            ("ai-chat", format!("AI 对话应用 {applied} 项修改"))
+        };
         state
             .db
             .commit_resume(
                 candidate,
                 request.expected_version,
-                "ai-chat",
-                &format!("AI 对话应用 {applied} 项修改"),
+                source,
+                &summary,
                 request.proposal.job.as_ref().map(|job| job.id.clone()),
                 Some(request.proposal.proposal_id),
                 None,
@@ -2067,6 +2239,138 @@ mod tests {
             fallback_reason: None,
             cache_status: "fresh".into(),
         }
+    }
+
+    #[test]
+    fn market_context_mode_rejects_job_mixing_variants_and_unsupported_edits() {
+        let master = ResumeTargetRef {
+            kind: "master".into(),
+            id: "resume".into(),
+        };
+        let variant = ResumeTargetRef {
+            kind: "variant".into(),
+            id: "variant".into(),
+        };
+        let market = MarketResumeContextRequest {
+            keyword_keys: vec!["ai agent".into()],
+            focus_skills: vec![],
+        };
+
+        assert!(
+            validate_resume_chat_context_mode(&master, Some("job"), Some(&market))
+                .unwrap_err()
+                .contains("不能同时使用")
+        );
+        assert!(
+            validate_resume_chat_context_mode(&variant, None, Some(&market))
+                .unwrap_err()
+                .contains("仅可用于主简历")
+        );
+        assert!(validate_market_edit_evidence(true, false, false, &[], &[])
+            .unwrap_err()
+            .contains("必须引用"));
+        assert!(
+            validate_market_edit_evidence(true, false, false, &["fact-python".into()], &[]).is_ok()
+        );
+        assert!(validate_market_edit_evidence(
+            true,
+            false,
+            false,
+            &[],
+            &["candidate-python".into()]
+        )
+        .is_ok());
+        assert!(
+            validate_market_edit_evidence(true, true, false, &["unrelated-fact".into()], &[])
+                .unwrap_err()
+                .contains("首次只能核实经历")
+        );
+        assert!(validate_market_edit_evidence(
+            true,
+            true,
+            false,
+            &[],
+            &["candidate-python".into()]
+        )
+        .is_ok());
+        assert!(validate_market_edit_evidence(
+            true,
+            false,
+            true,
+            &[],
+            &["candidate-python".into()]
+        )
+        .unwrap_err()
+        .contains("只能依据已确认事实"));
+        assert!(!resume_edit_introduces_factual_content(
+            &json!(["Python", "Rust"]),
+            &json!(["Rust"])
+        ));
+        assert!(resume_edit_introduces_factual_content(
+            &json!(["Python"]),
+            &json!(["Python", "Rust"])
+        ));
+        assert!(!resume_edit_introduces_factual_content(
+            &json!("使用 Python 构建服务，负责交付"),
+            &json!("使用 Python 构建服务")
+        ));
+    }
+
+    #[test]
+    fn market_context_is_rebuilt_from_known_keywords_and_report_skills() {
+        let directory = tempfile::tempdir().unwrap();
+        let db = Database::new(directory.path().join("market-context.db"));
+        db.initialize().unwrap();
+        let resume: ResumeProfile = serde_json::from_value(json!({
+            "id":"resume-market","name":"测试用户","headline":"AI 工程师","email":"a@example.com",
+            "phone":"","location":"上海","website":"","summary":"使用 Python 构建服务",
+            "templateId":"ai-engineering","professionalSkills":[],"experiences":[],"education":[],
+            "projects":[],"certifications":[],"facts":[],"preferences":{},"sourceFileName":"",
+            "updatedAt":"2026-07-16T00:00:00+08:00","version":1
+        }))
+        .unwrap();
+        db.save_resume(&resume).unwrap();
+        let job: Job = serde_json::from_value(json!({
+            "id":"job-market","source":"boss","externalId":"job-market","title":"AI 工程师",
+            "company":"测试公司","salary":"20-30K","location":"上海","experience":"3-5年","degree":"本科",
+            "companyScale":"100-499人","companyStage":"","industry":"人工智能","skills":["Python","RAG"],
+            "welfare":[],"description":"使用 Python 构建 RAG 服务","sourceUrl":"","firstSeen":"2026-07-16T08:00:00+08:00","lastSeen":"2026-07-16T08:00:00+08:00"
+        })).unwrap();
+        db.upsert_scrape_list_job(job, "AI Agent").unwrap();
+
+        let context = resolve_resume_market_context(
+            &db,
+            &MarketResumeContextRequest {
+                keyword_keys: vec!["AI AGENT".into()],
+                focus_skills: vec!["Python".into()],
+            },
+        )
+        .unwrap();
+        assert_eq!(context.keyword_keys, vec!["ai agent"]);
+        assert_eq!(context.keyword_labels, vec!["AI Agent"]);
+        assert_eq!(context.total_jobs, 1);
+        assert_eq!(context.skills.len(), 1);
+        assert_eq!(context.skills[0].label, "Python");
+        assert_eq!(context.skills[0].status, "covered");
+
+        assert!(resolve_resume_market_context(
+            &db,
+            &MarketResumeContextRequest {
+                keyword_keys: vec!["missing".into()],
+                focus_skills: vec![],
+            }
+        )
+        .unwrap_err()
+        .contains("未知"));
+        assert!(resolve_resume_market_context(
+            &db,
+            &MarketResumeContextRequest {
+                keyword_keys: vec!["ai agent".into()],
+                focus_skills: vec!["Kotlin".into()],
+            }
+        )
+        .unwrap_err()
+        .contains("不在当前报告范围"));
     }
 
     #[test]

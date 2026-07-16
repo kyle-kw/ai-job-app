@@ -168,7 +168,7 @@
   {:else}
     <section class="relative overflow-hidden rounded-[24px] border px-7 py-7 shadow-panel" style="border-color: var(--line); background: linear-gradient(115deg, var(--panel) 0%, var(--brand-faint) 100%);">
       <div class="dot-grid pointer-events-none absolute inset-y-0 right-0 w-[42%] opacity-40"></div>
-      <div class="relative flex items-end justify-between gap-8"><div class="max-w-[720px]"><div class="mb-3 inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold" style="background: var(--brand-soft); color: var(--brand);"><Sparkles size={13} />求职工作台</div><h2 class="text-[29px] font-semibold tracking-[-0.04em]">{$snapshot.resume?.name ? `${$snapshot.resume.name}，欢迎回来` : '欢迎来到求职舱'}</h2><p class="mt-2 text-sm leading-6 body-muted">集中查看岗位进展、优先机会与最近市场观察，把时间花在更值得跟进的岗位上。</p></div><button class="btn-primary shrink-0" disabled={scrapeTaskRunning} on:click={openSearchDialog}><Search size={16} />{scrapeTaskRunning ? '岗位抓取中…' : '开始岗位搜索'}</button></div>
+      <div class="relative flex items-end justify-between gap-8"><div class="max-w-[720px]"><div class="mb-3 inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold" style="background: var(--brand-soft); color: var(--brand);"><Sparkles size={13} />求职工作台</div><h2 class="text-[29px] font-semibold tracking-[-0.04em]">{$snapshot.resume?.name ? `${$snapshot.resume.name}，欢迎回来` : '欢迎来到求职舱'}</h2><p class="mt-2 text-sm leading-6 body-muted">集中查看本地岗位样本、优先机会与简历版本，把时间花在更值得核对和跟进的岗位上。</p></div><button class="btn-primary shrink-0" disabled={scrapeTaskRunning} on:click={openSearchDialog}><Search size={16} />{scrapeTaskRunning ? '岗位抓取中…' : '开始岗位搜索'}</button></div>
     </section>
 
     <section class="mt-6 grid grid-cols-3 gap-4">
@@ -196,7 +196,7 @@
     </section>
 
     {#if latestRun?.reportMarkdown}
-      <section class="mt-8 panel p-6"><div class="mb-4 flex items-center justify-between"><div><p class="eyebrow">最近一轮 · {latestRun.city}</p><h3 class="section-title mt-1">岗位市场观察</h3></div><span class="chip"><BriefcaseBusiness size={13} />{latestRun.totalSeen} 个岗位</span></div><MarkdownView source={latestRun.reportMarkdown} /></section>
+      <section class="mt-8 panel p-6"><div class="mb-4 flex items-center justify-between"><div><p class="eyebrow">最近一轮 · {latestRun.city}</p><h3 class="section-title mt-1">本次岗位样本观察</h3></div><span class="chip"><BriefcaseBusiness size={13} />{latestRun.totalSeen} 个本地样本</span></div><MarkdownView source={latestRun.reportMarkdown} /></section>
     {/if}
 
     <section class="mt-6 flex items-center justify-between rounded-2xl border px-5 py-4" style="border-color: var(--line); background: var(--panel-soft);"><div class="flex items-center gap-3"><CheckCircle2 size={18} class="text-success" /><div><p class="text-sm font-semibold">BOSS 与默认模型已就绪</p><p class="mt-0.5 text-xs body-muted">抓取前仍会验证真实登录状态；连接配置可随时调整。</p></div></div><a class="btn" href="/settings#boss">管理连接 <ArrowRight size={15} /></a></section>

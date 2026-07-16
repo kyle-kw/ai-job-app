@@ -280,7 +280,6 @@ fn serialize_jobs_json(jobs: &[Job]) -> Result<Vec<u8>, String> {
 pub fn export_job_data_report(
     state: State<'_, AppState>,
     keyword_keys: Vec<String>,
-    trend_window_days: i64,
     output_path: String,
 ) -> Result<RenderResult, String> {
     let report = selected_job_data_report(&state.db, &keyword_keys)?;
@@ -293,7 +292,6 @@ pub fn export_job_data_report(
     let mut html = analytics::append_decision_sections(
         analytics::render_html(&report),
         &report,
-        if trend_window_days == 30 { 30 } else { 7 },
         competitiveness.as_ref(),
     );
     if let Some(preparation) =
@@ -355,9 +353,11 @@ fn selected_job_data_report(
         return Err("所选关键词已不存在，请刷新后重新选择。".into());
     }
     let jobs = db.list_jobs_by_keyword_keys(keyword_keys)?;
-    Ok(analytics::build_report_for_keywords(
+    let scrape_runs = db.list_report_scrape_runs()?;
+    Ok(analytics::build_report_for_keywords_with_runs(
         &jobs,
         selected_keywords,
+        &scrape_runs,
     ))
 }
 
@@ -535,6 +535,9 @@ pub async fn start_scrape(
                         None,
                     );
                     let report_jobs = batch.jobs;
+                    let report_markdown = batch.report_markdown;
+                    let resolved_city = batch.resolved_city;
+                    let mut detail_summary = batch.detail_summary;
                     let reconcile_result = report_jobs.iter().try_for_each(|job| {
                         let job_key = streamed_job_key(job);
                         let already_streamed = streamed
@@ -564,27 +567,53 @@ pub async fn start_scrape(
                                 .map(|state| (state.1, state.2))
                                 .unwrap_or_default();
                             let now = time::shanghai_rfc3339();
+                            let mut persisted_ids = HashSet::new();
+                            let persisted_jobs = report_jobs
+                                .iter()
+                                .filter(|job| persisted_ids.insert(job.id.clone()))
+                                .filter_map(|job| db.get_job(&job.id).ok().flatten())
+                                .collect::<Vec<_>>();
+                            let sample = analytics::build_scrape_sample(&persisted_jobs);
+                            if let Some(summary) = detail_summary.as_mut() {
+                                if summary.total == 0 {
+                                    summary.total = sample.total_jobs;
+                                }
+                            }
                             let run = ScrapeRun {
                                 id: Uuid::new_v4().to_string(),
                                 keyword: spec.keyword.clone(),
                                 city: spec.city.clone(),
-                                total_seen: inserted + updated,
+                                total_seen: sample.total_jobs,
                                 inserted,
                                 updated,
                                 started_at: task.created_at.clone(),
                                 completed_at: Some(now),
-                                report_markdown: None,
+                                report_markdown,
+                                search_spec: Some(spec.clone()),
+                                resolved_city,
+                                detail_summary,
+                                sample: Some(sample),
                             };
-                            let _ = db.save_scrape_run(&run);
-                            update_task(
-                                &app,
-                                &db,
-                                &mut task,
-                                "completed",
-                                100,
-                                &format!("完成：新增 {inserted}，更新 {updated}"),
-                                None,
-                            );
+                            match db.save_scrape_run(&run) {
+                                Ok(()) => update_task(
+                                    &app,
+                                    &db,
+                                    &mut task,
+                                    "completed",
+                                    100,
+                                    &format!("完成：新增 {inserted}，更新 {updated}"),
+                                    None,
+                                ),
+                                Err(error) => update_task(
+                                    &app,
+                                    &db,
+                                    &mut task,
+                                    "failed",
+                                    96,
+                                    "岗位已写入，但抓取样本摘要保存失败",
+                                    Some(error),
+                                ),
+                            }
                         }
                         Err(error) => update_task(
                             &app,

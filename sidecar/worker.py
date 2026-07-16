@@ -27,7 +27,7 @@ from typing import Any
 
 
 SHANGHAI_TZ = timezone(timedelta(hours=8), name="Asia/Shanghai")
-APP_VERSION = "0.2.2"
+APP_VERSION = "0.2.3"
 PROTOCOL_VERSION = "2"
 
 
@@ -133,11 +133,11 @@ def market_report(jobs: list[dict[str, Any]], keyword: str, city: str) -> str:
     top_experience = experience.most_common(1)[0][0] if experience else "数据不足"
     top_degree = degrees.most_common(1)[0][0] if degrees else "数据不足"
     return (
-        f"## 本次岗位观察\n\n"
-        f"- 本次整理 **{len(jobs)}** 个“{keyword}”岗位，范围为 {city}。\n"
-        f"- 高频技能为 **{top_skills}**。\n"
-        f"- 最常见经验要求是 **{top_experience}**，学历要求以 **{top_degree}** 为主。\n\n"
-        f"> 建议先在简历前半页突出与高频技能直接相关、可量化的项目成果。"
+        f"## 本次岗位样本观察\n\n"
+        f"- 本次整理 **{len(jobs)}** 个“{keyword}”本地岗位样本，搜索范围为 {city}。\n"
+        f"- 当前有限样本中反复出现的技能包括 **{top_skills}**。\n"
+        f"- 当前样本最常见的经验要求是 **{top_experience}**，学历要求以 **{top_degree}** 为主。\n\n"
+        f"> 这些结果只代表本次有限页样本。简历可优先核对相关真实经历；市场要求不能作为候选人经历证据。"
     )
 
 
@@ -379,6 +379,7 @@ def _scrape_jobs(boss: Any, params: dict[str, Any]) -> dict[str, Any]:
             ]
             skipped_existing = len(listed_jobs) - len(detail_candidates)
             detail_state = {
+                "total": len(listed_jobs),
                 "succeeded": 0,
                 "skipped": skipped_existing,
                 "failed": 0,

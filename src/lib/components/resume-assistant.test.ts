@@ -71,6 +71,39 @@ describe('ResumeChatDialog', () => {
       expectedVersion: mockResume.version
     }));
   });
+
+  it('shows a server-resolved market context, hides job selection, and waits for explicit send', async () => {
+    const marketRequest = { keywordKeys: ['ai-agent'], focusSkills: ['RAG'] };
+    const proposal: ResumeChatProposal = {
+      proposalId: 'proposal-market', target: { kind: 'master', id: mockResume.id }, baseVersion: mockResume.version,
+      job: null,
+      marketContext: {
+        keywordKeys: ['ai-agent'], keywordLabels: ['AI Agent'], totalJobs: 18,
+        skills: [{ label: 'RAG', jobCount: 9, percentage: 50, status: 'gap', rationale: '尚无候选人事实证据。' }]
+      },
+      assistantMessage: '请先说明你是否有 RAG 项目经历。', edits: [], factCandidates: [], warnings: []
+    };
+    const propose = vi.spyOn(backend, 'proposeResumeChatEdits').mockResolvedValue(proposal);
+    const listOptions = vi.spyOn(backend, 'listJobOptions');
+    render(ResumeChatDialog, {
+      open: true, resume: mockResume, aiReady: true,
+      initialPrompt: '请先核对 RAG 相关经历。', initialMarketContext: marketRequest
+    });
+
+    expect(screen.getByText('市场样本上下文 · 主简历')).toBeInTheDocument();
+    expect(screen.queryByLabelText('关联岗位')).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: '发送给简历 AI 的消息' })).toHaveValue('请先核对 RAG 相关经历。');
+    expect(propose).not.toHaveBeenCalled();
+    expect(listOptions).not.toHaveBeenCalled();
+
+    await fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => expect(propose).toHaveBeenCalledWith(expect.objectContaining({
+      jobId: null,
+      marketContext: marketRequest
+    })));
+    expect(await screen.findByText(/后端确认的市场样本：AI Agent/)).toBeInTheDocument();
+    expect(screen.getByText('请先说明你是否有 RAG 项目经历。')).toBeInTheDocument();
+  });
 });
 
 describe('ResumeVersionDrawer', () => {

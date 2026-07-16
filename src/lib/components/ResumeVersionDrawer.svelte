@@ -33,7 +33,7 @@
 
   function sourceLabel(source: ResumeVersionSource) {
     return ({
-      legacy: '历史版本', import: '导入', template: '空白模板', manual: '手工保存', 'ai-chat': 'AI 对话', rollback: '版本恢复',
+      legacy: '历史版本', import: '导入', template: '空白模板', manual: '手工保存', 'ai-chat': 'AI 对话', 'market-ai-chat': '市场样本 AI', rollback: '版本恢复',
       'variant-create': '创建岗位版本', 'variant-manual': '手工保存岗位版本', 'variant-ai': '岗位版本 AI', 'variant-rebase': '同步主简历', 'variant-rollback': '岗位版本恢复'
     } satisfies Record<ResumeVersionSource, string>)[source];
   }

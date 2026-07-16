@@ -30,7 +30,6 @@
   let experienceFilter = '';
   let salaryBandFilter: ReportSalaryBand = '';
   let fromReport = false;
-  let reportWindow: 7 | 30 = 7;
   let requestedJobId: string | null = null;
   let cities: string[] = [];
   let activeTab: 'description' | 'fit' = 'description';
@@ -181,7 +180,6 @@
     const params = new URL(window.location.href).searchParams;
     requestedJobId = params.get('job');
     fromReport = params.get('from') === 'report';
-    reportWindow = params.get('window') === '30' ? 30 : 7;
     keywordKeys = [...new Set(params.getAll('keyword').map((value) => value.trim()).filter(Boolean))];
     skillFilters = [...new Set(params.getAll('skill').map((value) => value.trim()).filter(Boolean))];
     cityFilter = params.get('city')?.trim() ?? '';
@@ -274,7 +272,6 @@
     for (const key of ['job', 'from', 'window', 'keyword', 'skill', 'city', 'experience', 'salaryBand']) url.searchParams.delete(key);
     if (fromReport) {
       url.searchParams.set('from', 'report');
-      url.searchParams.set('window', String(reportWindow));
     }
     keywordKeys.forEach((key) => url.searchParams.append('keyword', key));
     skillFilters.forEach((skill) => url.searchParams.append('skill', skill));
@@ -290,7 +287,7 @@
   }
 
   function reportReturnHref() {
-    const params = new URLSearchParams({ window: String(reportWindow) });
+    const params = new URLSearchParams();
     keywordKeys.forEach((key) => params.append('keyword', key));
     return `/reports?${params.toString()}`;
   }

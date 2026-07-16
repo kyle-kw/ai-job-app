@@ -22,7 +22,7 @@
   import { buildLocalResumeCoverage, coverageHighlightKeywords } from '$lib/resume-coverage';
   import type { ResumeTemplateDefinition } from '$lib/resume-templates';
   import { importResume, refresh, savePreferences, snapshot } from '$lib/stores/app';
-  import type { Job, JobOption, JobPreferences, ResumeColorTheme, ResumeCommitResult, ResumeCoverageItem, ResumeCoverageReport, ResumeHealthIssue, ResumeProfile, ResumeRebasePreview, ResumeRebaseResolution, ResumeTemplateId, ResumeVariantCommitResult, ResumeVariantDetail, ResumeVariantSummary } from '$lib/types';
+  import type { Job, JobOption, JobPreferences, MarketResumeContextRequest, ResumeColorTheme, ResumeCommitResult, ResumeCoverageItem, ResumeCoverageReport, ResumeHealthIssue, ResumeProfile, ResumeRebasePreview, ResumeRebaseResolution, ResumeTemplateId, ResumeVariantCommitResult, ResumeVariantDetail, ResumeVariantSummary } from '$lib/types';
 
   let resumeMode: 'master' | 'variant' = 'master';
   let activeSection: 'content' | 'preferences' | 'facts' | 'coverage' = 'content';
@@ -53,6 +53,7 @@
   let healthDrawerOpen = false;
   let healthAssistantPrompt = '';
   let initialChatJobId: string | null = null;
+  let initialChatMarketContext: MarketResumeContextRequest | null = null;
   let fileInput: HTMLInputElement;
   let targetRolesText = '';
   let citiesText = '';
@@ -374,7 +375,7 @@
     } finally { rendering = false; }
   }
 
-  async function openAssistant(jobId: string | null = null, initialPrompt = '') {
+  async function openAssistant(jobId: string | null = null, initialPrompt = '', marketContext: MarketResumeContextRequest | null = null) {
     if (saving) return;
     if (resumeMode === 'variant' && !$snapshot.resume) { showToast('主简历暂时不可用，当前岗位版本不能调用 AI。'); return; }
     if (draft && hasUnsavedChanges) {
@@ -388,6 +389,7 @@
       }
     }
     initialChatJobId = resumeMode === 'variant' ? activeVariant?.jobId ?? null : jobId;
+    initialChatMarketContext = resumeMode === 'master' ? marketContext : null;
     healthAssistantPrompt = initialPrompt;
     assistantOpen = true;
   }
@@ -685,7 +687,18 @@
     window.addEventListener('keydown', handleShortcut);
     window.addEventListener('dragend', clearDragSource);
     if ($page.url?.searchParams.get('assistant') === '1') {
-      void openAssistant($page.url.searchParams.get('job'));
+      const marketMode = $page.url.searchParams.get('market') === '1';
+      const marketContext = marketMode ? {
+        keywordKeys: $page.url.searchParams.getAll('keyword'),
+        focusSkills: $page.url.searchParams.getAll('focusSkill')
+      } : null;
+      const focusLabel = marketContext?.focusSkills.join('、');
+      const marketPrompt = marketMode
+        ? focusLabel
+          ? `请基于当前本地岗位样本，先核对我是否有与“${focusLabel}”相关的真实经历，再优化主简历表达。市场需求不是我的经历证据；缺少已确认事实时请先提问，不要直接生成修改。`
+          : '请基于当前本地岗位样本为主简历安排优化优先级。市场需求不是我的经历证据；只能使用已确认事实，遇到真实缺口请先提问，不要直接生成修改。'
+        : '';
+      void openAssistant(marketMode ? null : $page.url.searchParams.get('job'), marketPrompt, marketContext);
     }
     return () => {
       window.removeEventListener('keydown', handleShortcut);
@@ -950,6 +963,7 @@
   resume={draft}
   aiReady={aiReady && (resumeMode === 'master' || Boolean($snapshot.resume))}
   initialJobId={initialChatJobId}
+  initialMarketContext={initialChatMarketContext}
   initialPrompt={healthAssistantPrompt}
   target={draft ? { kind: resumeMode, id: resumeMode === 'variant' ? activeVariant?.id ?? draft.id : draft.id } : null}
   on:applied={(event) => handleResumeCommit(event, 'applied')}

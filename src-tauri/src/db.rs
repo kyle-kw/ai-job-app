@@ -1971,6 +1971,10 @@ impl Database {
         self.list_json("SELECT payload_json FROM scrape_runs ORDER BY started_at DESC LIMIT 20")
     }
 
+    pub fn list_report_scrape_runs(&self) -> Result<Vec<ScrapeRun>, String> {
+        self.list_json("SELECT payload_json FROM scrape_runs WHERE json_extract(payload_json,'$.completedAt') IS NOT NULL ORDER BY started_at DESC")
+    }
+
     pub fn save_scrape_run(&self, run: &ScrapeRun) -> Result<(), String> {
         let connection = self.connect()?;
         let payload = serde_json::to_string(run).map_err(|error| error.to_string())?;

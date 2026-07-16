@@ -367,7 +367,9 @@ class WorkerTests(unittest.TestCase):
 
     def test_market_report_stays_scoped(self):
         report = worker.market_report([{"skills": ["Python"], "experience": "3-5年", "degree": "本科"}], "AI Agent", "上海")
-        self.assertIn("本次整理", report)
+        self.assertIn("本次岗位样本观察", report)
+        self.assertIn("有限页样本", report)
+        self.assertIn("不能作为候选人经历证据", report)
         self.assertIn("上海", report)
 
     def test_shanghai_timezone_is_explicit(self):
@@ -688,7 +690,7 @@ class WorkerTests(unittest.TestCase):
             "list", "list", "detail",
         ])
         self.assertEqual(result["detailSummary"], {
-            "succeeded": 1, "skipped": 1, "failed": 0, "processed": 2,
+            "total": 2, "succeeded": 1, "skipped": 1, "failed": 0, "processed": 2,
         })
         final_progress = [payload for kind, payload in events if kind == "progress" and payload["progress"] == 78]
         self.assertEqual(final_progress[-1]["detailSkipped"], 1)

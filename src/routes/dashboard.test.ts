@@ -54,6 +54,7 @@ describe('dashboard', () => {
     expect(screen.getByRole('heading', { name: '与你最接近的机会' })).toBeInTheDocument();
     expect(await screen.findByText('AI Agent 开发工程师')).toBeInTheDocument();
     expect(screen.getByText(/最近抓取 · 数据分析/)).toBeInTheDocument();
+    expect(screen.getByText('本次岗位样本观察')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '数据分析观察' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: '管理连接' })).toHaveAttribute('href', '/settings#boss');
   });

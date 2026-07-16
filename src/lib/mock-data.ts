@@ -111,7 +111,7 @@ export const mockSnapshot: BootstrapSnapshot = {
   scrapeRuns: [
     {
       id: 'run-demo', keyword: 'AI Agent', city: '上海', totalSeen: 90, inserted: 38, updated: 52, startedAt: now, completedAt: now,
-      reportMarkdown: '## 本次岗位观察\n\n- 共整理 **90** 个岗位，其中 38 个为首次出现。\n- 高频技能为 **Python、RAG、LangChain、Docker**。\n- 3–5 年经验岗位占比最高，主流薪资集中在 **25–45K**。\n\n> 建议在简历前半页突出 Agent 工作流、RAG 评测和生产部署经验。'
+      reportMarkdown: '## 本次岗位样本观察\n\n- 本次整理 **90** 个本地岗位样本。\n- 当前有限样本中反复出现的技能包括 **Python、RAG、LangChain、Docker**。\n- 3–5 年经验要求在当前样本中占比较高。\n\n> 这些结果只代表本次有限页样本；市场要求不能作为候选人经历证据。'
     }
   ],
   lastSearchSpec: {

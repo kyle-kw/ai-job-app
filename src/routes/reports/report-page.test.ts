@@ -92,7 +92,7 @@ const freshCompetitivenessState: ReportCompetitivenessState = {
 
 const listReportKeywords = vi.fn<() => Promise<typeof reportKeywords>>();
 const getJobDataReport = vi.fn<(keywordKeys: string[]) => Promise<JobDataReport>>();
-const exportJobDataReport = vi.fn<(keywordKeys: string[], trendWindowDays: 7 | 30, outputPath: string) => Promise<RenderResult>>();
+const exportJobDataReport = vi.fn<(keywordKeys: string[], outputPath: string) => Promise<RenderResult>>();
 const getInterviewPreparationState = vi.fn<(keywordKeys: string[]) => Promise<InterviewPreparationState>>();
 const generateInterviewPreparation = vi.fn<(keywordKeys: string[], force?: boolean) => Promise<InterviewPreparationState>>();
 const getReportCompetitivenessState = vi.fn<(keywordKeys: string[]) => Promise<ReportCompetitivenessState>>();
@@ -202,7 +202,7 @@ describe('full job data report page', () => {
     await waitFor(() => expect(generateInterviewPreparation).toHaveBeenCalledWith(['ai-agent', 'data-analysis'], false));
 
     await fireEvent.click(screen.getByRole('button', { name: '导出 HTML' }));
-    await waitFor(() => expect(exportJobDataReport).toHaveBeenCalledWith(['ai-agent', 'data-analysis'], 7, 'C:\\tmp\\report.html'));
+    await waitFor(() => expect(exportJobDataReport).toHaveBeenCalledWith(['ai-agent', 'data-analysis'], 'C:\\tmp\\report.html'));
   });
 
   it('does not invoke report export when the save dialog is cancelled', async () => {
@@ -228,27 +228,50 @@ describe('full job data report page', () => {
     expect(screen.getByRole('button', { name: '导出 HTML' })).toBeDisabled();
   });
 
-  it('restores valid URL state, switches the trend window, and exposes keyboard drilldowns', async () => {
+  it('restores valid URL state, silently removes the old window parameter, and exposes drilldowns', async () => {
     window.history.replaceState({}, '', '/reports?keyword=ai-agent&keyword=missing&window=30');
     render(ReportPage);
 
-    await screen.findByText('近期本地样本观察');
+    await screen.findByText('最近两次同条件样本对比');
     expect(screen.getByRole('checkbox', { name: /AI Agent/ })).toBeChecked();
     expect(screen.getByRole('checkbox', { name: /数据分析/ })).not.toBeChecked();
     expect(getJobDataReport).toHaveBeenCalledWith(['ai-agent']);
-    expect(screen.getByRole('button', { name: '近 30 天' })).toHaveClass('chip-brand');
     expect(new URL(window.location.href).searchParams.getAll('keyword')).toEqual(['ai-agent']);
+    expect(new URL(window.location.href).searchParams.has('window')).toBe(false);
+    expect(screen.queryByRole('button', { name: /近 (7|30) 天/ })).not.toBeInTheDocument();
+    expect(screen.getByText('样本质量与限制')).toBeInTheDocument();
 
     const skillLink = screen.getByRole('link', { name: /查看 Python 的 \d+ 个岗位/ });
     const drilldown = new URL(skillLink.getAttribute('href')!, 'http://localhost');
     expect(drilldown.pathname).toBe('/jobs');
     expect(drilldown.searchParams.get('from')).toBe('report');
-    expect(drilldown.searchParams.get('window')).toBe('30');
+    expect(drilldown.searchParams.has('window')).toBe(false);
     expect(drilldown.searchParams.getAll('keyword')).toEqual(['ai-agent']);
     expect(drilldown.searchParams.getAll('skill')).toEqual(['Python']);
 
     await fireEvent.click(screen.getByRole('button', { name: '导出 HTML' }));
-    await waitFor(() => expect(exportJobDataReport).toHaveBeenCalledWith(['ai-agent'], 30, 'C:\\tmp\\report.html'));
+    await waitFor(() => expect(exportJobDataReport).toHaveBeenCalledWith(['ai-agent'], 'C:\\tmp\\report.html'));
+  });
+
+  it('renders comparable batch deltas without treating missing ids as removed jobs', async () => {
+    const spec = { keyword: '数据分析', city: '上海', pages: 2 };
+    getJobDataReport.mockResolvedValue({
+      ...localReport,
+      batchComparison: {
+        status: 'available', reason: null,
+        previous: { runId: 'previous', completedAt: '2026-07-15T10:00:00+08:00', searchSpec: spec, totalJobs: 4, detailCoverage: 50, salarySampleCount: 3, medianSalaryK: 25 },
+        current: { runId: 'current', completedAt: '2026-07-16T10:00:00+08:00', searchSpec: spec, totalJobs: 5, detailCoverage: 60, salarySampleCount: 4, medianSalaryK: 30 },
+        jobCountChangePercentage: 25, newlyObservedJobs: 2, notObservedJobs: 1, salaryMedianDeltaK: 5,
+        skillChanges: [{ label: 'Python', currentCount: 4, currentPercentage: 80, previousCount: 2, previousPercentage: 50, deltaPercentagePoints: 30 }]
+      }
+    });
+    render(ReportPage);
+
+    expect(await screen.findByText('本次有限结果未再次出现')).toBeInTheDocument();
+    expect(screen.getByText('不代表岗位已经下架')).toBeInTheDocument();
+    expect(screen.getByText('+25.0%')).toBeInTheDocument();
+    expect(screen.getByText('+5.0K')).toBeInTheDocument();
+    expect(screen.getByText('+30.0pp')).toBeInTheDocument();
   });
 
   it('runs competitiveness AI only after an explicit click', async () => {
@@ -289,6 +312,32 @@ describe('full job data report page', () => {
     expect(await screen.findByText('AI 竞争力分析失败')).toBeInTheDocument();
     expect(screen.getByText(/语义分析服务暂时不可用/)).toBeInTheDocument();
     expect(screen.getByText('主简历正文中已有明确表达。')).toBeInTheDocument();
+  });
+
+  it('links strengthenable and gap skills into a prefilled market-context resume review', async () => {
+    getReportCompetitivenessState.mockResolvedValue({
+      ...localCompetitivenessState,
+      local: {
+        ...localCompetitivenessState.local!,
+        items: [
+          { id: 'strength', label: 'RAG', jobCount: 3, percentage: 60, status: 'strengthenable', resumePaths: [], evidenceFactIds: ['fact-rag'], rationale: '已确认事实中有证据。' },
+          { id: 'gap', label: 'Kubernetes', jobCount: 2, percentage: 40, status: 'gap', resumePaths: [], evidenceFactIds: [], rationale: '尚无候选人证据。' }
+        ]
+      }
+    });
+    render(ReportPage);
+
+    const wholeReportLink = await screen.findByRole('link', { name: '基于当前样本优化主简历' });
+    const strengthLink = screen.getByRole('link', { name: '生成表达优化' });
+    const gapLink = screen.getByRole('link', { name: '核对相关经历' });
+    for (const link of [wholeReportLink, strengthLink, gapLink]) {
+      const url = new URL(link.getAttribute('href')!, 'http://localhost');
+      expect(url.pathname).toBe('/resume');
+      expect(url.searchParams.get('market')).toBe('1');
+      expect(url.searchParams.getAll('keyword')).toEqual(['data-analysis']);
+    }
+    expect(new URL(strengthLink.getAttribute('href')!, 'http://localhost').searchParams.getAll('focusSkill')).toEqual(['RAG']);
+    expect(new URL(gapLink.getAttribute('href')!, 'http://localhost').searchParams.getAll('focusSkill')).toEqual(['Kubernetes']);
   });
 
   it('offers a resume entry when no master resume exists', async () => {

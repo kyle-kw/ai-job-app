@@ -219,7 +219,7 @@ describe('job scraping controls', () => {
     await waitFor(() => expect(deleteMissing).toHaveBeenCalledWith(expect.objectContaining({ missingDescription: true })));
   });
 
-  it('restores report drilldown URL filters and clears their URL state together', async () => {
+  it('restores report drilldown filters while dropping the obsolete window state', async () => {
     window.history.replaceState({}, '', '/jobs?from=report&window=30&keyword=ai-agent&keyword=data-analysis&skill=Python&skill=RAG&experience=3-5%E5%B9%B4&salaryBand=25-35');
     snapshot.set(structuredClone(mockSnapshot));
     vi.spyOn(backend, 'listJobCities').mockResolvedValue(['上海', '杭州']);
@@ -235,7 +235,7 @@ describe('job scraping controls', () => {
     })));
     const returnLink = screen.getByRole('link', { name: '返回数据报告' });
     const returnUrl = new URL(returnLink.getAttribute('href')!, 'http://localhost');
-    expect(returnUrl.searchParams.get('window')).toBe('30');
+    expect(returnUrl.searchParams.has('window')).toBe(false);
     expect(returnUrl.searchParams.getAll('keyword')).toEqual(['ai-agent', 'data-analysis']);
 
     await fireEvent.click(screen.getByRole('button', { name: '移除技能 Python' }));

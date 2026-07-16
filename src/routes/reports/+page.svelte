@@ -22,7 +22,6 @@
     WalletCards
   } from 'lucide-svelte';
   import ReportBars from '$lib/components/ReportBars.svelte';
-  import ReportTrendChart from '$lib/components/ReportTrendChart.svelte';
   import { chooseLocalExportPath, localExportStamp } from '$lib/export-file';
   import { backend } from '$lib/services/backend';
   import type { InterviewPreparationState, JobDataReport, RenderResult, ReportBucket, ReportCompetitivenessState, ReportSalaryBand } from '$lib/types';
@@ -38,7 +37,7 @@
   type KeywordReportBackend = {
     listReportKeywords: () => Promise<ReportKeyword[]>;
     getJobDataReport: (keywordKeys: string[]) => Promise<JobDataReport>;
-    exportJobDataReport: (keywordKeys: string[], trendWindowDays: 7 | 30, outputPath: string) => Promise<RenderResult>;
+    exportJobDataReport: (keywordKeys: string[], outputPath: string) => Promise<RenderResult>;
     getInterviewPreparationState: (keywordKeys: string[]) => Promise<InterviewPreparationState>;
     generateInterviewPreparation: (keywordKeys: string[], force?: boolean) => Promise<InterviewPreparationState>;
     getReportCompetitivenessState: (keywordKeys: string[]) => Promise<ReportCompetitivenessState>;
@@ -61,7 +60,6 @@
   let competitivenessLoading = true;
   let competitivenessGenerating = false;
   let competitivenessError = '';
-  let trendWindowDays: 7 | 30 = 7;
   let keywords: ReportKeyword[] = [];
   let selectedKeywordKeys: string[] = [];
   let latestKeywordKey = '';
@@ -72,7 +70,7 @@
   let competitivenessRequestId = 0;
 
   $: selectedKeywordLabels = keywords.filter((keyword) => selectedKeywordKeys.includes(keyword.key)).map((keyword) => keyword.label);
-  $: activeTrend = trendWindowDays === 30 ? report?.trends.thirtyDays : report?.trends.sevenDays;
+  $: marketContextEligible = selectedKeywordKeys.length > 0 && selectedKeywordKeys.length <= 8;
   $: competitiveness = competitivenessState?.effectiveSource === 'ai' ? competitivenessState.ai : competitivenessState?.local;
 
   const salary = (value?: number | null) => value == null ? '—' : `${value.toFixed(1)}K`;
@@ -226,19 +224,14 @@
     const url = new URL(window.location.href);
     if (url.pathname !== '/reports') return;
     url.searchParams.delete('keyword');
+    url.searchParams.delete('window');
     selectedKeywordKeys.forEach((key) => url.searchParams.append('keyword', key));
-    url.searchParams.set('window', String(trendWindowDays));
     const nextUrl = `${url.pathname}${url.search}${url.hash}`;
     try {
       replaceState(nextUrl, {});
     } catch {
       window.history.replaceState(window.history.state, '', nextUrl);
     }
-  }
-
-  function selectTrendWindow(days: 7 | 30) {
-    trendWindowDays = days;
-    syncReportUrl();
   }
 
   async function generateReportCompetitiveness() {
@@ -288,7 +281,7 @@
         extension: 'html'
       });
       if (!outputPath) return;
-      const result = await reportBackend.exportJobDataReport([...selectedKeywordKeys], trendWindowDays, outputPath);
+      const result = await reportBackend.exportJobDataReport([...selectedKeywordKeys], outputPath);
       exportMessage = `已导出：${result.path}`;
     } catch (reason) {
       exportMessage = reason instanceof Error ? reason.message : String(reason);
@@ -298,14 +291,11 @@
   }
 
   onMount(() => {
-    const url = new URL(window.location.href);
-    const requestedWindow = url.pathname === '/reports' ? url.searchParams.get('window') : null;
-    trendWindowDays = requestedWindow === '30' ? 30 : 7;
     void loadKeywords();
   });
 
   function drilldownHref(filters: { skills?: string[]; city?: string; experience?: string; salaryBand?: ReportSalaryBand } = {}) {
-    const params = new URLSearchParams({ from: 'report', window: String(trendWindowDays) });
+    const params = new URLSearchParams({ from: 'report' });
     selectedKeywordKeys.forEach((key) => params.append('keyword', key));
     filters.skills?.forEach((skill) => params.append('skill', skill));
     if (filters.city) params.set('city', filters.city);
@@ -324,6 +314,17 @@
   const salaryBandHref = (row: ReportBucket) => drilldownHref({ salaryBand: salaryBandCode(row.label) });
   const signed = (value?: number | null, suffix = '') => value == null ? '暂无可比数据' : `${value > 0 ? '+' : ''}${value.toFixed(1)}${suffix}`;
   const competitivenessStatusLabel = (status: string) => ({ covered: '已覆盖', strengthenable: '可强化', gap: '真实缺口', unknown: '待判断' }[status] ?? '待判断');
+  const batchUnavailableReason = (reason?: string | null) => ({
+    multi_keyword: '当前选择了多个关键词。多关键词并集只展示当前样本，不做批次涨跌比较。',
+    no_captured_run: '当前范围没有包含搜索条件和样本摘要的新抓取批次。历史记录不会被猜测或回填。',
+    no_comparable_run: '尚未找到跨上海时区不同日期、且关键词、城市、页数和筛选条件完全一致的前一成功批次。'
+  }[reason ?? ''] ?? '当前没有满足比较规则的成功批次。');
+  const resumeMarketHref = (focusSkill?: string) => {
+    const params = new URLSearchParams({ assistant: '1', market: '1' });
+    selectedKeywordKeys.forEach((key) => params.append('keyword', key));
+    if (focusSkill) params.append('focusSkill', focusSkill);
+    return `/resume?${params.toString()}`;
+  };
 </script>
 
 <div class="page-content report-page">
@@ -521,44 +522,65 @@
     <section class="relative overflow-hidden rounded-[24px] border p-7 shadow-panel" style="border-color: var(--line); background: linear-gradient(120deg, var(--panel), var(--brand-faint));">
       <div class="dot-grid pointer-events-none absolute inset-y-0 right-0 w-1/3 opacity-40"></div>
       <div class="relative flex items-end justify-between gap-8">
-        <div><div class="mb-3 inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold" style="background: var(--brand-soft); color: var(--brand);"><CheckCircle2 size={13} />所选关键词分析</div><h3 class="text-[24px] font-semibold tracking-[-0.03em]">从 {report.totalJobs} 个去重岗位看市场真正需要什么</h3><p class="mt-2 text-sm body-muted">关键词 {selectedKeywordLabels.join('、')} · 数据范围 {report.dataFrom ?? '未知'} 至 {report.dataTo ?? '未知'} · {generatedTime(report.generatedAt)} 生成</p></div>
+        <div><div class="mb-3 inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold" style="background: var(--brand-soft); color: var(--brand);"><CheckCircle2 size={13} />本次岗位样本观察</div><h3 class="text-[24px] font-semibold tracking-[-0.03em]">从当前 {report.totalJobs} 个本地去重样本看反复出现的要求</h3><p class="mt-2 text-sm body-muted">关键词 {selectedKeywordLabels.join('、')} · 数据范围 {report.dataFrom ?? '未知'} 至 {report.dataTo ?? '未知'} · {generatedTime(report.generatedAt)} 生成</p></div>
         <div class="flex items-center gap-2 text-xs body-muted"><CalendarRange size={15} />Asia/Shanghai</div>
       </div>
     </section>
 
     <section class="mt-5 grid grid-cols-4 gap-4">
-      <article class="panel-flat p-5"><div class="mb-4 flex items-center justify-between"><span class="text-xs font-semibold body-muted">有效岗位样本</span><Database size={17} class="text-brand" /></div><strong class="text-[27px] font-semibold tabular-nums">{report.totalJobs}</strong><p class="mt-1 text-xs body-muted">按岗位 ID 去重</p></article>
+      <article class="panel-flat p-5"><div class="mb-4 flex items-center justify-between"><span class="text-xs font-semibold body-muted">本地去重岗位样本</span><Database size={17} class="text-brand" /></div><strong class="text-[27px] font-semibold tabular-nums">{report.totalJobs}</strong><p class="mt-1 text-xs body-muted">按岗位 ID 去重</p></article>
       <article class="panel-flat p-5"><div class="mb-4 flex items-center justify-between"><span class="text-xs font-semibold body-muted">招聘公司</span><Building2 size={17} class="text-brand" /></div><strong class="text-[27px] font-semibold tabular-nums">{report.totalCompanies}</strong><p class="mt-1 text-xs body-muted">覆盖 {report.totalCities} 个城市</p></article>
       <article class="panel-flat p-5"><div class="mb-4 flex items-center justify-between"><span class="text-xs font-semibold body-muted">月薪中点中位数</span><WalletCards size={17} class="text-brand" /></div><strong class="text-[27px] font-semibold tabular-nums">{salary(report.salary.medianMidK)}</strong><p class="mt-1 text-xs body-muted">{report.salary.sampleCount} 个可解析样本</p></article>
       <article class="panel-flat p-5"><div class="mb-4 flex items-center justify-between"><span class="text-xs font-semibold body-muted">岗位详情覆盖</span><FileCheck2 size={17} class="text-brand" /></div><strong class="text-[27px] font-semibold tabular-nums">{report.detailCoverage.toFixed(1)}%</strong><p class="mt-1 text-xs body-muted">{report.detailJobs} 个岗位含 JD</p></article>
     </section>
 
-    {#if activeTrend}
-      <section class="panel mt-5 p-6" aria-labelledby="trend-title">
-        <div class="mb-5 flex flex-wrap items-start justify-between gap-4">
-          <div><p class="eyebrow">Observed changes</p><h3 id="trend-title" class="section-title mt-1">近期本地样本观察</h3><p class="mt-1 text-xs leading-5 body-muted">按岗位首次发现日期比较当前窗口与前一等长窗口，不代表完整市场行情。</p></div>
-          <div class="flex rounded-xl p-1 surface-soft" aria-label="趋势时间窗口">
-            <button class:chip-brand={trendWindowDays === 7} class="rounded-lg px-3 py-1.5 text-xs font-semibold" on:click={() => selectTrendWindow(7)}>近 7 天</button>
-            <button class:chip-brand={trendWindowDays === 30} class="rounded-lg px-3 py-1.5 text-xs font-semibold" on:click={() => selectTrendWindow(30)}>近 30 天</button>
-          </div>
+    <section class="panel mt-5 p-6" aria-labelledby="sample-quality-title">
+      <div class="mb-5"><p class="eyebrow">Sample quality</p><h3 id="sample-quality-title" class="section-title mt-1">样本质量与限制</h3><p class="mt-1 text-xs leading-5 body-muted">覆盖率只描述当前本地样本中有多少岗位具备对应字段，不会通过再次访问 BOSS 补齐。</p></div>
+      <div class="grid grid-cols-5 gap-3">
+        {#each [
+          { label: '岗位详情', metric: report.sampleQuality.detail },
+          { label: '薪资', metric: report.sampleQuality.salary },
+          { label: '技能', metric: report.sampleQuality.skill },
+          { label: '经验', metric: report.sampleQuality.experience },
+          { label: '学历', metric: report.sampleQuality.degree }
+        ] as item}
+          <article class="rounded-xl p-4 surface-soft"><span class="text-xs body-muted">{item.label}</span><strong class="mt-2 block text-xl tabular-nums">{item.metric.coverage.toFixed(1)}%</strong><span class="text-[11px] body-muted">{item.metric.count} / {report.totalJobs} 个样本</span></article>
+        {/each}
+      </div>
+      <div class="mt-5 rounded-xl border px-4 py-3" style="border-color: var(--line);">
+        <ul class="space-y-2">{#each report.sampleQuality.limitations as limitation}<li class="flex gap-2 text-xs leading-5 body-muted"><AlertCircle size={14} class="mt-0.5 shrink-0 text-warning" /><span>{limitation}</span></li>{/each}</ul>
+      </div>
+    </section>
+
+    <section class="panel mt-5 p-6" aria-labelledby="batch-comparison-title">
+      <div class="mb-5"><p class="eyebrow">Comparable batches</p><h3 id="batch-comparison-title" class="section-title mt-1">最近两次同条件样本对比</h3><p class="mt-1 text-xs leading-5 body-muted">只比较跨不同日期、搜索范围完全一致的成功抓取批次；不会为生成报告额外访问 BOSS。</p></div>
+      {#if report.batchComparison.status === 'available' && report.batchComparison.current && report.batchComparison.previous}
+        <div class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 text-xs" style="border-color: var(--line);">
+          <span><strong>{generatedTime(report.batchComparison.previous.completedAt)}</strong> → <strong>{generatedTime(report.batchComparison.current.completedAt)}</strong></span>
+          <span class="body-muted">{report.batchComparison.current.searchSpec.city} · {report.batchComparison.current.searchSpec.pages} 页 · 其余筛选条件一致</span>
         </div>
         <div class="grid grid-cols-4 gap-3">
-          <article class="rounded-xl p-4 surface-soft"><span class="text-xs body-muted">近期新增</span><strong class="mt-2 block text-2xl tabular-nums">{activeTrend.recentNewJobs}</strong><span class="text-[11px] body-muted">前期 {activeTrend.previousNewJobs} 个</span></article>
-          <article class="rounded-xl p-4 surface-soft"><span class="text-xs body-muted">新增变化</span><strong class="mt-2 block text-2xl tabular-nums">{signed(activeTrend.newJobsChangePercentage, '%')}</strong><span class="text-[11px] body-muted">相对前一等长窗口</span></article>
-          <article class="rounded-xl p-4 surface-soft"><span class="text-xs body-muted">近期再次观察到</span><strong class="mt-2 block text-2xl tabular-nums">{activeTrend.recentlySeenExistingJobs}</strong><span class="text-[11px] body-muted">首次发现早于当前窗口</span></article>
-          <article class="rounded-xl p-4 surface-soft"><span class="text-xs body-muted">薪资中点中位数</span><strong class="mt-2 block text-2xl tabular-nums">{salary(activeTrend.recentSalaryMedianK)}</strong><span class="text-[11px] body-muted">较前期 {signed(activeTrend.salaryMedianDeltaK, 'K')}</span></article>
+          <article class="rounded-xl p-4 surface-soft"><span class="text-xs body-muted">本次岗位数</span><strong class="mt-2 block text-2xl tabular-nums">{report.batchComparison.current.totalJobs}</strong><span class="text-[11px] body-muted">前次 {report.batchComparison.previous.totalJobs} 个</span></article>
+          <article class="rounded-xl p-4 surface-soft"><span class="text-xs body-muted">岗位数量变化</span><strong class="mt-2 block text-2xl tabular-nums">{signed(report.batchComparison.jobCountChangePercentage, '%')}</strong><span class="text-[11px] body-muted">仅限两个有限样本</span></article>
+          <article class="rounded-xl p-4 surface-soft"><span class="text-xs body-muted">本次新出现</span><strong class="mt-2 block text-2xl tabular-nums">{report.batchComparison.newlyObservedJobs}</strong><span class="text-[11px] body-muted">相对前次岗位 ID 集合</span></article>
+          <article class="rounded-xl p-4 surface-soft"><span class="text-xs body-muted">本次有限结果未再次出现</span><strong class="mt-2 block text-2xl tabular-nums">{report.batchComparison.notObservedJobs}</strong><span class="text-[11px] body-muted">不代表岗位已经下架</span></article>
         </div>
-        <div class="mt-5 grid grid-cols-[minmax(0,1.35fr)_minmax(280px,0.65fr)] items-stretch gap-5">
-          <div class="flex min-h-0 flex-col"><div class="mb-3 flex items-center justify-between"><h4 class="text-sm font-semibold">每日首次发现岗位</h4><span class="text-[11px] body-muted">日期有效样本 {activeTrend.dateSampleCount} · 覆盖 {activeTrend.dateCoverage.toFixed(1)}%</span></div><ReportTrendChart points={activeTrend.dailyNewJobs} /></div>
-          <div><h4 class="mb-3 text-sm font-semibold">技能需求变化</h4>{#if activeTrend.skillChanges.length > 0}<div class="space-y-2.5">{#each activeTrend.skillChanges as item}<a href={drilldownHref({ skills: [item.label] })} class="flex items-center justify-between gap-3 rounded-lg px-3 py-2 text-xs transition hover:surface-soft"><span class="truncate font-medium">{item.label}</span><span class:item-rise={item.deltaPercentagePoints > 0} class:item-fall={item.deltaPercentagePoints < 0} class="shrink-0 tabular-nums">{signed(item.deltaPercentagePoints, 'pp')}</span></a>{/each}</div>{:else}<p class="text-xs leading-5 body-muted">当前窗口暂无足够的技能变化样本。</p>{/if}</div>
+        <div class="mt-5 grid grid-cols-2 gap-5">
+          <article class="rounded-xl border p-4" style="border-color: var(--line);"><span class="text-xs body-muted">薪资中点中位数变化</span><strong class="mt-2 block text-xl tabular-nums">{signed(report.batchComparison.salaryMedianDeltaK, 'K')}</strong><p class="mt-1 text-[11px] body-muted">本次 {salary(report.batchComparison.current.medianSalaryK)} · 前次 {salary(report.batchComparison.previous.medianSalaryK)}</p></article>
+          <article class="rounded-xl border p-4" style="border-color: var(--line);"><h4 class="mb-3 text-sm font-semibold">技能样本占比变化</h4>{#if report.batchComparison.skillChanges.length > 0}<div class="space-y-2">{#each report.batchComparison.skillChanges as item}<a href={drilldownHref({ skills: [item.label] })} class="flex items-center justify-between gap-3 text-xs"><span>{item.label} <span class="body-muted">{item.currentCount}/{report.batchComparison.current.totalJobs}</span></span><span class:item-rise={item.deltaPercentagePoints > 0} class:item-fall={item.deltaPercentagePoints < 0} class="tabular-nums">{signed(item.deltaPercentagePoints, 'pp')}</span></a>{/each}</div>{:else}<p class="text-xs body-muted">两个批次没有足够的技能摘要可比较。</p>{/if}</article>
         </div>
-      </section>
-    {/if}
+      {:else}
+        <div class="flex items-start gap-3 rounded-xl border border-dashed p-5" style="border-color: var(--line);"><CalendarRange size={18} class="mt-0.5 shrink-0 text-brand" /><div><p class="text-sm font-semibold">当前不生成批次涨跌结论</p><p class="mt-1 text-xs leading-5 body-muted">{batchUnavailableReason(report.batchComparison.reason)}</p></div></div>
+      {/if}
+    </section>
 
     <section class="panel mt-5 overflow-hidden" aria-labelledby="competitiveness-title">
       <div class="flex flex-wrap items-start justify-between gap-4 border-b p-6" style="border-color: var(--line);">
         <div class="flex gap-3"><span class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-soft text-brand"><TrendingUp size={20} /></span><div><div class="flex flex-wrap items-center gap-2"><h3 id="competitiveness-title" class="section-title">市场需求 × 我的简历</h3>{#if competitivenessState}<span class:stale-badge={competitivenessState.status === 'stale'} class:fresh-badge={competitivenessState.status === 'fresh'} class="status-badge">{competitivenessState.effectiveSource === 'ai' ? 'AI 语义复核' : competitivenessState.status === 'stale' ? 'AI 结果已过期' : '本地精确匹配'}</span>{/if}</div><p class="mt-1 text-sm leading-6 body-muted">用高频技能对照主简历正文和已确认事实；本地结果始终可用，AI 仅在主动点击后调用。</p></div></div>
-        {#if competitivenessState?.hasResume && competitivenessState.hasProvider && competitivenessState.reason !== 'no_jobs'}<button class="btn-primary shrink-0" on:click={generateReportCompetitiveness} disabled={competitivenessGenerating}><Sparkles size={15} class={competitivenessGenerating ? 'animate-pulse' : ''} />{competitivenessGenerating ? '正在分析' : competitivenessState.status === 'fresh' ? '重新运行 AI' : 'AI 语义分析'}</button>{/if}
+        <div class="flex flex-wrap gap-2">
+          {#if competitivenessState?.hasResume && marketContextEligible}<a class="btn" href={resumeMarketHref()}>基于当前样本优化主简历</a>{:else if competitivenessState?.hasResume}<span class="self-center text-xs body-muted">主简历优化最多选择 8 个关键词</span>{/if}
+          {#if competitivenessState?.hasResume && competitivenessState.hasProvider && competitivenessState.reason !== 'no_jobs'}<button class="btn-primary shrink-0" on:click={generateReportCompetitiveness} disabled={competitivenessGenerating}><Sparkles size={15} class={competitivenessGenerating ? 'animate-pulse' : ''} />{competitivenessGenerating ? '正在分析' : competitivenessState.status === 'fresh' ? '重新运行 AI' : 'AI 语义分析'}</button>{/if}
+        </div>
       </div>
       {#if competitivenessLoading && !competitivenessState}
         <div class="grid grid-cols-2 gap-3 p-6">{#each [1,2,3,4] as _}<div class="skeleton h-28 rounded-xl"></div>{/each}</div>
@@ -572,7 +594,7 @@
           {#if competitivenessState.status === 'stale'}<div class="mb-5 flex items-start gap-3 rounded-xl border px-4 py-3" style="border-color: color-mix(in srgb, #b7791f 35%, var(--line)); background: color-mix(in srgb, #f6ad55 9%, var(--panel));"><Clock3 size={17} class="mt-0.5 shrink-0 text-warning" /><div><p class="text-sm font-semibold">岗位、简历或模型配置已变化</p><p class="mt-1 text-xs body-muted">旧 AI 结果未用于当前矩阵，下面已自动回退为最新本地结果。</p></div></div>{/if}
           {#if competitiveness?.items.length}
             <div class="mb-4 grid grid-cols-4 gap-3">{#each ['covered','strengthenable','gap','unknown'] as status}<div class="rounded-xl p-3 text-center surface-soft"><strong class="block text-lg">{competitiveness.items.filter((item) => item.status === status).length}</strong><span class="text-[11px] body-muted">{competitivenessStatusLabel(status)}</span></div>{/each}</div>
-            <div class="grid grid-cols-2 gap-3">{#each competitiveness.items as item}<article class="rounded-xl border p-4" style="border-color: var(--line);"><div class="flex items-start justify-between gap-3"><div><div class="flex flex-wrap items-center gap-2"><h4 class="text-sm font-semibold">{item.label}</h4><span class:item-covered={item.status === 'covered'} class:item-strengthenable={item.status === 'strengthenable'} class:item-gap={item.status === 'gap'} class="status-badge">{competitivenessStatusLabel(item.status)}</span></div><p class="mt-1 text-[11px] body-muted">{item.jobCount} 个岗位 · {item.percentage.toFixed(1)}%</p></div><a href={drilldownHref({ skills: [item.label] })} class="text-xs font-semibold text-brand">查看岗位</a></div><p class="mt-3 text-xs leading-5 body-muted">{item.rationale}</p>{#if item.status === 'strengthenable' || item.status === 'gap'}<a href="/resume" class="mt-3 inline-flex text-xs font-semibold text-brand">前往简历优化</a>{/if}</article>{/each}</div>
+            <div class="grid grid-cols-2 gap-3">{#each competitiveness.items as item}<article class="rounded-xl border p-4" style="border-color: var(--line);"><div class="flex items-start justify-between gap-3"><div><div class="flex flex-wrap items-center gap-2"><h4 class="text-sm font-semibold">{item.label}</h4><span class:item-covered={item.status === 'covered'} class:item-strengthenable={item.status === 'strengthenable'} class:item-gap={item.status === 'gap'} class="status-badge">{competitivenessStatusLabel(item.status)}</span></div><p class="mt-1 text-[11px] body-muted">{item.jobCount} 个岗位 · {item.percentage.toFixed(1)}%</p></div><a href={drilldownHref({ skills: [item.label] })} class="text-xs font-semibold text-brand">查看岗位</a></div><p class="mt-3 text-xs leading-5 body-muted">{item.rationale}</p>{#if marketContextEligible && item.status === 'strengthenable'}<a href={resumeMarketHref(item.label)} class="mt-3 inline-flex text-xs font-semibold text-brand">生成表达优化</a>{:else if marketContextEligible && item.status === 'gap'}<a href={resumeMarketHref(item.label)} class="mt-3 inline-flex text-xs font-semibold text-brand">核对相关经历</a>{/if}</article>{/each}</div>
           {:else}<p class="text-sm body-muted">当前岗位缺少可用于竞争力分析的结构化技能。</p>{/if}
           {#if competitivenessError}<div class="mt-5 flex items-start gap-3 rounded-xl border px-4 py-3" role="alert" style="border-color: color-mix(in srgb, #c53030 30%, var(--line)); background: color-mix(in srgb, #c53030 6%, var(--panel));"><AlertCircle size={17} class="mt-0.5 shrink-0 text-danger" /><div><p class="text-sm font-semibold">AI 竞争力分析失败</p><p class="mt-1 text-xs body-muted">{competitivenessError} 当前本地结果未受影响。</p></div></div>{/if}
         </div>

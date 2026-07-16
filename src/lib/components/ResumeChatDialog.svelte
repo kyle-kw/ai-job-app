@@ -5,6 +5,7 @@
   import { modalFocus } from '$lib/modal-focus';
   import type {
     JobOption,
+    MarketResumeContextRequest,
     ResumeChatMessage,
     ResumeChatProposal,
     ResumeEditCommitResult,
@@ -17,6 +18,7 @@
   export let resume: ResumeProfile | null = null;
   export let aiReady = false;
   export let initialJobId: string | null = null;
+  export let initialMarketContext: MarketResumeContextRequest | null = null;
   export let initialPrompt = '';
   export let target: ResumeTargetRef | null = null;
 
@@ -27,6 +29,9 @@
 
   let selectedJobId = '';
   let lastInitialJobId: string | null = null;
+  let lastMarketContextSignature = '';
+  let lastTargetSignature = '';
+  let conversationContextInitialized = false;
   let lastInitialPrompt = '';
   let wasOpen = false;
   let input = '';
@@ -43,12 +48,29 @@
   let optionsLoading = false;
 
   $: {
-    if (open && (!wasOpen || initialJobId !== lastInitialJobId)) {
-      selectedJobId = initialJobId ?? '';
+    const marketContextSignature = JSON.stringify(initialMarketContext);
+    const targetSignature = target ? `${target.kind}:${target.id}` : '';
+    const contextChanged = initialJobId !== lastInitialJobId
+      || marketContextSignature !== lastMarketContextSignature
+      || targetSignature !== lastTargetSignature;
+    if (open && (!wasOpen || contextChanged)) {
+      if (conversationContextInitialized && contextChanged) {
+        messages = [];
+        proposal = null;
+        selectedEditIds = new Set<string>();
+        confirmedFactCandidateIds = new Set<string>();
+        error = '';
+        input = initialPrompt;
+        lastInitialPrompt = initialPrompt;
+      }
+      selectedJobId = initialMarketContext ? '' : initialJobId ?? '';
       lastInitialJobId = initialJobId;
-      void loadJobOptions();
+      lastMarketContextSignature = marketContextSignature;
+      lastTargetSignature = targetSignature;
+      conversationContextInitialized = true;
+      if (!initialMarketContext) void loadJobOptions();
     }
-    if (open && initialPrompt && (!wasOpen || initialPrompt !== lastInitialPrompt)) {
+    if (open && initialPrompt !== lastInitialPrompt) {
       input = initialPrompt;
       lastInitialPrompt = initialPrompt;
     }
@@ -144,7 +166,8 @@
       const nextProposal = await backend.proposeResumeChatEdits({
         target: target ?? { kind: 'master', id: resume.id },
         expectedVersion: resume.version,
-        jobId: selectedJobId || null,
+        jobId: initialMarketContext ? null : selectedJobId || null,
+        marketContext: initialMarketContext,
         messages: requestMessages
       });
       proposal = nextProposal;
@@ -222,17 +245,21 @@
       </div>
     {:else}
       <div class="shrink-0 border-b px-6 py-3" style="border-color: var(--line); background: var(--panel-soft);">
-        <div class="flex items-center gap-3">
-          <BriefcaseBusiness size={15} class="shrink-0 body-muted" />
-          <span class="shrink-0 text-xs font-semibold">关联岗位</span>
-          {#if target?.kind !== 'variant'}<input class="input h-9 min-w-0 flex-1" bind:value={jobQuery} on:input={() => void loadJobOptions()} placeholder="搜索岗位或公司" aria-label="搜索关联岗位" />{/if}
-          <select class="select h-9 min-w-0 flex-1" bind:value={selectedJobId} disabled={sending || applying || target?.kind === 'variant'} aria-label="关联岗位">
-            <option value="">{optionsLoading ? '正在加载岗位…' : target?.kind === 'variant' ? '正在读取固定岗位…' : '不指定岗位，优化通用主简历'}</option>
-            {#each jobOptions as job}
-              <option value={job.id}>{job.title} · {job.company}</option>
-            {/each}
-          </select>
-        </div>
+        {#if initialMarketContext}
+          <div class="flex items-start gap-3"><Sparkles size={15} class="mt-0.5 shrink-0 text-brand" /><div><p class="text-xs font-semibold">市场样本上下文 · 主简历</p><p class="mt-1 text-[11px] leading-5 body-muted">关键词范围将在后端重新解析{initialMarketContext.focusSkills.length ? ` · 关注 ${initialMarketContext.focusSkills.join('、')}` : ''}。不会选择单个岗位，也不会自动调用模型或再次访问 BOSS。</p></div></div>
+        {:else}
+          <div class="flex items-center gap-3">
+            <BriefcaseBusiness size={15} class="shrink-0 body-muted" />
+            <span class="shrink-0 text-xs font-semibold">关联岗位</span>
+            {#if target?.kind !== 'variant'}<input class="input h-9 min-w-0 flex-1" bind:value={jobQuery} on:input={() => void loadJobOptions()} placeholder="搜索岗位或公司" aria-label="搜索关联岗位" />{/if}
+            <select class="select h-9 min-w-0 flex-1" bind:value={selectedJobId} disabled={sending || applying || target?.kind === 'variant'} aria-label="关联岗位">
+              <option value="">{optionsLoading ? '正在加载岗位…' : target?.kind === 'variant' ? '正在读取固定岗位…' : '不指定岗位，优化通用主简历'}</option>
+              {#each jobOptions as job}
+                <option value={job.id}>{job.title} · {job.company}</option>
+              {/each}
+            </select>
+          </div>
+        {/if}
       </div>
 
       <div class="scrollbar-thin min-h-0 flex-1 overflow-y-auto px-6 py-5">
@@ -260,6 +287,9 @@
 
         {#if proposal}
           <section class="mt-5 space-y-4" aria-label="AI 修改提案">
+            {#if proposal.marketContext}
+              <div class="rounded-xl border p-3" style="border-color: var(--line); background: var(--brand-faint);"><p class="text-xs font-semibold">后端确认的市场样本：{proposal.marketContext.keywordLabels.join('、')} · {proposal.marketContext.totalJobs} 个本地去重岗位</p><p class="mt-1 text-[11px] leading-5 body-muted">{proposal.marketContext.skills.map((skill) => `${skill.label} ${skill.jobCount} 个/${skill.percentage.toFixed(1)}%`).join(' · ') || '当前没有可用技能项'}</p></div>
+            {/if}
             {#if proposal.warnings.length}
               <div class="rounded-xl border p-3" style="border-color: var(--line); background: var(--warning-soft);">
                 {#each proposal.warnings as warning}<p class="flex gap-2 text-xs leading-5"><AlertCircle size={14} class="mt-0.5 shrink-0 text-warning" />{warning}</p>{/each}
