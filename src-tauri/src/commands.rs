@@ -280,6 +280,7 @@ fn serialize_jobs_json(jobs: &[Job]) -> Result<Vec<u8>, String> {
 pub fn export_job_data_report(
     state: State<'_, AppState>,
     keyword_keys: Vec<String>,
+    trend_window_days: i64,
     output_path: String,
 ) -> Result<RenderResult, String> {
     let report = selected_job_data_report(&state.db, &keyword_keys)?;
@@ -287,7 +288,14 @@ pub fn export_job_data_report(
         return Err("所选关键词暂无岗位，请调整筛选或先完成抓取。".into());
     }
     let output_path = validate_export_path(output_path, "html", "岗位数据报告")?;
-    let mut html = analytics::render_html(&report);
+    let competitiveness =
+        crate::assistant::effective_report_competitiveness(&state.db, &keyword_keys)?;
+    let mut html = analytics::append_decision_sections(
+        analytics::render_html(&report),
+        &report,
+        if trend_window_days == 30 { 30 } else { 7 },
+        competitiveness.as_ref(),
+    );
     if let Some(preparation) =
         crate::assistant::fresh_interview_preparation(&state.db, &keyword_keys)?
     {

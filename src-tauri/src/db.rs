@@ -1,13 +1,15 @@
+use crate::analytics;
 use crate::models::{
     AiProviderConfig, AppSettings, BossProfileState, InterviewPreparation, Job, JobOption, JobPage,
-    JobQuery, ReportKeyword, ResumeCommitResult, ResumeCoverageReport, ResumeEducation,
-    ResumeProfile, ResumeRebaseChange, ResumeRebasePreview, ResumeRebaseResolution,
-    ResumeVariantCommitResult, ResumeVariantDetail, ResumeVariantSummary, ResumeVersionDetail,
-    ResumeVersionSummary, ScrapeRun, SearchSpec, TaskRun,
+    JobQuery, ReportCompetitivenessAnalysis, ReportKeyword, ResumeCommitResult,
+    ResumeCoverageReport, ResumeEducation, ResumeProfile, ResumeRebaseChange, ResumeRebasePreview,
+    ResumeRebaseResolution, ResumeVariantCommitResult, ResumeVariantDetail, ResumeVariantSummary,
+    ResumeVersionDetail, ResumeVersionSummary, ScrapeRun, SearchSpec, TaskRun,
 };
 use crate::time;
 use base64::Engine;
 use rusqlite::backup::Backup;
+use rusqlite::functions::FunctionFlags;
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{
     params, params_from_iter, Connection, OpenFlags, OptionalExtension, Transaction,
@@ -15,14 +17,14 @@ use rusqlite::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 mod providers;
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 6;
+pub const CURRENT_SCHEMA_VERSION: i64 = 7;
 
 const HISTORICAL_KEYWORD_KEY: &str = "__historical_unclassified__";
 const HISTORICAL_KEYWORD_LABEL: &str = "历史未分类";
@@ -167,6 +169,19 @@ pub struct InterviewPreparationCacheRecord {
     pub preparation: InterviewPreparation,
 }
 
+#[derive(Debug, Clone)]
+pub struct ReportCompetitivenessCacheRecord {
+    pub cache_key: String,
+    pub scope_key: String,
+    pub dataset_hash: String,
+    pub resume_id: String,
+    pub resume_version: i64,
+    pub provider_fingerprint: String,
+    pub skill_version: String,
+    pub generated_at: String,
+    pub analysis: ReportCompetitivenessAnalysis,
+}
+
 const JOB_PAGE_SIZE: usize = 50;
 
 #[derive(Debug)]
@@ -231,6 +246,19 @@ impl Database {
             .map_err(|error| error.to_string())?;
         connection
             .busy_timeout(std::time::Duration::from_secs(5))
+            .map_err(|error| error.to_string())?;
+        connection
+            .create_scalar_function(
+                "report_has_skill",
+                2,
+                FunctionFlags::SQLITE_DETERMINISTIC,
+                |context| {
+                    let payload = context.get::<String>(0)?;
+                    let skill = context.get::<String>(1)?;
+                    Ok(serde_json::from_str::<Job>(&payload)
+                        .is_ok_and(|job| analytics::job_has_skill(&job, &skill)))
+                },
+            )
             .map_err(|error| error.to_string())?;
         Ok(connection)
     }
@@ -389,6 +417,7 @@ impl Database {
         Self::migrate_v4(&transaction)?;
         Self::migrate_v5(&transaction)?;
         Self::migrate_v6(&transaction)?;
+        Self::migrate_v7(&transaction)?;
         transaction.commit().map_err(|error| error.to_string())?;
         self.recover_interrupted_tasks()?;
         Ok(())
@@ -828,6 +857,31 @@ impl Database {
                 END;
                 INSERT OR IGNORE INTO schema_migrations(version, applied_at)
                 VALUES (6, datetime('now'));
+                "#,
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    fn migrate_v7(transaction: &Transaction<'_>) -> Result<(), String> {
+        transaction
+            .execute_batch(
+                r#"
+                CREATE TABLE IF NOT EXISTS report_competitiveness_cache (
+                    cache_key TEXT PRIMARY KEY,
+                    scope_key TEXT NOT NULL,
+                    dataset_hash TEXT NOT NULL,
+                    resume_id TEXT NOT NULL,
+                    resume_version INTEGER NOT NULL,
+                    provider_fingerprint TEXT NOT NULL,
+                    skill_version TEXT NOT NULL,
+                    generated_at TEXT NOT NULL,
+                    payload_json TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_report_competitiveness_scope_generated
+                    ON report_competitiveness_cache(scope_key, generated_at DESC);
+                INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+                VALUES (7, datetime('now'));
                 "#,
             )
             .map_err(|error| error.to_string())?;
@@ -2172,6 +2226,61 @@ impl Database {
         Ok(())
     }
 
+    pub fn report_competitiveness_by_key(
+        &self,
+        cache_key: &str,
+    ) -> Result<Option<ReportCompetitivenessCacheRecord>, String> {
+        let connection = self.connect()?;
+        connection
+            .query_row(
+                "SELECT cache_key,scope_key,dataset_hash,resume_id,resume_version,provider_fingerprint,skill_version,generated_at,payload_json FROM report_competitiveness_cache WHERE cache_key=?1",
+                [cache_key],
+                report_competitiveness_cache_from_row,
+            )
+            .optional()
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn latest_report_competitiveness(
+        &self,
+        scope_key: &str,
+    ) -> Result<Option<ReportCompetitivenessCacheRecord>, String> {
+        let connection = self.connect()?;
+        connection
+            .query_row(
+                "SELECT cache_key,scope_key,dataset_hash,resume_id,resume_version,provider_fingerprint,skill_version,generated_at,payload_json FROM report_competitiveness_cache WHERE scope_key=?1 ORDER BY generated_at DESC LIMIT 1",
+                [scope_key],
+                report_competitiveness_cache_from_row,
+            )
+            .optional()
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn save_report_competitiveness(
+        &self,
+        record: &ReportCompetitivenessCacheRecord,
+    ) -> Result<(), String> {
+        let mut connection = self.connect()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| error.to_string())?;
+        let payload = serde_json::to_string(&record.analysis).map_err(|error| error.to_string())?;
+        transaction
+            .execute(
+                "INSERT INTO report_competitiveness_cache(cache_key,scope_key,dataset_hash,resume_id,resume_version,provider_fingerprint,skill_version,generated_at,payload_json) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9) ON CONFLICT(cache_key) DO UPDATE SET scope_key=excluded.scope_key,dataset_hash=excluded.dataset_hash,resume_id=excluded.resume_id,resume_version=excluded.resume_version,provider_fingerprint=excluded.provider_fingerprint,skill_version=excluded.skill_version,generated_at=excluded.generated_at,payload_json=excluded.payload_json",
+                params![record.cache_key, record.scope_key, record.dataset_hash, record.resume_id, record.resume_version, record.provider_fingerprint, record.skill_version, record.generated_at, payload],
+            )
+            .map_err(|error| error.to_string())?;
+        transaction
+            .execute(
+                "DELETE FROM report_competitiveness_cache WHERE cache_key NOT IN (SELECT cache_key FROM report_competitiveness_cache ORDER BY generated_at DESC LIMIT 10)",
+                [],
+            )
+            .map_err(|error| error.to_string())?;
+        transaction.commit().map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
     fn list_json<T: serde::de::DeserializeOwned>(&self, query: &str) -> Result<Vec<T>, String> {
         let connection = self.connect()?;
         let mut statement = connection
@@ -2388,6 +2497,56 @@ fn job_query_where(
     }
     if query.missing_description {
         conditions.push("has_description=0".into());
+    }
+    let keyword_keys = query
+        .keyword_keys
+        .iter()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .collect::<BTreeSet<_>>();
+    if !keyword_keys.is_empty() {
+        let placeholders = keyword_keys
+            .iter()
+            .map(|value| {
+                values.push((*value).to_string().into());
+                format!("?{}", values.len())
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        conditions.push(format!(
+            "EXISTS(SELECT 1 FROM job_keywords report_keywords WHERE report_keywords.job_id=jobs.id AND report_keywords.keyword_key IN ({placeholders}))"
+        ));
+    }
+    for skill in query
+        .skills
+        .iter()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .collect::<BTreeSet<_>>()
+    {
+        push_job_condition(
+            &mut conditions,
+            &mut values,
+            "report_has_skill(payload_json, ?)=1",
+            skill.to_string().into(),
+        );
+    }
+    if !query.experience.trim().is_empty() {
+        push_job_condition(
+            &mut conditions,
+            &mut values,
+            "trim(json_extract(payload_json,'$.experience'))=?",
+            query.experience.trim().to_string().into(),
+        );
+    }
+    let salary_mid = "((salary_min+salary_max)/2.0)";
+    match query.salary_band.trim() {
+        "under-15" => conditions.push(format!("salary_min IS NOT NULL AND salary_max IS NOT NULL AND {salary_mid}<15")),
+        "15-25" => conditions.push(format!("salary_min IS NOT NULL AND salary_max IS NOT NULL AND {salary_mid}>=15 AND {salary_mid}<25")),
+        "25-35" => conditions.push(format!("salary_min IS NOT NULL AND salary_max IS NOT NULL AND {salary_mid}>=25 AND {salary_mid}<35")),
+        "35-50" => conditions.push(format!("salary_min IS NOT NULL AND salary_max IS NOT NULL AND {salary_mid}>=35 AND {salary_mid}<50")),
+        "50-plus" => conditions.push(format!("salary_min IS NOT NULL AND salary_max IS NOT NULL AND {salary_mid}>=50")),
+        _ => {}
     }
     if let Some((minimum, maximum)) = salary_filter_range(query.salary.trim()) {
         if maximum.is_finite() {
@@ -2883,6 +3042,30 @@ fn interview_cache_from_row(
     })
 }
 
+fn report_competitiveness_cache_from_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<ReportCompetitivenessCacheRecord> {
+    let payload: String = row.get(8)?;
+    let analysis = serde_json::from_str(&payload).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            payload.len(),
+            rusqlite::types::Type::Text,
+            Box::new(error),
+        )
+    })?;
+    Ok(ReportCompetitivenessCacheRecord {
+        cache_key: row.get(0)?,
+        scope_key: row.get(1)?,
+        dataset_hash: row.get(2)?,
+        resume_id: row.get(3)?,
+        resume_version: row.get(4)?,
+        provider_fingerprint: row.get(5)?,
+        skill_version: row.get(6)?,
+        generated_at: row.get(7)?,
+        analysis,
+    })
+}
+
 pub fn fingerprint(company: &str, title: &str, location: &str) -> String {
     let normalized = format!(
         "{}|{}|{}",
@@ -3082,7 +3265,7 @@ mod tests {
 
         db.initialize().unwrap();
 
-        assert_eq!(db.schema_version().unwrap(), 6);
+        assert_eq!(db.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
         assert_eq!(db.active_resume().unwrap().unwrap().id, master.resume.id);
         assert_eq!(
             db.active_resume().unwrap().unwrap().version,
@@ -3103,7 +3286,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let db = Database::new(dir.path().join("variants.db"));
         db.initialize().unwrap();
-        assert_eq!(db.schema_version().unwrap(), 6);
+        assert_eq!(db.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
 
         let mut master = resume(vec![]);
         master.name = "林知远".into();
@@ -3574,6 +3757,118 @@ mod tests {
         };
         assert!(db.reserve_task(&task).unwrap());
         assert!(!db.reserve_task(&competing).unwrap());
+    }
+
+    #[test]
+    fn report_drilldown_combines_keyword_or_skill_and_and_exact_dimensions() {
+        let dir = tempdir().unwrap();
+        let db = Database::new(dir.path().join("test.db"));
+        db.initialize().unwrap();
+
+        let mut agent = job("agent", "20-30K");
+        agent.skills = vec!["Python".into(), "RAG".into()];
+        agent.experience = "3-5年".into();
+        let agent_id = agent.id.clone();
+        db.upsert_scrape_list_job(agent, "AI Agent").unwrap();
+
+        let mut data = job("data", "10-20K");
+        data.skills = vec!["Python".into(), "Java".into()];
+        data.experience = "5-10年".into();
+        let data_id = data.id.clone();
+        db.upsert_scrape_list_job(data, "数据分析").unwrap();
+
+        let keywords = db.list_report_keywords().unwrap();
+        let agent_key = keywords
+            .iter()
+            .find(|item| item.label == "AI Agent")
+            .unwrap()
+            .key
+            .clone();
+        let data_key = keywords
+            .iter()
+            .find(|item| item.label == "数据分析")
+            .unwrap()
+            .key
+            .clone();
+
+        let keyword_page = db
+            .list_jobs_page(&JobQuery {
+                keyword_keys: vec![agent_key.clone(), data_key.clone()],
+                ..JobQuery::default()
+            })
+            .unwrap();
+        assert_eq!(keyword_page.total, 2);
+
+        let skill_page = db
+            .list_jobs_page(&JobQuery {
+                keyword_keys: vec![agent_key, data_key],
+                skills: vec!["Python".into(), "RAG".into()],
+                experience: "3-5年".into(),
+                salary_band: "25-35".into(),
+                ..JobQuery::default()
+            })
+            .unwrap();
+        assert_eq!(skill_page.total, 1);
+        assert_eq!(skill_page.items[0].id, agent_id);
+
+        let lower_band = db
+            .list_jobs_page(&JobQuery {
+                salary_band: "15-25".into(),
+                ..JobQuery::default()
+            })
+            .unwrap();
+        assert_eq!(lower_band.total, 1);
+        assert_eq!(lower_band.items[0].id, data_id);
+    }
+
+    #[test]
+    fn report_competitiveness_cache_is_scope_isolated_and_retains_ten_entries() {
+        let dir = tempdir().unwrap();
+        let db = Database::new(dir.path().join("test.db"));
+        db.initialize().unwrap();
+        for index in 0..11 {
+            db.save_report_competitiveness(&ReportCompetitivenessCacheRecord {
+                cache_key: format!("cache-{index:02}"),
+                scope_key: format!("scope-{}", index % 2),
+                dataset_hash: format!("dataset-{index}"),
+                resume_id: "resume".into(),
+                resume_version: index,
+                provider_fingerprint: "provider".into(),
+                skill_version: "v1".into(),
+                generated_at: format!("2026-07-16T12:{index:02}:00+08:00"),
+                analysis: ReportCompetitivenessAnalysis {
+                    source: "ai".into(),
+                    resume_id: "resume".into(),
+                    resume_version: index,
+                    generated_at: format!("2026-07-16T12:{index:02}:00+08:00"),
+                    items: vec![],
+                },
+            })
+            .unwrap();
+        }
+
+        assert!(db
+            .report_competitiveness_by_key("cache-00")
+            .unwrap()
+            .is_none());
+        assert!(db
+            .report_competitiveness_by_key("cache-10")
+            .unwrap()
+            .is_some());
+        assert_eq!(
+            db.latest_report_competitiveness("scope-0")
+                .unwrap()
+                .unwrap()
+                .cache_key,
+            "cache-10"
+        );
+        assert_eq!(
+            db.latest_report_competitiveness("scope-1")
+                .unwrap()
+                .unwrap()
+                .cache_key,
+            "cache-09"
+        );
     }
 
     #[test]

@@ -8,7 +8,7 @@ function normalize(value: string): string {
   return value.trim().toLowerCase().replace(/[\s，,。；;：:、·|/\\()[\]（）【】_-]+/g, '');
 }
 
-function exactMatcher(label: string): (text: string) => boolean {
+export function exactMatcher(label: string): (text: string) => boolean {
   const needle = label.trim();
   if (!needle) return () => false;
   if (/^[\x00-\x7F]+$/.test(needle) && /[a-z0-9]/i.test(needle)) {
@@ -29,7 +29,7 @@ function coverageRequirementId(normalized: string): string {
   return `requirement-${hash.toString(16).padStart(16, '0')}`;
 }
 
-function resumeSearchFields(resume: ResumeProfile): Array<{ path: string; text: string }> {
+export function resumeSearchFields(resume: ResumeProfile): Array<{ path: string; text: string }> {
   return [
     { path: '/headline', text: resume.headline }, { path: '/summary', text: resume.summary },
     ...resume.professionalSkills.map((group, index) => ({ path: `/professionalSkills/${index}`, text: `${group.label} ${group.items.join(' ')}` })),

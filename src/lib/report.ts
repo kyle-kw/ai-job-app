@@ -1,4 +1,4 @@
-import type { Job, JobDataReport, ReportBucket, ReportKeyword, SalaryByExperience } from '$lib/types';
+import type { Job, JobDataReport, ReportBucket, ReportKeyword, ReportSkillChange, ReportTrendWindow, SalaryByExperience } from '$lib/types';
 
 const fallback = (value: string) => value.trim() || '未注明';
 const cityOf = (value: string) => value.split('·')[0]?.trim() || '未注明';
@@ -36,6 +36,103 @@ function median(values: number[]): number | null {
   return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
+const shanghaiDateFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit'
+});
+
+function shanghaiDateKey(value: string | Date): string | null {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const parts = Object.fromEntries(shanghaiDateFormatter.formatToParts(date).map((part) => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function dateOrdinal(value: string | Date): number | null {
+  const key = shanghaiDateKey(value);
+  if (!key) return null;
+  const [year, month, day] = key.split('-').map(Number);
+  return Math.floor(Date.UTC(year, month - 1, day) / 86_400_000);
+}
+
+const ordinalDate = (ordinal: number) => new Date(ordinal * 86_400_000).toISOString().slice(0, 10);
+const rounded = (value: number) => Math.round(value * 10) / 10;
+
+function trendWindow(jobs: Job[], generatedAt: Date, windowDays: 7 | 30): ReportTrendWindow {
+  const today = dateOrdinal(generatedAt) ?? Math.floor(generatedAt.getTime() / 86_400_000);
+  const recentStart = today - windowDays + 1;
+  const previousStart = recentStart - windowDays;
+  const recentJobs: Job[] = [];
+  const previousJobs: Job[] = [];
+  const dailyCounts = new Map<number, number>();
+  let dateSampleCount = 0;
+  let recentlySeenExistingJobs = 0;
+
+  for (const job of jobs) {
+    const first = dateOrdinal(job.firstSeen);
+    const last = dateOrdinal(job.lastSeen);
+    if (first != null) {
+      dateSampleCount += 1;
+      if (first >= recentStart && first <= today) {
+        recentJobs.push(job);
+        dailyCounts.set(first, (dailyCounts.get(first) ?? 0) + 1);
+      } else if (first >= previousStart && first < recentStart) {
+        previousJobs.push(job);
+      }
+    }
+    if (first != null && first < recentStart && last != null && last >= recentStart && last <= today) {
+      recentlySeenExistingJobs += 1;
+    }
+  }
+
+  const skillCounts = (items: Job[]) => {
+    const counter = new Map<string, number>();
+    for (const job of items) {
+      for (const skill of new Set(job.skills.map((item) => item.trim()).filter(Boolean))) increment(counter, skill);
+    }
+    return counter;
+  };
+  const recentSkills = skillCounts(recentJobs);
+  const previousSkills = skillCounts(previousJobs);
+  const skillChanges: ReportSkillChange[] = [...new Set([...recentSkills.keys(), ...previousSkills.keys()])]
+    .map((label) => {
+      const recentCount = recentSkills.get(label) ?? 0;
+      const previousCount = previousSkills.get(label) ?? 0;
+      const recentPercentage = percentage(recentCount, recentJobs.length);
+      const previousPercentage = percentage(previousCount, previousJobs.length);
+      return {
+        label, recentCount, recentPercentage, previousCount, previousPercentage,
+        deltaPercentagePoints: rounded(recentPercentage - previousPercentage)
+      };
+    })
+    .sort((left, right) => Math.abs(right.deltaPercentagePoints) - Math.abs(left.deltaPercentagePoints)
+      || right.recentCount - left.recentCount || left.label.localeCompare(right.label, 'zh-CN'))
+    .slice(0, 8);
+  const salaryMids = (items: Job[]) => items.flatMap((job) => {
+    const parsed = parseMonthlySalary(job.salary);
+    return parsed ? [parsed.mid] : [];
+  });
+  const recentSalaryMedianK = median(salaryMids(recentJobs));
+  const previousSalaryMedianK = median(salaryMids(previousJobs));
+
+  return {
+    windowDays,
+    recentNewJobs: recentJobs.length,
+    previousNewJobs: previousJobs.length,
+    newJobsChangePercentage: previousJobs.length ? rounded((recentJobs.length - previousJobs.length) / previousJobs.length * 100) : null,
+    recentlySeenExistingJobs,
+    recentSalaryMedianK,
+    previousSalaryMedianK,
+    salaryMedianDeltaK: recentSalaryMedianK != null && previousSalaryMedianK != null ? rounded(recentSalaryMedianK - previousSalaryMedianK) : null,
+    dateSampleCount,
+    dateCoverage: percentage(dateSampleCount, jobs.length),
+    dailyNewJobs: Array.from({ length: windowDays }, (_, index) => {
+      const ordinal = recentStart + index;
+      return { date: ordinalDate(ordinal), count: dailyCounts.get(ordinal) ?? 0 };
+    }),
+    skillChanges
+  };
+}
+
 export function classifyJobRole(title: string): string {
   const value = title.toLocaleLowerCase();
   if (/架构|专家|负责人|lead/.test(value)) return '架构 / 专家';
@@ -56,7 +153,7 @@ function salaryBand(value: number): string {
   return '50K 以上';
 }
 
-export function buildClientJobDataReport(jobs: Job[], selectedKeywords: ReportKeyword[] = []): JobDataReport {
+export function buildClientJobDataReport(jobs: Job[], selectedKeywords: ReportKeyword[] = [], now = new Date()): JobDataReport {
   const total = jobs.length;
   const companies = new Set<string>();
   const counters = {
@@ -108,12 +205,13 @@ export function buildClientJobDataReport(jobs: Job[], selectedKeywords: ReportKe
   const dates = jobs.flatMap((job) => [job.firstSeen, job.lastSeen]).filter(Boolean).sort();
 
   return {
-    generatedAt: new Date().toISOString(), selectedKeywords, dataFrom: dates[0]?.slice(0, 10), dataTo: dates.at(-1)?.slice(0, 10),
+    generatedAt: now.toISOString(), selectedKeywords, dataFrom: dates[0]?.slice(0, 10), dataTo: dates.at(-1)?.slice(0, 10),
     totalJobs: total, totalCompanies: companies.size, totalCities: counters.cities.size, detailJobs,
     detailCoverage: percentage(detailJobs, total),
     salary: { sampleCount: mids.length, medianLowK: median(lows), medianMidK: median(mids), medianHighK: median(highs), extraMonthsCount, bands: buckets(counters.bands, mids.length) },
     experience, degree: buckets(counters.degree, total), roles: buckets(counters.roles, total), cities: buckets(counters.cities, total),
     industries: buckets(counters.industries, total), companyScales: buckets(counters.scales, total), topSkills,
-    skillPairs: buckets(counters.pairs, total, 10), welfare: buckets(counters.welfare, total), salaryByExperience: salaryByExperienceRows, insights
+    skillPairs: buckets(counters.pairs, total, 10), welfare: buckets(counters.welfare, total), salaryByExperience: salaryByExperienceRows, insights,
+    trends: { sevenDays: trendWindow(jobs, now, 7), thirtyDays: trendWindow(jobs, now, 30) }
   };
 }

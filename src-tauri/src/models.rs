@@ -180,6 +180,14 @@ pub struct JobQuery {
     #[serde(default)]
     pub missing_description: bool,
     #[serde(default)]
+    pub keyword_keys: Vec<String>,
+    #[serde(default)]
+    pub skills: Vec<String>,
+    #[serde(default)]
+    pub experience: String,
+    #[serde(default)]
+    pub salary_band: String,
+    #[serde(default)]
     pub cursor: Option<String>,
 }
 
@@ -872,6 +880,48 @@ pub struct SalaryByExperience {
     pub median_k: f64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportTrendPoint {
+    pub date: String,
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportSkillChange {
+    pub label: String,
+    pub recent_count: i64,
+    pub recent_percentage: f64,
+    pub previous_count: i64,
+    pub previous_percentage: f64,
+    pub delta_percentage_points: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportTrendWindow {
+    pub window_days: i64,
+    pub recent_new_jobs: i64,
+    pub previous_new_jobs: i64,
+    pub new_jobs_change_percentage: Option<f64>,
+    pub recently_seen_existing_jobs: i64,
+    pub recent_salary_median_k: Option<f64>,
+    pub previous_salary_median_k: Option<f64>,
+    pub salary_median_delta_k: Option<f64>,
+    pub date_sample_count: i64,
+    pub date_coverage: f64,
+    pub daily_new_jobs: Vec<ReportTrendPoint>,
+    pub skill_changes: Vec<ReportSkillChange>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportTrends {
+    pub seven_days: ReportTrendWindow,
+    pub thirty_days: ReportTrendWindow,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ReportKeyword {
@@ -906,6 +956,43 @@ pub struct JobDataReport {
     pub welfare: Vec<ReportBucket>,
     pub salary_by_experience: Vec<SalaryByExperience>,
     pub insights: Vec<String>,
+    pub trends: ReportTrends,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportCompetitivenessItem {
+    pub id: String,
+    pub label: String,
+    pub job_count: i64,
+    pub percentage: f64,
+    pub status: String,
+    pub resume_paths: Vec<String>,
+    pub evidence_fact_ids: Vec<String>,
+    pub rationale: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportCompetitivenessAnalysis {
+    pub source: String,
+    pub resume_id: String,
+    pub resume_version: i64,
+    pub generated_at: String,
+    pub items: Vec<ReportCompetitivenessItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportCompetitivenessState {
+    pub status: String,
+    pub reason: Option<String>,
+    pub has_resume: bool,
+    pub has_provider: bool,
+    pub generated_at: Option<String>,
+    pub local: Option<ReportCompetitivenessAnalysis>,
+    pub ai: Option<ReportCompetitivenessAnalysis>,
+    pub effective_source: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

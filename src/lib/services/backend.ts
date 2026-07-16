@@ -4,6 +4,7 @@ import { mockJobs, mockResume, mockSnapshot } from '$lib/mock-data';
 import { deterministicFit } from '$lib/fit';
 import { filterJobs } from '$lib/job-filters';
 import { buildClientJobDataReport } from '$lib/report';
+import { buildLocalReportCompetitiveness } from '$lib/report-competitiveness';
 import { flattenProfessionalSkills, suggestedProfessionalSkillGroups } from '$lib/resume-templates';
 import { applyResumeRebase, buildResumeRebasePreview } from '$lib/resume-rebase';
 import { buildLocalResumeCoverage, summarizeCoverage } from '$lib/resume-coverage';
@@ -30,6 +31,8 @@ import type {
   ProviderTestResult,
   ProviderSaveResult,
   ReportKeyword,
+  ReportCompetitivenessAnalysis,
+  ReportCompetitivenessState,
   RenderResult,
   RenderResumeRequest,
   ResumeChatProposal,
@@ -83,6 +86,7 @@ const initialMockVersions = (): ResumeVersionDetail[] => [{
   summary: '浏览器演示初始版本', profile: structuredClone(mockResume)
 }];
 let mockPreparationState = initialMockPreparationState();
+let mockCompetitivenessCache: { scope: string; resumeVersion: number; signature: string; analysis: ReportCompetitivenessAnalysis } | null = null;
 let mockVersions = initialMockVersions();
 let mockVariants: ResumeVariantDetail[] = [];
 
@@ -93,6 +97,7 @@ export function resetBrowserMockState() {
   mockState = structuredClone(mockSnapshot);
   mockJobsState = structuredClone(mockJobs);
   mockPreparationState = initialMockPreparationState();
+  mockCompetitivenessCache = null;
   mockVersions = initialMockVersions();
   mockVariants = [];
 }
@@ -139,15 +144,16 @@ export const backend = {
 
   async listJobsPage(query: JobQuery): Promise<JobPage> {
     if (browserMode()) {
-      const filtered = filterJobs(mockJobsState, query);
-        const offset = Number(query.cursor || 0);
-        const items = filtered.slice(offset, offset + 50);
-        return {
-          items: structuredClone(items),
-          total: filtered.length,
-          pendingDetailCount: mockJobsState.filter((job) => job.description.trim() && !job.structuredDetails).length,
-          nextCursor: offset + items.length < filtered.length ? String(offset + items.length) : null
-        };
+      const scoped = query.keywordKeys?.length ? mockJobsForKeywords(query.keywordKeys) : mockJobsState;
+      const filtered = filterJobs(scoped, query);
+      const offset = Number(query.cursor || 0);
+      const items = filtered.slice(offset, offset + 50);
+      return {
+        items: structuredClone(items),
+        total: filtered.length,
+        pendingDetailCount: mockJobsState.filter((job) => job.description.trim() && !job.structuredDetails).length,
+        nextCursor: offset + items.length < filtered.length ? String(offset + items.length) : null
+      };
     }
     return invoke('list_jobs_page', { query });
   },
@@ -218,9 +224,61 @@ export const backend = {
     return invoke('export_jobs_json', { outputPath });
   },
 
-  async exportJobDataReport(keywordKeys: string[], outputPath: string): Promise<RenderResult> {
+  async exportJobDataReport(keywordKeys: string[], trendWindowDays: 7 | 30, outputPath: string): Promise<RenderResult> {
     if (browserMode()) return { path: outputPath || 'browser-demo://岗位数据报告.html', fileName: outputPath.split(/[\\/]/).at(-1) || '岗位数据报告_demo.html' };
-    return invoke('export_job_data_report', { keywordKeys, outputPath });
+    return invoke('export_job_data_report', { keywordKeys, trendWindowDays, outputPath });
+  },
+
+  async getReportCompetitivenessState(keywordKeys: string[]): Promise<ReportCompetitivenessState> {
+    if (browserMode()) {
+      const hasResume = Boolean(mockState.resume);
+      const hasProvider = mockState.readiness.ai;
+      const jobs = mockJobsForKeywords(keywordKeys);
+      if (!hasResume) return { status: 'missing', reason: 'no_resume', hasResume, hasProvider, local: null, ai: null, effectiveSource: null };
+      if (!jobs.length) return { status: 'missing', reason: 'no_jobs', hasResume, hasProvider, local: null, ai: null, effectiveSource: null };
+      const report = buildClientJobDataReport(jobs, currentMockReportKeywords().filter((keyword) => keywordKeys.includes(keyword.key)));
+      const local = buildLocalReportCompetitiveness(report.topSkills, mockState.resume!);
+      const scope = [...keywordKeys].sort().join('|');
+      const signature = report.topSkills.slice(0, 12).map((item) => `${item.label}:${item.count}`).join('|');
+      const fresh = mockCompetitivenessCache?.scope === scope
+        && mockCompetitivenessCache.resumeVersion === mockState.resume!.version
+        && mockCompetitivenessCache.signature === signature;
+      return {
+        status: fresh ? 'fresh' : mockCompetitivenessCache?.scope === scope ? 'stale' : 'missing',
+        reason: hasProvider ? (fresh ? null : mockCompetitivenessCache?.scope === scope ? 'data_changed' : null) : 'no_provider',
+        hasResume,
+        hasProvider,
+        generatedAt: fresh ? mockCompetitivenessCache?.analysis.generatedAt : null,
+        local,
+        ai: fresh ? mockCompetitivenessCache?.analysis : null,
+        effectiveSource: fresh ? 'ai' : 'local'
+      };
+    }
+    return invoke('get_report_competitiveness_state', { keywordKeys });
+  },
+
+  async generateReportCompetitiveness(keywordKeys: string[], force = false): Promise<ReportCompetitivenessState> {
+    if (browserMode()) {
+      if (!mockState.resume) throw new Error('请先导入主简历');
+      if (!mockState.readiness.ai) throw new Error('请先配置并验证默认模型');
+      const report = buildClientJobDataReport(mockJobsForKeywords(keywordKeys), currentMockReportKeywords().filter((keyword) => keywordKeys.includes(keyword.key)));
+      const local = buildLocalReportCompetitiveness(report.topSkills, mockState.resume);
+      const analysis: ReportCompetitivenessAnalysis = {
+        ...local,
+        source: 'ai',
+        generatedAt: new Date().toISOString(),
+        items: local.items.map((item) => ({ ...item, rationale: `AI 语义复核：${item.rationale}` }))
+      };
+      mockCompetitivenessCache = {
+        scope: [...keywordKeys].sort().join('|'),
+        resumeVersion: mockState.resume.version,
+        signature: report.topSkills.slice(0, 12).map((item) => `${item.label}:${item.count}`).join('|'),
+        analysis
+      };
+      void force;
+      return backend.getReportCompetitivenessState(keywordKeys);
+    }
+    return invoke('generate_report_competitiveness', { keywordKeys, force });
   },
 
   async getInterviewPreparationState(keywordKeys: string[]): Promise<InterviewPreparationState> {

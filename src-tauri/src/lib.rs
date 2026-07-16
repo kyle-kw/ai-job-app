@@ -166,6 +166,8 @@ pub fn run() {
             assistant::open_github_issues,
             assistant::get_interview_preparation_state,
             assistant::generate_interview_preparation,
+            assistant::get_report_competitiveness_state,
+            assistant::generate_report_competitiveness,
             assistant::propose_resume_chat_edits,
             assistant::apply_resume_chat_edits,
             assistant::analyze_resume_coverage,

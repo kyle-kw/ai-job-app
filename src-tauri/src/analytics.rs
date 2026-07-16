@@ -1,8 +1,11 @@
 use crate::models::{
-    Job, JobDataReport, ReportBucket, ReportKeyword, SalaryByExperience, SalarySummary,
+    Job, JobDataReport, ReportBucket, ReportCompetitivenessAnalysis, ReportKeyword,
+    ReportSkillChange, ReportTrendPoint, ReportTrendWindow, ReportTrends, SalaryByExperience,
+    SalarySummary,
 };
 use crate::time;
-use std::collections::{BTreeSet, HashMap};
+use chrono::{DateTime, Duration, FixedOffset, NaiveDate};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 const SKILL_TAXONOMY: &[(&str, &[&str])] = &[
     ("RAG / 检索增强", &["rag", "检索增强"]),
@@ -83,6 +86,14 @@ const SKILL_TAXONOMY: &[(&str, &[&str])] = &[
 pub fn build_report_for_keywords(
     jobs: &[Job],
     selected_keywords: Vec<ReportKeyword>,
+) -> JobDataReport {
+    build_report_for_keywords_at(jobs, selected_keywords, time::shanghai_now())
+}
+
+fn build_report_for_keywords_at(
+    jobs: &[Job],
+    selected_keywords: Vec<ReportKeyword>,
+    now: DateTime<FixedOffset>,
 ) -> JobDataReport {
     let total = jobs.len() as i64;
     let mut companies = BTreeSet::new();
@@ -217,7 +228,7 @@ pub fn build_report_for_keywords(
     first_dates.sort();
     last_dates.sort();
     JobDataReport {
-        generated_at: time::shanghai_rfc3339(),
+        generated_at: now.to_rfc3339(),
         selected_keywords,
         data_from: first_dates.first().map(|value| date_part(value)),
         data_to: last_dates.last().map(|value| date_part(value)),
@@ -245,7 +256,137 @@ pub fn build_report_for_keywords(
         welfare: buckets(welfare_counter, total, 12),
         salary_by_experience,
         insights,
+        trends: ReportTrends {
+            seven_days: build_trend_window(jobs, now.date_naive(), 7),
+            thirty_days: build_trend_window(jobs, now.date_naive(), 30),
+        },
     }
+}
+
+fn build_trend_window(jobs: &[Job], today: NaiveDate, window_days: i64) -> ReportTrendWindow {
+    let recent_start = today - Duration::days(window_days - 1);
+    let previous_start = recent_start - Duration::days(window_days);
+    let mut recent_jobs = Vec::new();
+    let mut previous_jobs = Vec::new();
+    let mut daily_counts = BTreeMap::<NaiveDate, i64>::new();
+    let mut date_sample_count = 0_i64;
+    let mut recently_seen_existing_jobs = 0_i64;
+
+    for job in jobs {
+        let first = shanghai_date(&job.first_seen);
+        let last = shanghai_date(&job.last_seen);
+        if let Some(first) = first {
+            date_sample_count += 1;
+            if first >= recent_start && first <= today {
+                recent_jobs.push(job);
+                *daily_counts.entry(first).or_default() += 1;
+            } else if first >= previous_start && first < recent_start {
+                previous_jobs.push(job);
+            }
+            if first < recent_start
+                && last.is_some_and(|last| last >= recent_start && last <= today)
+            {
+                recently_seen_existing_jobs += 1;
+            }
+        }
+    }
+
+    let skill_counts = |items: &[&Job]| {
+        let mut counter = HashMap::new();
+        for job in items {
+            for skill in detected_skills(job) {
+                increment(&mut counter, skill);
+            }
+        }
+        counter
+    };
+    let recent_skills = skill_counts(&recent_jobs);
+    let previous_skills = skill_counts(&previous_jobs);
+    let mut labels = BTreeSet::new();
+    labels.extend(recent_skills.keys().cloned());
+    labels.extend(previous_skills.keys().cloned());
+    let mut skill_changes = labels
+        .into_iter()
+        .map(|label| {
+            let recent_count = recent_skills.get(&label).copied().unwrap_or(0);
+            let previous_count = previous_skills.get(&label).copied().unwrap_or(0);
+            let recent_percentage = percentage(recent_count, recent_jobs.len() as i64);
+            let previous_percentage = percentage(previous_count, previous_jobs.len() as i64);
+            ReportSkillChange {
+                label,
+                recent_count,
+                recent_percentage,
+                previous_count,
+                previous_percentage,
+                delta_percentage_points: round_one(recent_percentage - previous_percentage),
+            }
+        })
+        .collect::<Vec<_>>();
+    skill_changes.sort_by(|left, right| {
+        right
+            .delta_percentage_points
+            .abs()
+            .total_cmp(&left.delta_percentage_points.abs())
+            .then_with(|| right.recent_count.cmp(&left.recent_count))
+            .then_with(|| left.label.cmp(&right.label))
+    });
+    skill_changes.truncate(8);
+
+    let salary_mids = |items: &[&Job]| {
+        items
+            .iter()
+            .filter_map(|job| parse_salary(&job.salary).map(|(_, mid, _, _)| mid))
+            .collect::<Vec<_>>()
+    };
+    let recent_salary_median_k = median(&salary_mids(&recent_jobs));
+    let previous_salary_median_k = median(&salary_mids(&previous_jobs));
+
+    ReportTrendWindow {
+        window_days,
+        recent_new_jobs: recent_jobs.len() as i64,
+        previous_new_jobs: previous_jobs.len() as i64,
+        new_jobs_change_percentage: if previous_jobs.is_empty() {
+            None
+        } else {
+            Some(round_one(
+                (recent_jobs.len() as f64 - previous_jobs.len() as f64)
+                    / previous_jobs.len() as f64
+                    * 100.0,
+            ))
+        },
+        recently_seen_existing_jobs,
+        recent_salary_median_k,
+        previous_salary_median_k,
+        salary_median_delta_k: recent_salary_median_k
+            .zip(previous_salary_median_k)
+            .map(|(recent, previous)| round_one(recent - previous)),
+        date_sample_count,
+        date_coverage: percentage(date_sample_count, jobs.len() as i64),
+        daily_new_jobs: (0..window_days)
+            .map(|index| {
+                let date = recent_start + Duration::days(index);
+                ReportTrendPoint {
+                    date: date.format("%Y-%m-%d").to_string(),
+                    count: daily_counts.get(&date).copied().unwrap_or(0),
+                }
+            })
+            .collect(),
+        skill_changes,
+    }
+}
+
+fn shanghai_date(value: &str) -> Option<NaiveDate> {
+    if let Ok(value) = DateTime::parse_from_rfc3339(value) {
+        let shanghai = FixedOffset::east_opt(8 * 60 * 60)?;
+        return Some(value.with_timezone(&shanghai).date_naive());
+    }
+    value
+        .get(..10)
+        .and_then(|value| NaiveDate::parse_from_str(value, "%Y-%m-%d").ok())
+}
+
+fn round_one(value: f64) -> f64 {
+    (value * 10.0).round() / 10.0
 }
 
 pub fn render_html(report: &JobDataReport) -> String {
@@ -295,6 +436,86 @@ pub fn render_html(report: &JobDataReport) -> String {
         scales = render_bars(&report.company_scales),
         welfare = render_bars(&report.welfare),
         generated = escape_html(&report.generated_at),
+    )
+}
+
+pub fn append_decision_sections(
+    html: String,
+    report: &JobDataReport,
+    trend_window_days: i64,
+    competitiveness: Option<&ReportCompetitivenessAnalysis>,
+) -> String {
+    let trend = if trend_window_days == 30 {
+        &report.trends.thirty_days
+    } else {
+        &report.trends.seven_days
+    };
+    let change = trend
+        .new_jobs_change_percentage
+        .map(|value| format!("{value:+.1}%"))
+        .unwrap_or_else(|| "暂无可比数据".into());
+    let salary_change = trend
+        .salary_median_delta_k
+        .map(|value| format!("{value:+.1}K"))
+        .unwrap_or_else(|| "暂无可比数据".into());
+    let skill_changes = if trend.skill_changes.is_empty() {
+        "<p>当前窗口暂无足够的技能变化样本。</p>".to_string()
+    } else {
+        format!(
+            "<ul>{}</ul>",
+            trend
+                .skill_changes
+                .iter()
+                .map(|item| format!(
+                    "<li><strong>{}</strong>：{:+.1} 个百分点（近期 {} 个，前期 {} 个）</li>",
+                    escape_html(&item.label),
+                    item.delta_percentage_points,
+                    item.recent_count,
+                    item.previous_count
+                ))
+                .collect::<Vec<_>>()
+                .join("")
+        )
+    };
+    let trend_section = format!(
+        "<section class=\"section\"><h2>最近 {days} 天本地样本观察</h2><div class=\"grid\"><div><strong>{recent}</strong><p>近期新增岗位 · 较前期 {change}</p></div><div><strong>{seen}</strong><p>近期再次观察到的存量岗位</p></div><div><strong>{salary}</strong><p>近期薪资中点中位数 · 变化 {salary_change}</p></div><div><strong>{coverage:.1}%</strong><p>有效日期覆盖率</p></div></div><h3>技能需求变化</h3>{skill_changes}</section>",
+        days = trend.window_days,
+        recent = trend.recent_new_jobs,
+        seen = trend.recently_seen_existing_jobs,
+        salary = trend.recent_salary_median_k.map(|value| format!("{value:.1}K")).unwrap_or_else(|| "—".into()),
+        coverage = trend.date_coverage,
+    );
+    let competitiveness_section = competitiveness.map(|analysis| {
+        let rows = analysis
+            .items
+            .iter()
+            .map(|item| {
+                let status = match item.status.as_str() {
+                    "covered" => "已覆盖",
+                    "strengthenable" => "可强化",
+                    "gap" => "真实缺口",
+                    _ => "待判断",
+                };
+                format!(
+                    "<li><strong>{}</strong>（{} 个岗位，{:.1}%）· {}<br>{}</li>",
+                    escape_html(&item.label),
+                    item.job_count,
+                    item.percentage,
+                    status,
+                    escape_html(&item.rationale)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("");
+        format!(
+            "<section class=\"section\"><h2>个人竞争力矩阵</h2><p>分析来源：{}</p><ul>{rows}</ul></section>",
+            if analysis.source == "ai" { "AI 语义复核" } else { "本地精确匹配" }
+        )
+    }).unwrap_or_default();
+    html.replacen(
+        "</main>",
+        &format!("{trend_section}{competitiveness_section}</main>"),
+        1,
     )
 }
 
@@ -352,6 +573,12 @@ fn detected_skills(job: &Job) -> BTreeSet<String> {
         }
     }
     result
+}
+
+pub fn job_has_skill(job: &Job, label: &str) -> bool {
+    detected_skills(job)
+        .iter()
+        .any(|skill| skill.eq_ignore_ascii_case(label.trim()))
 }
 
 fn matches_alias(text: &str, alias: &str) -> bool {
@@ -624,6 +851,55 @@ mod tests {
             .skill_pairs
             .iter()
             .any(|item| item.label.contains('×')));
+    }
+
+    #[test]
+    fn trend_windows_use_shanghai_dates_and_fill_missing_days() {
+        let mut boundary = sample_job("boundary", "20-30K", &["Python"]);
+        boundary.description.clear();
+        boundary.first_seen = "2026-07-09T16:30:00Z".into();
+        boundary.last_seen = "2026-07-10T01:00:00+08:00".into();
+        let mut recent = sample_job("recent", "30-40K", &["RAG"]);
+        recent.description.clear();
+        recent.first_seen = "2026-07-12T08:00:00+08:00".into();
+        recent.last_seen = recent.first_seen.clone();
+        let mut previous = sample_job("previous", "10-20K", &["Python"]);
+        previous.description.clear();
+        previous.first_seen = "2026-07-05T08:00:00+08:00".into();
+        previous.last_seen = "2026-07-15T08:00:00+08:00".into();
+        let mut invalid = sample_job("invalid", "50-60K", &["Java"]);
+        invalid.description.clear();
+        invalid.first_seen = "not-a-date".into();
+        let now = DateTime::parse_from_rfc3339("2026-07-16T12:00:00+08:00").unwrap();
+
+        let report =
+            build_report_for_keywords_at(&[boundary, recent, previous, invalid], vec![], now);
+        let trend = &report.trends.seven_days;
+        assert_eq!(trend.daily_new_jobs.len(), 7);
+        assert_eq!(trend.daily_new_jobs[0].date, "2026-07-10");
+        assert_eq!(trend.daily_new_jobs[0].count, 1);
+        assert!(trend.daily_new_jobs.iter().any(|point| point.count == 0));
+        assert_eq!(trend.recent_new_jobs, 2);
+        assert_eq!(trend.previous_new_jobs, 1);
+        assert_eq!(trend.new_jobs_change_percentage, Some(100.0));
+        assert_eq!(trend.recently_seen_existing_jobs, 1);
+        assert_eq!(trend.recent_salary_median_k, Some(30.0));
+        assert_eq!(trend.previous_salary_median_k, Some(15.0));
+        assert_eq!(trend.salary_median_delta_k, Some(15.0));
+        assert_eq!(trend.date_sample_count, 3);
+        assert_eq!(trend.date_coverage, 75.0);
+        assert_eq!(report.trends.thirty_days.daily_new_jobs.len(), 30);
+    }
+
+    #[test]
+    fn trend_without_previous_jobs_has_no_comparison() {
+        let mut job = sample_job("current", "20-30K", &["Python"]);
+        job.first_seen = "2026-07-16T08:00:00+08:00".into();
+        job.last_seen = job.first_seen.clone();
+        let now = DateTime::parse_from_rfc3339("2026-07-16T12:00:00+08:00").unwrap();
+        let report = build_report_for_keywords_at(&[job], vec![], now);
+        assert_eq!(report.trends.seven_days.previous_new_jobs, 0);
+        assert_eq!(report.trends.seven_days.new_jobs_change_percentage, None);
     }
 
     #[test]

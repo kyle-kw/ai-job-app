@@ -341,6 +341,10 @@ export interface JobQuery {
   companyScale: '' | '301' | '302' | '303' | '304' | '305' | '306';
   city: string;
   missingDescription: boolean;
+  keywordKeys?: string[];
+  skills?: string[];
+  experience?: string;
+  salaryBand?: ReportSalaryBand;
   cursor?: string | null;
 }
 
@@ -429,6 +433,42 @@ export interface SalaryByExperience {
   medianK: number;
 }
 
+export type ReportSalaryBand = '' | 'under-15' | '15-25' | '25-35' | '35-50' | '50-plus';
+
+export interface ReportTrendPoint {
+  date: string;
+  count: number;
+}
+
+export interface ReportSkillChange {
+  label: string;
+  recentCount: number;
+  recentPercentage: number;
+  previousCount: number;
+  previousPercentage: number;
+  deltaPercentagePoints: number;
+}
+
+export interface ReportTrendWindow {
+  windowDays: 7 | 30;
+  recentNewJobs: number;
+  previousNewJobs: number;
+  newJobsChangePercentage?: number | null;
+  recentlySeenExistingJobs: number;
+  recentSalaryMedianK?: number | null;
+  previousSalaryMedianK?: number | null;
+  salaryMedianDeltaK?: number | null;
+  dateSampleCount: number;
+  dateCoverage: number;
+  dailyNewJobs: ReportTrendPoint[];
+  skillChanges: ReportSkillChange[];
+}
+
+export interface ReportTrends {
+  sevenDays: ReportTrendWindow;
+  thirtyDays: ReportTrendWindow;
+}
+
 export interface JobDataReport {
   generatedAt: string;
   selectedKeywords: ReportKeyword[];
@@ -451,6 +491,37 @@ export interface JobDataReport {
   welfare: ReportBucket[];
   salaryByExperience: SalaryByExperience[];
   insights: string[];
+  trends: ReportTrends;
+}
+
+export interface ReportCompetitivenessItem {
+  id: string;
+  label: string;
+  jobCount: number;
+  percentage: number;
+  status: ResumeCoverageStatus;
+  resumePaths: string[];
+  evidenceFactIds: string[];
+  rationale: string;
+}
+
+export interface ReportCompetitivenessAnalysis {
+  source: 'local' | 'ai';
+  resumeId: string;
+  resumeVersion: number;
+  generatedAt: string;
+  items: ReportCompetitivenessItem[];
+}
+
+export interface ReportCompetitivenessState {
+  status: 'missing' | 'fresh' | 'stale';
+  reason?: 'no_provider' | 'no_resume' | 'no_jobs' | 'data_changed' | string | null;
+  hasResume: boolean;
+  hasProvider: boolean;
+  generatedAt?: string | null;
+  local?: ReportCompetitivenessAnalysis | null;
+  ai?: ReportCompetitivenessAnalysis | null;
+  effectiveSource?: 'local' | 'ai' | null;
 }
 
 export interface InterviewPreparationSkill {

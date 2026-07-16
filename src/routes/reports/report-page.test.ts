@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mockJobs } from '$lib/mock-data';
 import { buildClientJobDataReport } from '$lib/report';
 import { backend } from '$lib/services/backend';
-import type { InterviewPreparationState, JobDataReport, RenderResult } from '$lib/types';
+import type { InterviewPreparationState, JobDataReport, RenderResult, ReportCompetitivenessState } from '$lib/types';
 import ReportPage from './+page.svelte';
 
 const exportFileMocks = vi.hoisted(() => ({ choosePath: vi.fn<() => Promise<string | null>>() }));
@@ -53,26 +53,73 @@ const staleState: InterviewPreparationState = {
   }
 };
 
+const localCompetitivenessState: ReportCompetitivenessState = {
+  status: 'missing',
+  reason: 'no_provider',
+  hasProvider: false,
+  hasResume: true,
+  local: {
+    source: 'local',
+    resumeId: 'resume-master',
+    resumeVersion: 3,
+    generatedAt: '2026-07-16T08:00:00.000Z',
+    items: [{
+      id: 'report-skill-1', label: 'Python', jobCount: 4, percentage: 80,
+      status: 'covered', resumePaths: ['/summary'], evidenceFactIds: [], rationale: '主简历正文中已有明确表达。'
+    }]
+  },
+  ai: null,
+  effectiveSource: 'local'
+};
+
+const freshCompetitivenessState: ReportCompetitivenessState = {
+  ...localCompetitivenessState,
+  status: 'fresh',
+  reason: null,
+  hasProvider: true,
+  generatedAt: '2026-07-16T09:00:00.000Z',
+  ai: {
+    ...localCompetitivenessState.local!,
+    source: 'ai',
+    generatedAt: '2026-07-16T09:00:00.000Z',
+    items: [{
+      ...localCompetitivenessState.local!.items[0],
+      rationale: 'AI 语义复核确认了项目中的 Python 证据。'
+    }]
+  },
+  effectiveSource: 'ai'
+};
+
 const listReportKeywords = vi.fn<() => Promise<typeof reportKeywords>>();
 const getJobDataReport = vi.fn<(keywordKeys: string[]) => Promise<JobDataReport>>();
-const exportJobDataReport = vi.fn<(keywordKeys: string[], outputPath: string) => Promise<RenderResult>>();
+const exportJobDataReport = vi.fn<(keywordKeys: string[], trendWindowDays: 7 | 30, outputPath: string) => Promise<RenderResult>>();
 const getInterviewPreparationState = vi.fn<(keywordKeys: string[]) => Promise<InterviewPreparationState>>();
 const generateInterviewPreparation = vi.fn<(keywordKeys: string[], force?: boolean) => Promise<InterviewPreparationState>>();
+const getReportCompetitivenessState = vi.fn<(keywordKeys: string[]) => Promise<ReportCompetitivenessState>>();
+const generateReportCompetitiveness = vi.fn<(keywordKeys: string[], force?: boolean) => Promise<ReportCompetitivenessState>>();
 
 describe('full job data report page', () => {
   beforeEach(() => {
-    Object.assign(backend, { listReportKeywords, getJobDataReport, exportJobDataReport, getInterviewPreparationState, generateInterviewPreparation });
+    window.history.replaceState({}, '', '/');
+    Object.assign(backend, {
+      listReportKeywords, getJobDataReport, exportJobDataReport,
+      getInterviewPreparationState, generateInterviewPreparation,
+      getReportCompetitivenessState, generateReportCompetitiveness
+    });
     listReportKeywords.mockReset().mockResolvedValue(reportKeywords);
     getJobDataReport.mockReset().mockResolvedValue(localReport);
     exportJobDataReport.mockReset().mockResolvedValue({ path: 'C:\\tmp\\report.html', fileName: 'report.html' });
     exportFileMocks.choosePath.mockReset().mockResolvedValue('C:\\tmp\\report.html');
     getInterviewPreparationState.mockReset().mockResolvedValue(missingGeneralState);
     generateInterviewPreparation.mockReset().mockResolvedValue(freshState);
+    getReportCompetitivenessState.mockReset().mockResolvedValue(localCompetitivenessState);
+    generateReportCompetitiveness.mockReset().mockResolvedValue(freshCompetitivenessState);
   });
 
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+    window.history.replaceState({}, '', '/');
   });
 
   it('keeps local analytics available and offers a general plan without a resume', async () => {
@@ -155,7 +202,7 @@ describe('full job data report page', () => {
     await waitFor(() => expect(generateInterviewPreparation).toHaveBeenCalledWith(['ai-agent', 'data-analysis'], false));
 
     await fireEvent.click(screen.getByRole('button', { name: '导出 HTML' }));
-    await waitFor(() => expect(exportJobDataReport).toHaveBeenCalledWith(['ai-agent', 'data-analysis'], 'C:\\tmp\\report.html'));
+    await waitFor(() => expect(exportJobDataReport).toHaveBeenCalledWith(['ai-agent', 'data-analysis'], 7, 'C:\\tmp\\report.html'));
   });
 
   it('does not invoke report export when the save dialog is cancelled', async () => {
@@ -179,5 +226,79 @@ describe('full job data report page', () => {
     expect(await screen.findByText('请至少选择一个关键词')).toBeInTheDocument();
     expect(getJobDataReport).toHaveBeenCalledTimes(callsBeforeClear);
     expect(screen.getByRole('button', { name: '导出 HTML' })).toBeDisabled();
+  });
+
+  it('restores valid URL state, switches the trend window, and exposes keyboard drilldowns', async () => {
+    window.history.replaceState({}, '', '/reports?keyword=ai-agent&keyword=missing&window=30');
+    render(ReportPage);
+
+    await screen.findByText('近期本地样本观察');
+    expect(screen.getByRole('checkbox', { name: /AI Agent/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /数据分析/ })).not.toBeChecked();
+    expect(getJobDataReport).toHaveBeenCalledWith(['ai-agent']);
+    expect(screen.getByRole('button', { name: '近 30 天' })).toHaveClass('chip-brand');
+    expect(new URL(window.location.href).searchParams.getAll('keyword')).toEqual(['ai-agent']);
+
+    const skillLink = screen.getByRole('link', { name: /查看 Python 的 \d+ 个岗位/ });
+    const drilldown = new URL(skillLink.getAttribute('href')!, 'http://localhost');
+    expect(drilldown.pathname).toBe('/jobs');
+    expect(drilldown.searchParams.get('from')).toBe('report');
+    expect(drilldown.searchParams.get('window')).toBe('30');
+    expect(drilldown.searchParams.getAll('keyword')).toEqual(['ai-agent']);
+    expect(drilldown.searchParams.getAll('skill')).toEqual(['Python']);
+
+    await fireEvent.click(screen.getByRole('button', { name: '导出 HTML' }));
+    await waitFor(() => expect(exportJobDataReport).toHaveBeenCalledWith(['ai-agent'], 30, 'C:\\tmp\\report.html'));
+  });
+
+  it('runs competitiveness AI only after an explicit click', async () => {
+    getReportCompetitivenessState.mockResolvedValue({ ...localCompetitivenessState, hasProvider: true, reason: null });
+    render(ReportPage);
+
+    expect(await screen.findByText('主简历正文中已有明确表达。')).toBeInTheDocument();
+    expect(generateReportCompetitiveness).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole('button', { name: 'AI 语义分析' }));
+
+    await waitFor(() => expect(generateReportCompetitiveness).toHaveBeenCalledWith(['data-analysis'], false));
+    expect(await screen.findByText('AI 语义复核确认了项目中的 Python 证据。')).toBeInTheDocument();
+  });
+
+  it('falls back to the local matrix when a cached AI result is stale', async () => {
+    getReportCompetitivenessState.mockResolvedValue({
+      ...freshCompetitivenessState,
+      status: 'stale',
+      reason: 'data_changed',
+      local: localCompetitivenessState.local,
+      effectiveSource: 'local'
+    });
+    render(ReportPage);
+
+    expect(await screen.findByText('旧 AI 结果未用于当前矩阵，下面已自动回退为最新本地结果。')).toBeInTheDocument();
+    expect(screen.getByText('主简历正文中已有明确表达。')).toBeInTheDocument();
+    expect(screen.queryByText('AI 语义复核确认了项目中的 Python 证据。')).not.toBeInTheDocument();
+  });
+
+  it('keeps the local matrix when competitiveness AI generation fails', async () => {
+    getReportCompetitivenessState.mockResolvedValue({ ...localCompetitivenessState, hasProvider: true, reason: null });
+    generateReportCompetitiveness.mockRejectedValue(new Error('语义分析服务暂时不可用'));
+    render(ReportPage);
+
+    expect(await screen.findByText('主简历正文中已有明确表达。')).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'AI 语义分析' }));
+
+    expect(await screen.findByText('AI 竞争力分析失败')).toBeInTheDocument();
+    expect(screen.getByText(/语义分析服务暂时不可用/)).toBeInTheDocument();
+    expect(screen.getByText('主简历正文中已有明确表达。')).toBeInTheDocument();
+  });
+
+  it('offers a resume entry when no master resume exists', async () => {
+    getReportCompetitivenessState.mockResolvedValue({
+      status: 'missing', reason: 'no_resume', hasProvider: true, hasResume: false,
+      local: null, ai: null, effectiveSource: null
+    });
+    render(ReportPage);
+
+    expect(await screen.findByText('先建立可信主简历')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '前往简历' })).toHaveAttribute('href', '/resume');
   });
 });

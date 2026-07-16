@@ -14,6 +14,7 @@ describe('job scraping controls', () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+    window.history.replaceState({}, '', '/');
   });
 
   it('shows the popular city list, defaults to one page, and updates the estimate', async () => {
@@ -216,5 +217,36 @@ describe('job scraping controls', () => {
     await fireEvent.click(screen.getByRole('button', { name: '确认删除 1 个岗位' }));
 
     await waitFor(() => expect(deleteMissing).toHaveBeenCalledWith(expect.objectContaining({ missingDescription: true })));
+  });
+
+  it('restores report drilldown URL filters and clears their URL state together', async () => {
+    window.history.replaceState({}, '', '/jobs?from=report&window=30&keyword=ai-agent&keyword=data-analysis&skill=Python&skill=RAG&experience=3-5%E5%B9%B4&salaryBand=25-35');
+    snapshot.set(structuredClone(mockSnapshot));
+    vi.spyOn(backend, 'listJobCities').mockResolvedValue(['上海', '杭州']);
+    const listJobsPage = vi.spyOn(backend, 'listJobsPage');
+    render(JobPage);
+
+    expect(await screen.findByText('来自数据报告')).toBeInTheDocument();
+    await waitFor(() => expect(listJobsPage).toHaveBeenLastCalledWith(expect.objectContaining({
+      keywordKeys: ['ai-agent', 'data-analysis'],
+      skills: ['Python', 'RAG'],
+      experience: '3-5年',
+      salaryBand: '25-35'
+    })));
+    const returnLink = screen.getByRole('link', { name: '返回数据报告' });
+    const returnUrl = new URL(returnLink.getAttribute('href')!, 'http://localhost');
+    expect(returnUrl.searchParams.get('window')).toBe('30');
+    expect(returnUrl.searchParams.getAll('keyword')).toEqual(['ai-agent', 'data-analysis']);
+
+    await fireEvent.click(screen.getByRole('button', { name: '移除技能 Python' }));
+    await waitFor(() => expect(listJobsPage).toHaveBeenLastCalledWith(expect.objectContaining({ skills: ['RAG'] })));
+    expect(new URL(window.location.href).searchParams.getAll('skill')).toEqual(['RAG']);
+
+    await fireEvent.click(screen.getByRole('button', { name: '清除筛选' }));
+    await waitFor(() => expect(screen.queryByText('来自数据报告')).not.toBeInTheDocument());
+    const cleared = new URL(window.location.href);
+    for (const key of ['from', 'window', 'keyword', 'skill', 'experience', 'salaryBand']) {
+      expect(cleared.searchParams.has(key)).toBe(false);
+    }
   });
 });

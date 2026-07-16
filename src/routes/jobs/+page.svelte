@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { replaceState } from '$app/navigation';
   import { ArrowUpRight, BriefcaseBusiness, Check, CheckCircle2, ChevronDown, Clipboard, Download, Filter, Info, MapPin, MessageCircle, Search, Sparkles, Trash2, X, XCircle } from 'lucide-svelte';
-  import { page } from '$app/stores';
   import DeleteJobDialog from '$lib/components/DeleteJobDialog.svelte';
   import FitScore from '$lib/components/FitScore.svelte';
   import JobSearchDialog from '$lib/components/JobSearchDialog.svelte';
@@ -15,7 +15,7 @@
   import { backend } from '$lib/services/backend';
   import { createSearchSpec } from '$lib/search-spec';
   import { refresh, snapshot, startScrape } from '$lib/stores/app';
-  import type { Job, JobQuery, SearchSpec } from '$lib/types';
+  import type { Job, JobQuery, ReportSalaryBand, SearchSpec } from '$lib/types';
 
   let selectedId = '';
   let query = '';
@@ -25,6 +25,13 @@
   let companyScaleFilter: CompanyScaleFilterCode = '';
   let cityFilter = '';
   let missingDescription = false;
+  let keywordKeys: string[] = [];
+  let skillFilters: string[] = [];
+  let experienceFilter = '';
+  let salaryBandFilter: ReportSalaryBand = '';
+  let fromReport = false;
+  let reportWindow: 7 | 30 = 7;
+  let requestedJobId: string | null = null;
   let cities: string[] = [];
   let activeTab: 'description' | 'fit' = 'description';
   let scraping = false;
@@ -51,9 +58,30 @@
   let lastFilterKey = '';
   let lastTerminalTaskKey = '';
 
-  $: filterKey = JSON.stringify([query.trim(), minScore, onlyNew, salaryFilter, companyScaleFilter, cityFilter, missingDescription]);
+  const makeFilterKey = (
+    nextQuery: string,
+    nextMinScore: number,
+    nextOnlyNew: boolean,
+    nextSalary: SalaryFilterCode,
+    nextCompanyScale: CompanyScaleFilterCode,
+    nextCity: string,
+    nextMissingDescription: boolean,
+    nextKeywordKeys: string[],
+    nextSkills: string[],
+    nextExperience: string,
+    nextSalaryBand: ReportSalaryBand
+  ) => JSON.stringify([
+    nextQuery.trim(), nextMinScore, nextOnlyNew, nextSalary, nextCompanyScale, nextCity,
+    nextMissingDescription, nextKeywordKeys, nextSkills, nextExperience, nextSalaryBand
+  ]);
+  $: filterKey = makeFilterKey(
+    query, minScore, onlyNew, salaryFilter, companyScaleFilter, cityFilter,
+    missingDescription, keywordKeys, skillFilters, experienceFilter, salaryBandFilter
+  );
   $: if (mounted && filterKey !== lastFilterKey) {
     lastFilterKey = filterKey;
+    requestedJobId = null;
+    syncJobsUrl();
     window.clearTimeout(filterTimer);
     filterTimer = window.setTimeout(() => void reloadJobs(), 220);
   }
@@ -66,11 +94,10 @@
     void reloadJobs();
     void reloadCities();
   }
-  $: requestedId = $page.url?.searchParams.get('job') ?? null;
   $: {
     const selectedIsVisible = jobs.some((job) => job.id === selectedId);
     if (!selectedIsVisible) {
-      const nextId = (requestedId && jobs.some((job) => job.id === requestedId) ? requestedId : jobs[0]?.id) ?? '';
+      const nextId = (requestedJobId && jobs.some((job) => job.id === requestedJobId) ? requestedJobId : jobs[0]?.id) ?? '';
       if (selectedId !== nextId) {
         selectedId = nextId;
         activeTab = 'description';
@@ -81,10 +108,13 @@
   $: detailExtractionRunning = extractionStarting || $snapshot.tasks.some((task) => task.kind === 'job-detail-extraction' && (task.state === 'queued' || task.state === 'running'));
   $: fitBatchRunning = batchStarting || $snapshot.tasks.some((task) => task.kind === 'fit' && (task.state === 'queued' || task.state === 'running'));
   $: scrapeTaskRunning = scraping || $snapshot.tasks.some((task) => task.kind === 'scrape' && (task.state === 'queued' || task.state === 'running'));
-  $: hasActiveFilters = Boolean(query.trim() || minScore || onlyNew || salaryFilter || companyScaleFilter || cityFilter || missingDescription);
+  $: hasActiveFilters = Boolean(query.trim() || minScore || onlyNew || salaryFilter || companyScaleFilter || cityFilter || missingDescription || keywordKeys.length || skillFilters.length || experienceFilter || salaryBandFilter);
 
   function currentJobQuery(cursor: string | null = null): JobQuery {
-    return { query, minScore, onlyNew, salary: salaryFilter, companyScale: companyScaleFilter, city: cityFilter, missingDescription, cursor };
+    return {
+      query, minScore, onlyNew, salary: salaryFilter, companyScale: companyScaleFilter, city: cityFilter,
+      missingDescription, keywordKeys, skills: skillFilters, experience: experienceFilter, salaryBand: salaryBandFilter, cursor
+    };
   }
 
   async function reloadCities() {
@@ -108,8 +138,8 @@
       totalJobs = result.total;
       pendingDetailCount = result.pendingDetailCount;
       nextCursor = result.nextCursor ?? null;
-      if (requestedId && !jobs.some((job) => job.id === requestedId)) {
-        try { jobs = [await backend.getJob(requestedId), ...jobs]; } catch { /* invalid deep link */ }
+      if (requestedJobId && !jobs.some((job) => job.id === requestedJobId)) {
+        try { jobs = [await backend.getJob(requestedJobId), ...jobs]; } catch { /* invalid deep link */ }
       }
     } catch (error) {
       if (requestId === jobsRequestId) jobsError = error instanceof Error ? error.message : String(error);
@@ -148,8 +178,22 @@
   }
 
   onMount(() => {
+    const params = new URL(window.location.href).searchParams;
+    requestedJobId = params.get('job');
+    fromReport = params.get('from') === 'report';
+    reportWindow = params.get('window') === '30' ? 30 : 7;
+    keywordKeys = [...new Set(params.getAll('keyword').map((value) => value.trim()).filter(Boolean))];
+    skillFilters = [...new Set(params.getAll('skill').map((value) => value.trim()).filter(Boolean))];
+    cityFilter = params.get('city')?.trim() ?? '';
+    experienceFilter = params.get('experience')?.trim() ?? '';
+    const requestedSalaryBand = params.get('salaryBand') ?? '';
+    salaryBandFilter = ['under-15', '15-25', '25-35', '35-50', '50-plus'].includes(requestedSalaryBand)
+      ? requestedSalaryBand as ReportSalaryBand : '';
     mounted = true;
-    lastFilterKey = filterKey;
+    lastFilterKey = makeFilterKey(
+      query, minScore, onlyNew, salaryFilter, companyScaleFilter, cityFilter,
+      missingDescription, keywordKeys, skillFilters, experienceFilter, salaryBandFilter
+    );
     lastTerminalTaskKey = terminalTaskKey;
     void reloadJobs();
     void reloadCities();
@@ -217,6 +261,42 @@
     companyScaleFilter = '';
     cityFilter = '';
     missingDescription = false;
+    keywordKeys = [];
+    skillFilters = [];
+    experienceFilter = '';
+    salaryBandFilter = '';
+    fromReport = false;
+  }
+
+  function syncJobsUrl() {
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    for (const key of ['job', 'from', 'window', 'keyword', 'skill', 'city', 'experience', 'salaryBand']) url.searchParams.delete(key);
+    if (fromReport) {
+      url.searchParams.set('from', 'report');
+      url.searchParams.set('window', String(reportWindow));
+    }
+    keywordKeys.forEach((key) => url.searchParams.append('keyword', key));
+    skillFilters.forEach((skill) => url.searchParams.append('skill', skill));
+    if (cityFilter) url.searchParams.set('city', cityFilter);
+    if (experienceFilter) url.searchParams.set('experience', experienceFilter);
+    if (salaryBandFilter) url.searchParams.set('salaryBand', salaryBandFilter);
+    const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+    try {
+      replaceState(nextUrl, {});
+    } catch {
+      window.history.replaceState(window.history.state, '', nextUrl);
+    }
+  }
+
+  function reportReturnHref() {
+    const params = new URLSearchParams({ window: String(reportWindow) });
+    keywordKeys.forEach((key) => params.append('keyword', key));
+    return `/reports?${params.toString()}`;
+  }
+
+  function removeReportSkill(skill: string) {
+    skillFilters = skillFilters.filter((item) => item !== skill);
   }
 
   async function openSource() {
@@ -329,6 +409,9 @@
     llm_failed: '模型调用失败，本次已回退到本地基础匹配。',
     invalid_output: '模型结果格式无效，本次已回退到本地基础匹配。'
   }[reason ?? ''] ?? '');
+  const reportSalaryBandLabel = (band: ReportSalaryBand) => band ? ({
+    'under-15': '15K 以下', '15-25': '15–25K', '25-35': '25–35K', '35-50': '35–50K', '50-plus': '50K 以上'
+  }[band] ?? '') : '';
 </script>
 
 <div class="flex h-[calc(100vh-74px)] min-h-[646px] overflow-hidden">
@@ -337,6 +420,22 @@
     <button class="btn mb-2 w-full" on:click={extractJobDetails} disabled={detailExtractionRunning || pendingDetailCount === 0}><Sparkles size={15} />{detailExtractionRunning ? '正在批量提取…' : pendingDetailCount ? `批量提取详情（${pendingDetailCount}）` : '岗位详情已提取'}</button>
     <button class="btn mb-2 w-full" on:click={analyzeFilteredJobs} disabled={fitBatchRunning || totalJobs === 0}><CheckCircle2 size={15} />{fitBatchRunning ? '正在批量分析…' : `批量分析全部结果（${totalJobs}）`}</button>
     <button class="btn mb-4 w-full" on:click={exportAllJobs} disabled={exportingJobs}><Download size={15} />{exportingJobs ? '正在导出…' : '导出全部岗位 JSON'}</button>
+    {#if fromReport}
+      <div class="mb-4 rounded-xl border p-3" style="border-color: color-mix(in srgb, var(--brand) 30%, var(--line)); background: var(--brand-faint);">
+        <p class="text-xs font-semibold text-brand">来自数据报告</p>
+        <p class="mt-1 text-[11px] leading-5 body-muted">当前岗位组成了报告中的选中统计项。</p>
+        <a href={reportReturnHref()} class="mt-2 inline-flex text-xs font-semibold text-brand">返回数据报告</a>
+      </div>
+    {/if}
+    {#if keywordKeys.length || skillFilters.length || cityFilter || experienceFilter || salaryBandFilter}
+      <div class="mb-4 flex flex-wrap gap-1.5" aria-label="报告筛选条件">
+        {#if keywordKeys.length}<button class="chip gap-1 px-2 py-1" aria-label="移除关键词范围" on:click={() => keywordKeys = []}>{keywordKeys.length} 组关键词<X size={11} /></button>{/if}
+        {#each skillFilters as skill}<button class="chip gap-1 px-2 py-1" aria-label={`移除技能 ${skill}`} on:click={() => removeReportSkill(skill)}>{skill}<X size={11} /></button>{/each}
+        {#if cityFilter}<button class="chip gap-1 px-2 py-1" aria-label={`移除城市 ${cityFilter}`} on:click={() => cityFilter = ''}>{cityFilter}<X size={11} /></button>{/if}
+        {#if experienceFilter}<button class="chip gap-1 px-2 py-1" aria-label={`移除经验 ${experienceFilter}`} on:click={() => experienceFilter = ''}>{experienceFilter}<X size={11} /></button>{/if}
+        {#if salaryBandFilter}<button class="chip gap-1 px-2 py-1" aria-label={`移除薪资 ${reportSalaryBandLabel(salaryBandFilter)}`} on:click={() => salaryBandFilter = ''}>{reportSalaryBandLabel(salaryBandFilter)}<X size={11} /></button>{/if}
+      </div>
+    {/if}
     <label class="relative block">
       <Search size={15} class="pointer-events-none absolute left-3 top-3 body-muted" />
       <input class="input pl-9" bind:value={query} placeholder="搜索岗位或公司" />

@@ -1,3 +1,5 @@
+import type { ReportSalaryBand } from '$lib/types';
+
 export type SalaryFilterCode = '' | '402' | '403' | '404' | '405' | '406' | '407';
 export type CompanyScaleFilterCode = '' | '301' | '302' | '303' | '304' | '305' | '306';
 
@@ -48,6 +50,9 @@ export interface LocalJobFilters {
   companyScale: CompanyScaleFilterCode;
   city: string;
   missingDescription: boolean;
+  skills?: string[];
+  experience?: string;
+  salaryBand?: ReportSalaryBand;
 }
 
 export interface FilterableJob {
@@ -57,6 +62,7 @@ export interface FilterableJob {
   salary: string;
   companyScale: string;
   location: string;
+  experience?: string;
   description: string;
   isNew: boolean;
   fit?: { overallScore: number } | null;
@@ -97,6 +103,18 @@ export function matchesSalaryFilter(value: string, code: SalaryFilterCode): bool
   return salary.min <= filter.max && salary.max >= filter.min;
 }
 
+export function matchesReportSalaryBand(value: string, band: ReportSalaryBand = ''): boolean {
+  if (!band) return true;
+  const salary = parseSalaryRange(value);
+  if (!salary || !Number.isFinite(salary.max)) return false;
+  const midpoint = (salary.min + salary.max) / 2;
+  if (band === 'under-15') return midpoint < 15;
+  if (band === '15-25') return midpoint >= 15 && midpoint < 25;
+  if (band === '25-35') return midpoint >= 25 && midpoint < 35;
+  if (band === '35-50') return midpoint >= 35 && midpoint < 50;
+  return midpoint >= 50;
+}
+
 export function normalizeCompanyScale(value: string): CompanyScaleFilterCode {
   const normalized = value
     .trim()
@@ -121,14 +139,19 @@ export function matchesCompanyScaleFilter(value: string, code: CompanyScaleFilte
 
 export function filterJobs<T extends FilterableJob>(jobs: T[], filters: LocalJobFilters): T[] {
   const query = filters.query.trim().toLocaleLowerCase();
+  const requiredSkills = (filters.skills ?? []).map((skill) => skill.trim().toLocaleLowerCase()).filter(Boolean);
   return jobs.filter((job) => {
     const searchable = `${job.title} ${job.company} ${job.skills.join(' ')}`.toLocaleLowerCase();
+    const skills = new Set(job.skills.map((skill) => skill.trim().toLocaleLowerCase()));
     return (!query || searchable.includes(query))
       && (job.fit?.overallScore ?? 0) >= filters.minScore
       && (!filters.onlyNew || job.isNew)
       && matchesSalaryFilter(job.salary, filters.salary)
       && matchesCompanyScaleFilter(job.companyScale, filters.companyScale)
       && (!filters.city || jobCity(job.location) === filters.city)
+      && (!filters.experience || (job.experience ?? '').trim() === filters.experience.trim())
+      && matchesReportSalaryBand(job.salary, filters.salaryBand)
+      && requiredSkills.every((skill) => skills.has(skill))
       && (!filters.missingDescription || !job.description.trim());
   });
 }
