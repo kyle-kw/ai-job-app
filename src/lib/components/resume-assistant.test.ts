@@ -22,7 +22,7 @@ describe('ResumeChatDialog', () => {
   it('keeps edits reviewable and applies only the selected proposal', async () => {
     const proposal: ResumeChatProposal = {
       proposalId: 'proposal-1',
-      resumeId: mockResume.id,
+      target: { kind: 'master', id: mockResume.id },
       baseVersion: mockResume.version,
       job: { id: mockJobs[0].id, title: mockJobs[0].title, company: mockJobs[0].company },
       assistantMessage: '我整理了一版更精简的个人简介。',
@@ -55,7 +55,7 @@ describe('ResumeChatDialog', () => {
     await fireEvent.click(screen.getByRole('button', { name: '发送' }));
 
     await waitFor(() => expect(propose).toHaveBeenCalledWith(expect.objectContaining({
-      resumeId: mockResume.id,
+      target: { kind: 'master', id: mockResume.id },
       expectedVersion: mockResume.version,
       jobId: mockJobs[0].id
     })));

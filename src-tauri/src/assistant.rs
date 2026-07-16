@@ -17,6 +17,8 @@ use uuid::Uuid;
 
 const FIT_SKILL_VERSION: &str = "job-fit@1.1.0";
 const INTERVIEW_SKILL_VERSION: &str = "interview-preparation@1.0.0";
+const RESUME_COVERAGE_SKILL_VERSION: &str = "resume-coverage@1.1.0";
+const MAX_DESCRIPTION_COVERAGE_REQUIREMENTS: usize = 20;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -37,6 +39,34 @@ struct ModelInterviewSkill {
     #[serde(default)]
     gap: Option<String>,
     action: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CoverageRequirement {
+    id: String,
+    label: String,
+    kind: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelResumeCoverageOutput {
+    #[serde(default)]
+    items: Vec<ModelResumeCoverageItem>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelResumeCoverageItem {
+    id: String,
+    status: String,
+    #[serde(default)]
+    resume_paths: Vec<String>,
+    #[serde(default)]
+    evidence_fact_ids: Vec<String>,
+    #[serde(default)]
+    rationale: String,
 }
 
 pub(crate) fn mark_fit_cache_status(
@@ -536,24 +566,46 @@ pub async fn propose_resume_chat_edits(
 ) -> Result<ResumeChatProposal, String> {
     distribution::require_privacy(&state)?;
     validate_chat_messages(&request.messages)?;
-    let resume = state
-        .db
-        .active_resume()?
-        .ok_or_else(|| "resume_not_found: 请先导入主简历。".to_string())?;
-    if resume.id != request.resume_id || resume.version != request.expected_version {
+    let target = request.target.clone();
+    let (resume, fixed_job_id) = match target.kind.as_str() {
+        "variant" => {
+            let detail = state
+                .db
+                .get_resume_variant(&target.id)?
+                .ok_or_else(|| "variant_not_found: 岗位版本不存在。".to_string())?;
+            let job_id = detail.summary.job_id.clone();
+            (detail.profile, Some(job_id))
+        }
+        "master" => {
+            let resume = state
+                .db
+                .active_resume()?
+                .ok_or_else(|| "resume_not_found: 请先导入主简历。".to_string())?;
+            (resume, None)
+        }
+        _ => return Err("invalid_request: 不支持的简历目标。".into()),
+    };
+    if resume.id != target.id || resume.version != request.expected_version {
         return Err("version_conflict: 简历已变化，请刷新后重新对话。".into());
     }
     let provider = state
         .db
         .default_provider()?
         .ok_or_else(|| "ai_not_ready: 请先配置并验证默认模型。".to_string())?;
-    let job = request
-        .job_id
-        .as_deref()
+    if fixed_job_id.is_some()
+        && request
+            .job_id
+            .as_deref()
+            .is_some_and(|id| Some(id) != fixed_job_id.as_deref())
+    {
+        return Err("job_mismatch: 岗位版本只能关联创建时选择的岗位。".into());
+    }
+    let effective_job_id = fixed_job_id.as_deref().or(request.job_id.as_deref());
+    let job = effective_job_id
         .map(|id| state.db.get_job(id))
         .transpose()?
         .flatten();
-    if request.job_id.is_some() && job.is_none() {
+    if effective_job_id.is_some() && job.is_none() {
         return Err("job_not_found: 关联岗位已不存在。".into());
     }
     let input = json!({
@@ -566,6 +618,9 @@ pub async fn propose_resume_chat_edits(
     let output = llm::run_skill::<ModelResumeChatOutput>(&provider, skills::RESUME_CHAT, &input)
         .await
         .map_err(|error| format!("model_unavailable: {}", redact(&error)))?;
+    if target.kind == "variant" && !output.fact_candidates.is_empty() {
+        return Err("fact_requires_master: 岗位版本不能新增事实，请先回到主简历事实清单确认，再同步岗位版本。".into());
+    }
     if output.edits.len() > 12 {
         return Err("invalid_model_output: 单次建议超过 12 项，请缩小修改范围。".into());
     }
@@ -662,7 +717,7 @@ pub async fn propose_resume_chat_edits(
     }
     Ok(ResumeChatProposal {
         proposal_id: Uuid::new_v4().to_string(),
-        resume_id: resume.id,
+        target,
         base_version: resume.version,
         job: job.map(|job| ResumeChatJob {
             id: job.id,
@@ -685,15 +740,24 @@ pub async fn propose_resume_chat_edits(
 pub fn apply_resume_chat_edits(
     state: State<'_, AppState>,
     request: ApplyResumeEditsRequest,
-) -> Result<ResumeCommitResult, String> {
+) -> Result<ResumeEditCommitResult, String> {
     if request.selected_edit_ids.is_empty() {
         return Err("invalid_request: 请至少选择一项修改。".into());
     }
-    let current = state
-        .db
-        .active_resume()?
-        .ok_or_else(|| "resume_not_found: 请先导入主简历。".to_string())?;
-    if current.id != request.proposal.resume_id
+    let target = request.proposal.target.clone();
+    let current = match target.kind.as_str() {
+        "variant" => state
+            .db
+            .get_resume_variant(&target.id)?
+            .map(|value| value.profile)
+            .ok_or_else(|| "variant_not_found: 岗位版本不存在。".to_string())?,
+        "master" => state
+            .db
+            .active_resume()?
+            .ok_or_else(|| "resume_not_found: 请先导入主简历。".to_string())?,
+        _ => return Err("invalid_request: 不支持的简历目标。".into()),
+    };
+    if current.id != target.id
         || current.version != request.expected_version
         || current.version != request.proposal.base_version
     {
@@ -715,6 +779,11 @@ pub fn apply_resume_chat_edits(
         .iter()
         .map(|candidate| (candidate.id.as_str(), candidate))
         .collect::<HashMap<_, _>>();
+    if target.kind == "variant"
+        && (!known_candidates.is_empty() || !confirmed_candidates.is_empty())
+    {
+        return Err("fact_requires_master: 岗位版本不能新增事实，请先在主简历中确认。".into());
+    }
     let mut profile_value = serde_json::to_value(&current).map_err(|error| error.to_string())?;
     let object = profile_value
         .as_object_mut()
@@ -757,6 +826,9 @@ pub fn apply_resume_chat_edits(
     candidate.preferences = current.preferences.clone();
     candidate.facts = current.facts.clone();
     for candidate_id in used_candidates {
+        if target.kind == "variant" {
+            return Err("fact_requires_master: 岗位版本不能新增事实，请先在主简历中确认。".into());
+        }
         let fact = known_candidates
             .get(candidate_id.as_str())
             .ok_or_else(|| "unsafe_proposal: 新事实候选已失效。".to_string())?;
@@ -773,15 +845,116 @@ pub fn apply_resume_chat_edits(
     // The earlier read improves the error message only. commit_resume repeats
     // expected_version inside its write transaction and is the authoritative
     // guard against a concurrent resume update in this TOCTOU window.
-    state.db.commit_resume(
-        candidate,
-        request.expected_version,
-        "ai-chat",
-        &format!("AI 对话应用 {applied} 项修改"),
-        request.proposal.job.as_ref().map(|job| job.id.clone()),
-        Some(request.proposal.proposal_id),
-        None,
-    )
+    if target.kind == "variant" {
+        state
+            .db
+            .commit_resume_variant(
+                &target.id,
+                candidate,
+                request.expected_version,
+                "variant-ai",
+                &format!("岗位版本 AI 应用 {applied} 项修改"),
+                None,
+                None,
+            )
+            .map(|result| ResumeEditCommitResult::Variant(Box::new(result)))
+    } else {
+        state
+            .db
+            .commit_resume(
+                candidate,
+                request.expected_version,
+                "ai-chat",
+                &format!("AI 对话应用 {applied} 项修改"),
+                request.proposal.job.as_ref().map(|job| job.id.clone()),
+                Some(request.proposal.proposal_id),
+                None,
+            )
+            .map(|result| ResumeEditCommitResult::Master(Box::new(result)))
+    }
+}
+
+#[tauri::command]
+pub async fn analyze_resume_coverage(
+    state: State<'_, AppState>,
+    target: ResumeTargetRef,
+    force: bool,
+) -> Result<ResumeCoverageReport, String> {
+    distribution::require_privacy(&state)?;
+    if target.kind != "variant" {
+        return Err("invalid_request: 首期岗位覆盖分析仅支持岗位版本。".into());
+    }
+    let variant = state
+        .db
+        .get_resume_variant(&target.id)?
+        .ok_or_else(|| "variant_not_found: 岗位版本不存在。".to_string())?;
+    if variant.profile.version != variant.summary.version {
+        return Err("storage_error: 岗位版本号不一致。".into());
+    }
+    let job = state
+        .db
+        .get_job(&variant.summary.job_id)?
+        .ok_or_else(|| "job_not_found: 关联岗位已不存在。".to_string())?;
+    let provider = state
+        .db
+        .default_provider()?
+        .ok_or_else(|| "ai_not_ready: 请先配置并验证默认模型。".to_string())?;
+    let requirements = coverage_requirements(&job);
+    let job_fingerprint = coverage_job_fingerprint(&job)?;
+    let provider_key = provider_fingerprint(&provider);
+    let cache_key = format!(
+        "{:x}",
+        Sha256::digest(
+            format!(
+                "{}|{}|{}|{}|{}",
+                target.id,
+                variant.profile.version,
+                job_fingerprint,
+                provider_key,
+                RESUME_COVERAGE_SKILL_VERSION
+            )
+            .as_bytes()
+        )
+    );
+    if !force {
+        if let Some(cached) = state.db.resume_coverage_cache(&cache_key)? {
+            return Ok(cached);
+        }
+    }
+    let confirmed_facts = variant
+        .profile
+        .facts
+        .iter()
+        .filter(|fact| fact.confirmed)
+        .collect::<Vec<_>>();
+    let allowed_paths = coverage_resume_paths(&variant.profile);
+    let input = json!({
+        "job": sanitized_job_for_ai(&job),
+        "resume": &variant.profile,
+        "confirmedFacts": confirmed_facts,
+        "requirements": requirements,
+        "allowedResumePaths": allowed_paths,
+    });
+    let output =
+        llm::run_skill::<ModelResumeCoverageOutput>(&provider, skills::RESUME_COVERAGE, &input)
+            .await
+            .map_err(|error| format!("model_unavailable: {}", redact(&error)))?;
+    let report = validate_model_coverage_report(
+        job.id.clone(),
+        target,
+        variant.profile.version,
+        &variant.profile,
+        &requirements,
+        output,
+    );
+    state.db.save_resume_coverage_cache(
+        &cache_key,
+        &job_fingerprint,
+        &provider_key,
+        RESUME_COVERAGE_SKILL_VERSION,
+        &report,
+    )?;
+    Ok(report)
 }
 
 #[tauri::command]
@@ -1078,6 +1251,214 @@ fn dataset_hash(jobs: &[Job]) -> String {
     hash_json(&json!(values))
 }
 
+fn coverage_requirements(job: &Job) -> Vec<CoverageRequirement> {
+    let mut values = Vec::<(String, String)>::new();
+    if let Some(details) = &job.structured_details {
+        for requirement in &details.requirements {
+            values.push((requirement.clone(), "requirement".into()));
+        }
+    }
+    for skill in &job.skills {
+        values.push((skill.clone(), "skill".into()));
+    }
+    if job
+        .structured_details
+        .as_ref()
+        .is_none_or(|details| details.requirements.is_empty())
+    {
+        let mut description_count = 0;
+        for sentence in job.description.split(['。', '；', ';', '\n']) {
+            let sentence = sentence.trim();
+            if (6..=140).contains(&sentence.chars().count()) {
+                values.push((sentence.into(), "requirement".into()));
+                description_count += 1;
+                if description_count >= MAX_DESCRIPTION_COVERAGE_REQUIREMENTS {
+                    break;
+                }
+            }
+        }
+    }
+    let mut seen = HashSet::new();
+    values
+        .into_iter()
+        .filter_map(|(label, kind)| {
+            let normalized = normalize_coverage_text(&label);
+            if normalized.is_empty() || !seen.insert(normalized.clone()) {
+                return None;
+            }
+            Some(CoverageRequirement {
+                id: coverage_requirement_id(&normalized),
+                label,
+                kind,
+            })
+        })
+        .collect()
+}
+
+fn coverage_requirement_id(normalized: &str) -> String {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in normalized.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("requirement-{hash:016x}")
+}
+
+fn normalize_coverage_text(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| {
+            !character.is_whitespace() && !"，,。；;：:、·|/\\()[]（）【】_-".contains(*character)
+        })
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn coverage_resume_paths(resume: &ResumeProfile) -> Vec<String> {
+    let mut paths = vec!["/headline".into(), "/summary".into()];
+    paths.extend(
+        (0..resume.professional_skills.len()).map(|index| format!("/professionalSkills/{index}")),
+    );
+    paths.extend((0..resume.experiences.len()).map(|index| format!("/experiences/{index}")));
+    paths.extend((0..resume.projects.len()).map(|index| format!("/projects/{index}")));
+    paths.extend((0..resume.education.len()).map(|index| format!("/education/{index}")));
+    paths.extend((0..resume.certifications.len()).map(|index| format!("/certifications/{index}")));
+    paths
+}
+
+fn coverage_job_fingerprint(job: &Job) -> Result<String, String> {
+    let payload = serde_json::to_vec(&json!({
+        "id": job.id, "skills": job.skills, "description": job.description, "structuredDetails": job.structured_details
+    })).map_err(|error| error.to_string())?;
+    Ok(format!("{:x}", Sha256::digest(payload)))
+}
+
+fn summarize_resume_coverage(mut report: ResumeCoverageReport) -> ResumeCoverageReport {
+    report.covered_count = report
+        .items
+        .iter()
+        .filter(|item| item.status == "covered")
+        .count() as i64;
+    report.strengthenable_count = report
+        .items
+        .iter()
+        .filter(|item| item.status == "strengthenable")
+        .count() as i64;
+    report.gap_count = report
+        .items
+        .iter()
+        .filter(|item| item.status == "gap")
+        .count() as i64;
+    report.unknown_count = report
+        .items
+        .iter()
+        .filter(|item| item.status == "unknown")
+        .count() as i64;
+    report
+}
+
+fn validate_model_coverage_report(
+    job_id: String,
+    target: ResumeTargetRef,
+    target_version: i64,
+    resume: &ResumeProfile,
+    requirements: &[CoverageRequirement],
+    output: ModelResumeCoverageOutput,
+) -> ResumeCoverageReport {
+    let requirement_ids = requirements
+        .iter()
+        .map(|item| item.id.as_str())
+        .collect::<HashSet<_>>();
+    let allowed_paths = coverage_resume_paths(resume)
+        .into_iter()
+        .collect::<HashSet<_>>();
+    let confirmed_ids = resume
+        .facts
+        .iter()
+        .filter(|fact| fact.confirmed)
+        .map(|fact| fact.id.as_str())
+        .collect::<HashSet<_>>();
+    let mut model_items = HashMap::new();
+    for item in output.items {
+        if requirement_ids.contains(item.id.as_str()) && !model_items.contains_key(item.id.as_str())
+        {
+            model_items.insert(item.id.clone(), item);
+        }
+    }
+    let mut items = Vec::new();
+    for requirement in requirements {
+        let model = model_items.remove(&requirement.id);
+        let mut resume_paths = model
+            .as_ref()
+            .map(|item| {
+                item.resume_paths
+                    .iter()
+                    .filter(|path| allowed_paths.contains(path.as_str()))
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        resume_paths.sort();
+        resume_paths.dedup();
+        let mut evidence_fact_ids = model
+            .as_ref()
+            .map(|item| {
+                item.evidence_fact_ids
+                    .iter()
+                    .filter(|id| confirmed_ids.contains(id.as_str()))
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        evidence_fact_ids.sort();
+        evidence_fact_ids.dedup();
+        let requested_status = model
+            .as_ref()
+            .map(|item| item.status.as_str())
+            .unwrap_or("unknown");
+        let status = match requested_status {
+            "covered" if !resume_paths.is_empty() => "covered",
+            "strengthenable" if !evidence_fact_ids.is_empty() => "strengthenable",
+            "gap" if resume_paths.is_empty() && evidence_fact_ids.is_empty() => "gap",
+            "unknown" => "unknown",
+            _ => "unknown",
+        };
+        if status == "gap" || status == "unknown" {
+            resume_paths.clear();
+            evidence_fact_ids.clear();
+        }
+        let rationale = model
+            .as_ref()
+            .map(|item| item.rationale.trim())
+            .filter(|value| !value.is_empty())
+            .unwrap_or("模型未提供足够的可验证证据。")
+            .chars()
+            .take(300)
+            .collect();
+        items.push(ResumeCoverageItem {
+            id: requirement.id.clone(),
+            label: requirement.label.clone(),
+            kind: requirement.kind.clone(),
+            status: status.into(),
+            resume_paths,
+            evidence_fact_ids,
+            rationale,
+        });
+    }
+    summarize_resume_coverage(ResumeCoverageReport {
+        job_id,
+        target,
+        target_version,
+        source: "ai".into(),
+        generated_at: time::shanghai_rfc3339(),
+        items,
+        covered_count: 0,
+        strengthenable_count: 0,
+        gap_count: 0,
+        unknown_count: 0,
+    })
+}
+
 fn provider_fingerprint(provider: &AiProviderConfig) -> String {
     hash_json(&json!({"id":provider.id,"baseUrl":provider.base_url,"model":provider.model}))
 }
@@ -1212,6 +1593,124 @@ mod tests {
             fallback_reason: None,
             cache_status: "fresh".into(),
         }
+    }
+
+    #[test]
+    fn coverage_requirements_use_stable_ids_unicode_lengths_and_description_cap() {
+        let description = (1..=25)
+            .map(|index| format!("第 {index} 项岗位能力要求"))
+            .collect::<Vec<_>>()
+            .join("。");
+        let mut job: Job = serde_json::from_value(json!({
+            "id":"job-coverage","source":"test","externalId":"coverage","title":"AI 工程师",
+            "company":"测试公司","salary":"","location":"","experience":"","degree":"",
+            "companyScale":"","companyStage":"","industry":"","skills":["Python","SQL"],
+            "welfare":[],"description":description,"sourceUrl":"","firstSeen":"","lastSeen":""
+        }))
+        .unwrap();
+
+        let requirements = coverage_requirements(&job);
+
+        assert_eq!(
+            requirements
+                .iter()
+                .filter(|item| item.kind == "requirement")
+                .count(),
+            MAX_DESCRIPTION_COVERAGE_REQUIREMENTS
+        );
+        assert_eq!(requirements.len(), 22);
+        assert_eq!(requirements[0].id, "requirement-512aae45ed67cf17");
+
+        job.skills.clear();
+        job.description = "😀".repeat(140);
+        let unicode_requirements = coverage_requirements(&job);
+        assert_eq!(unicode_requirements.len(), 1);
+        assert_eq!(unicode_requirements[0].label.chars().count(), 140);
+    }
+
+    #[test]
+    fn coverage_output_discards_invalid_paths_facts_and_unsupported_claims() {
+        let resume: ResumeProfile = serde_json::from_value(json!({
+            "id": "variant-1", "name": "测试用户", "headline": "AI 工程师", "email": "a@example.com",
+            "phone": "", "location": "上海", "website": "", "summary": "使用 Python 构建平台",
+            "templateId": "ai-engineering", "professionalSkills": [], "experiences": [], "education": [],
+            "projects": [], "certifications": [],
+            "facts": [{"id":"fact-sql","category":"skill","value":"熟练使用 SQL","source":"用户确认","confidence":1.0,"confirmed":true}],
+            "preferences": {}, "sourceFileName": "", "updatedAt": "2026-07-16T00:00:00+08:00", "version": 2
+        })).unwrap();
+        let requirements = vec![
+            CoverageRequirement {
+                id: "python".into(),
+                label: "Python".into(),
+                kind: "skill".into(),
+            },
+            CoverageRequirement {
+                id: "sql".into(),
+                label: "SQL".into(),
+                kind: "skill".into(),
+            },
+            CoverageRequirement {
+                id: "kotlin".into(),
+                label: "Kotlin".into(),
+                kind: "skill".into(),
+            },
+            CoverageRequirement {
+                id: "go".into(),
+                label: "Go".into(),
+                kind: "skill".into(),
+            },
+        ];
+        let report = validate_model_coverage_report(
+            "job-1".into(),
+            ResumeTargetRef {
+                kind: "variant".into(),
+                id: resume.id.clone(),
+            },
+            resume.version,
+            &resume,
+            &requirements,
+            ModelResumeCoverageOutput {
+                items: vec![
+                    ModelResumeCoverageItem {
+                        id: "python".into(),
+                        status: "covered".into(),
+                        resume_paths: vec!["/facts/0".into()],
+                        evidence_fact_ids: vec![],
+                        rationale: "invalid path".into(),
+                    },
+                    ModelResumeCoverageItem {
+                        id: "sql".into(),
+                        status: "strengthenable".into(),
+                        resume_paths: vec!["/summary".into()],
+                        evidence_fact_ids: vec!["fact-missing".into(), "fact-sql".into()],
+                        rationale: "valid fact".into(),
+                    },
+                    ModelResumeCoverageItem {
+                        id: "kotlin".into(),
+                        status: "covered".into(),
+                        resume_paths: vec![],
+                        evidence_fact_ids: vec![],
+                        rationale: "no evidence".into(),
+                    },
+                    ModelResumeCoverageItem {
+                        id: "not-a-requirement".into(),
+                        status: "gap".into(),
+                        resume_paths: vec![],
+                        evidence_fact_ids: vec![],
+                        rationale: "ignored".into(),
+                    },
+                ],
+            },
+        );
+
+        assert_eq!(report.items[0].status, "unknown");
+        assert_eq!(report.items[1].status, "strengthenable");
+        assert_eq!(report.items[1].resume_paths, vec!["/summary"]);
+        assert_eq!(report.items[1].evidence_fact_ids, vec!["fact-sql"]);
+        assert_eq!(report.items[2].status, "unknown");
+        assert_eq!(report.items[3].status, "unknown");
+        assert_eq!(report.strengthenable_count, 1);
+        assert_eq!(report.unknown_count, 3);
     }
 
     #[test]

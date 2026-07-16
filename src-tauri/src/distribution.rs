@@ -1299,7 +1299,7 @@ mod tests {
             )
             .unwrap();
         connection
-            .execute("DELETE FROM schema_migrations WHERE version IN (4,5)", [])
+            .execute("DELETE FROM schema_migrations WHERE version IN (4,5,6)", [])
             .unwrap();
         drop(connection);
         assert!(db.initialize().is_err());

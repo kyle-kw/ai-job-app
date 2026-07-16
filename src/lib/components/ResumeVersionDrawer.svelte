@@ -5,13 +5,14 @@
   import { resumeTemplate } from '$lib/resume-templates';
   import { displayDegree, formatDateRange } from '$lib/resume-format';
   import { modalFocus } from '$lib/modal-focus';
-  import type { ResumeCommitResult, ResumeProfile, ResumeVersionDetail, ResumeVersionSource, ResumeVersionSummary } from '$lib/types';
+  import type { ResumeCommitResult, ResumeProfile, ResumeVariantCommitResult, ResumeVersionDetail, ResumeVersionSource, ResumeVersionSummary } from '$lib/types';
 
   export let open = false;
   export let resume: ResumeProfile | null = null;
   export let hasUnsavedChanges = false;
+  export let variantId: string | null = null;
 
-  const dispatch = createEventDispatcher<{ restored: ResumeCommitResult }>();
+  const dispatch = createEventDispatcher<{ restored: ResumeCommitResult | ResumeVariantCommitResult }>();
 
   let versions: ResumeVersionSummary[] = [];
   let selectedId = '';
@@ -32,8 +33,9 @@
 
   function sourceLabel(source: ResumeVersionSource) {
     return ({
-      legacy: '历史版本', import: '导入', template: '空白模板', manual: '手工保存', 'ai-chat': 'AI 对话', rollback: '版本恢复'
-    }[source]);
+      legacy: '历史版本', import: '导入', template: '空白模板', manual: '手工保存', 'ai-chat': 'AI 对话', rollback: '版本恢复',
+      'variant-create': '创建岗位版本', 'variant-manual': '手工保存岗位版本', 'variant-ai': '岗位版本 AI', 'variant-rebase': '同步主简历', 'variant-rollback': '岗位版本恢复'
+    } satisfies Record<ResumeVersionSource, string>)[source];
   }
 
   function formatTime(value: string) {
@@ -89,7 +91,9 @@
     restoring = true;
     error = '';
     try {
-      const result = await backend.restoreResumeVersion(detail.id, resume.version);
+      const result = variantId
+        ? await backend.restoreResumeVariantVersion(variantId, detail.id, resume.version)
+        : await backend.restoreResumeVersion(detail.id, resume.version);
       dispatch('restored', result);
       await loadVersions(result.version.id);
     } catch (reason) {
@@ -104,7 +108,7 @@
   <button class="fixed inset-0 z-[70] bg-black/25 backdrop-blur-[1px]" tabindex="-1" aria-label="关闭简历版本历史" on:click={close}></button>
   <div class="fixed bottom-0 right-0 top-0 z-[80] flex w-[min(900px,calc(100vw-28px))] flex-col border-l bg-panel shadow-2xl" style="border-color: var(--line); animation: slide-in .22s ease-out;" role="dialog" aria-modal="true" aria-labelledby="resume-version-title" tabindex="-1" use:modalFocus={{ close, canClose: !restoring }}>
     <header class="flex h-[74px] shrink-0 items-center justify-between border-b px-6" style="border-color: var(--line);">
-      <div><h2 id="resume-version-title" class="text-base font-semibold">主简历版本历史</h2><p class="mt-0.5 text-xs body-muted">每次保存、导入、AI 应用和恢复都会创建不可变版本。</p></div>
+      <div><h2 id="resume-version-title" class="text-base font-semibold">{variantId ? '岗位版本历史' : '主简历版本历史'}</h2><p class="mt-0.5 text-xs body-muted">每次保存、导入、AI 应用和恢复都会创建不可变版本。</p></div>
       <button class="btn-icon" aria-label="关闭" disabled={restoring} on:click={close}><X size={18} /></button>
     </header>
 

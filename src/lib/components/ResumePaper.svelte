@@ -8,6 +8,7 @@
   export let sections: readonly ResumeSectionKey[];
   export let sample = false;
   export let colorTheme: ResumeColorTheme = 'navy';
+  export let coverageKeywords: string[] = [];
 
   const themeAccents: Record<ResumeColorTheme, string> = {
     pine: '#176B57',
@@ -39,17 +40,17 @@
   </header>
   {#each sections as section}
     {#if section === 'summary'}
-      <section class="resume-section"><h2>个人简介</h2><p><ResumeKeywordText text={resume.summary} /></p></section>
-    {:else if section === 'professionalSkills'}
-      <section class="resume-section"><h2>专业技能</h2>{#each resume.professionalSkills as group}<p class="mt-1"><strong>{group.label}：</strong><ResumeKeywordText text={group.items.filter(Boolean).join(', ')} /></p>{/each}</section>
+      <section class="resume-section"><h2>个人简介</h2><p><ResumeKeywordText text={resume.summary} highlightKeywords={coverageKeywords} /></p></section>
+    {:else if section === 'professionalSkills' && resume.professionalSkills.some((group) => group.items.some((item) => item.trim()))}
+      <section class="resume-section"><h2>专业技能</h2>{#each resume.professionalSkills.filter((group) => group.items.some((item) => item.trim())) as group}<p class="mt-1"><strong>{group.label || '专业技能'}：</strong><ResumeKeywordText text={group.items.map((item) => item.trim()).filter(Boolean).join(', ')} highlightKeywords={coverageKeywords} /></p>{/each}</section>
     {:else if section === 'experiences'}
-      <section class="resume-section"><h2>工作经历</h2>{#each resume.experiences as experience}<div class="mb-4"><div class="flex items-baseline justify-between gap-3"><span><strong>{experience.company}</strong>{experience.position ? `，${experience.position}` : ''}</span><span>{experience.location ? `${experience.location} · ` : ''}{formatDateRange(experience.startDate, experience.endDate)}</span></div><ul>{#each experience.highlights as highlight}<li><ResumeKeywordText text={highlight} /></li>{/each}</ul></div>{/each}</section>
+      <section class="resume-section"><h2>工作经历</h2>{#each resume.experiences as experience}<div class="mb-4"><div class="flex items-baseline justify-between gap-3"><span><strong>{experience.company}</strong>{experience.position ? `，${experience.position}` : ''}</span><span>{experience.location ? `${experience.location} · ` : ''}{formatDateRange(experience.startDate, experience.endDate)}</span></div>{#if experience.highlights.some((item) => item.trim())}<ul>{#each experience.highlights.filter((item) => item.trim()) as highlight}<li><ResumeKeywordText text={highlight} highlightKeywords={coverageKeywords} /></li>{/each}</ul>{/if}</div>{/each}</section>
     {:else if section === 'projects' && resume.projects.length}
-      <section class="resume-section"><h2>项目经历</h2>{#each resume.projects as project}<div class="mb-4"><div class="flex items-baseline justify-between gap-3"><strong>{project.name}</strong><span>{formatDateRange(project.startDate, project.endDate)}</span></div><p><ResumeKeywordText text={project.summary} /></p><ul>{#each project.highlights as highlight}<li><ResumeKeywordText text={highlight} /></li>{/each}</ul></div>{/each}</section>
+      <section class="resume-section"><h2>项目经历</h2>{#each resume.projects as project}<div class="mb-4"><div class="flex items-baseline justify-between gap-3"><strong>{project.name}</strong><span>{formatDateRange(project.startDate, project.endDate)}</span></div><p><ResumeKeywordText text={project.summary} highlightKeywords={coverageKeywords} /></p>{#if project.highlights.some((item) => item.trim())}<ul>{#each project.highlights.filter((item) => item.trim()) as highlight}<li><ResumeKeywordText text={highlight} highlightKeywords={coverageKeywords} /></li>{/each}</ul>{/if}</div>{/each}</section>
     {:else if section === 'certifications' && resume.certifications.length}
       <section class="resume-section"><h2>证书 / 专业资质</h2>{#each resume.certifications as certification}<p><strong>{certification.name}</strong>{certification.issuer ? ` · ${certification.issuer}` : ''}{certification.date ? ` · ${certification.date}` : ''}</p>{/each}</section>
     {:else if section === 'education'}
-      <section class="resume-section"><h2>教育经历</h2>{#each resume.education as education}<div class="flex items-baseline justify-between gap-3"><strong>{education.institution} · {education.area}</strong><span>{formatDateRange(education.startDate, education.endDate)}</span></div><p>{degreeLabel(education)}</p>{/each}</section>
+      <section class="resume-section"><h2>教育经历</h2>{#each resume.education as education}<div class="mb-3"><div class="flex items-baseline justify-between gap-3"><strong>{education.institution} · {education.area}</strong><span>{formatDateRange(education.startDate, education.endDate)}</span></div><p>{degreeLabel(education)}</p>{#if education.highlights.some((item) => item.trim())}<ul>{#each education.highlights.filter((item) => item.trim()) as highlight}<li><ResumeKeywordText text={highlight} highlightKeywords={coverageKeywords} /></li>{/each}</ul>{/if}</div>{/each}</section>
     {/if}
   {/each}
 </article>

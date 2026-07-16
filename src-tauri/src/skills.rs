@@ -4,3 +4,4 @@ pub const GREETING_MESSAGE: &str = include_str!("../../skills/greeting-message/S
 pub const JOB_DETAIL_EXTRACTION: &str = include_str!("../../skills/job-detail-extraction/SKILL.md");
 pub const INTERVIEW_PREPARATION: &str = include_str!("../../skills/interview-preparation/SKILL.md");
 pub const RESUME_CHAT: &str = include_str!("../../skills/resume-chat/SKILL.md");
+pub const RESUME_COVERAGE: &str = include_str!("../../skills/resume-coverage/SKILL.md");

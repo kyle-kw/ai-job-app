@@ -1253,6 +1253,97 @@ pub fn save_resume(
 }
 
 #[tauri::command]
+pub fn list_resume_variants(
+    state: State<'_, AppState>,
+) -> Result<Vec<ResumeVariantSummary>, String> {
+    state.db.list_resume_variants()
+}
+
+#[tauri::command]
+pub fn get_resume_variant(
+    state: State<'_, AppState>,
+    variant_id: String,
+) -> Result<ResumeVariantDetail, String> {
+    state
+        .db
+        .get_resume_variant(&variant_id)?
+        .ok_or_else(|| "variant_not_found: 岗位版本不存在。".into())
+}
+
+#[tauri::command]
+pub fn create_resume_variant(
+    state: State<'_, AppState>,
+    job_id: String,
+    expected_resume_version: i64,
+) -> Result<ResumeVariantDetail, String> {
+    state
+        .db
+        .create_resume_variant(&job_id, expected_resume_version)
+}
+
+#[tauri::command]
+pub fn save_resume_variant(
+    state: State<'_, AppState>,
+    variant_id: String,
+    resume: ResumeProfile,
+    expected_version: i64,
+) -> Result<ResumeVariantCommitResult, String> {
+    state.db.commit_resume_variant(
+        &variant_id,
+        resume,
+        expected_version,
+        "variant-manual",
+        "手工保存岗位版本",
+        None,
+        None,
+    )
+}
+
+#[tauri::command]
+pub fn delete_resume_variant(
+    state: State<'_, AppState>,
+    variant_id: String,
+) -> Result<i64, String> {
+    state.db.delete_resume_variant(&variant_id)
+}
+
+#[tauri::command]
+pub fn preview_resume_variant_rebase(
+    state: State<'_, AppState>,
+    variant_id: String,
+) -> Result<ResumeRebasePreview, String> {
+    state.db.preview_resume_variant_rebase(&variant_id)
+}
+
+#[tauri::command]
+pub fn apply_resume_variant_rebase(
+    state: State<'_, AppState>,
+    variant_id: String,
+    expected_variant_version: i64,
+    expected_master_version: i64,
+    resolutions: Vec<ResumeRebaseResolution>,
+) -> Result<ResumeVariantCommitResult, String> {
+    state.db.apply_resume_variant_rebase(
+        &variant_id,
+        expected_variant_version,
+        expected_master_version,
+        &resolutions,
+    )
+}
+
+#[tauri::command]
+pub fn restore_resume_variant_version(
+    state: State<'_, AppState>,
+    variant_id: String,
+    version_id: String,
+    expected_version: i64,
+) -> Result<ResumeVariantCommitResult, String> {
+    state
+        .db
+        .restore_resume_variant_version(&variant_id, &version_id, expected_version)
+}
+
+#[tauri::command]
 pub fn save_preferences(
     state: State<'_, AppState>,
     preferences: JobPreferences,
@@ -1313,11 +1404,30 @@ pub async fn render_resume(
     state: State<'_, AppState>,
     output_path: String,
     color_theme: ResumeColorTheme,
+    target: Option<ResumeTargetRef>,
 ) -> Result<RenderResult, String> {
-    let resume = state
-        .db
-        .active_resume()?
-        .ok_or_else(|| "请先导入主简历。".to_string())?;
+    let resume = match target.as_ref() {
+        Some(target) if target.kind == "variant" => state
+            .db
+            .get_resume_variant(&target.id)?
+            .map(|value| value.profile)
+            .ok_or_else(|| "variant_not_found: 岗位版本不存在。".to_string())?,
+        Some(target) if target.kind == "master" => {
+            let resume = state
+                .db
+                .active_resume()?
+                .ok_or_else(|| "请先导入主简历。".to_string())?;
+            if target.id != resume.id {
+                return Err("version_conflict: 当前主简历已变化，请刷新后重试。".into());
+            }
+            resume
+        }
+        None => state
+            .db
+            .active_resume()?
+            .ok_or_else(|| "请先导入主简历。".to_string())?,
+        Some(_) => return Err("invalid_request: 不支持的简历目标。".into()),
+    };
     let output_path = PathBuf::from(output_path);
     if output_path
         .extension()

@@ -841,11 +841,13 @@ def profile_to_rendercv(profile: dict[str, Any], color_theme: str = "navy") -> d
     skill_groups = profile.get("professionalSkills") or []
     if not skill_groups and profile.get("skills"):
         skill_groups = [{"label": "核心技能", "items": profile["skills"]}]
-    if skill_groups:
-        section_values["professionalSkills"] = ("专业技能", [
-            {"label": group.get("label") or "专业技能", "details": ", ".join(group.get("items") or [])}
-            for group in skill_groups if group.get("items")
-        ])
+    rendered_skill_groups = []
+    for group in skill_groups:
+        items = [str(item).strip() for item in group.get("items") or [] if str(item).strip()]
+        if items:
+            rendered_skill_groups.append({"label": group.get("label") or "专业技能", "details": ", ".join(items)})
+    if rendered_skill_groups:
+        section_values["professionalSkills"] = ("专业技能", rendered_skill_groups)
     if profile.get("experiences"):
         experience_entries = []
         for item in profile["experiences"]:
@@ -853,7 +855,7 @@ def profile_to_rendercv(profile: dict[str, Any], color_theme: str = "navy") -> d
             experience_entries.append({
                 "company": item.get("company", ""), "position": item.get("position", ""), "location": item.get("location", ""),
                 "start_date": start_date, "end_date": end_date,
-                "highlights": item.get("highlights", []),
+                "highlights": [value for value in item.get("highlights", []) if str(value).strip()],
             })
         section_values["experiences"] = ("工作经历", experience_entries)
     if profile.get("projects"):
@@ -863,7 +865,7 @@ def profile_to_rendercv(profile: dict[str, Any], color_theme: str = "navy") -> d
             project_entries.append({
                 "name": item.get("name", ""), "summary": item.get("summary", ""),
                 "start_date": start_date, "end_date": end_date,
-                "highlights": item.get("highlights", []),
+                "highlights": [value for value in item.get("highlights", []) if str(value).strip()],
             })
         section_values["projects"] = ("项目经历", project_entries)
     if profile.get("certifications"):
@@ -878,7 +880,7 @@ def profile_to_rendercv(profile: dict[str, Any], color_theme: str = "navy") -> d
             education_entries.append({
                 "institution": item.get("institution", ""), "area": item.get("area", ""), "degree": display_degree(item),
                 "start_date": start_date, "end_date": end_date,
-                "highlights": item.get("highlights", []),
+                "highlights": [value for value in item.get("highlights", []) if str(value).strip()],
             })
         section_values["education"] = ("教育经历", education_entries)
     orders = {

@@ -5,6 +5,8 @@ import { deterministicFit } from '$lib/fit';
 import { filterJobs } from '$lib/job-filters';
 import { buildClientJobDataReport } from '$lib/report';
 import { flattenProfessionalSkills, suggestedProfessionalSkillGroups } from '$lib/resume-templates';
+import { applyResumeRebase, buildResumeRebasePreview } from '$lib/resume-rebase';
+import { buildLocalResumeCoverage, summarizeCoverage } from '$lib/resume-coverage';
 import type {
   AiProviderConfig,
   ApplyResumeEditsRequest,
@@ -33,8 +35,16 @@ import type {
   ResumeChatProposal,
   ResumeChatRequest,
   ResumeCommitResult,
+  ResumeCoverageReport,
+  ResumeEditCommitResult,
+  ResumeRebasePreview,
+  ResumeRebaseResolution,
   ResumeProfile,
   ResumeTemplateId,
+  ResumeTargetRef,
+  ResumeVariantCommitResult,
+  ResumeVariantDetail,
+  ResumeVariantSummary,
   ResumeVersionDetail,
   ResumeVersionSummary,
   SearchSpec,
@@ -63,14 +73,29 @@ const currentMockReportKeywords = () => mockReportKeywords
   .map((keyword) => ({ ...keyword, jobCount: mockJobsForKeywords([keyword.key]).length }))
   .filter((keyword) => keyword.jobCount > 0);
 const mockListeners = new Set<(event: TaskEvent) => void>();
-let mockPreparationState: InterviewPreparationState = {
+const mockTimerIds = new Set<number>();
+const initialMockPreparationState = (): InterviewPreparationState => ({
   status: 'missing', hasProvider: false, hasResume: true, preparation: null
-};
-let mockVersions: ResumeVersionDetail[] = [{
+});
+const initialMockVersions = (): ResumeVersionDetail[] => [{
   id: 'resume-version-initial', resumeId: mockResume.id, version: mockResume.version,
   parentVersion: mockResume.version - 1, createdAt: mockResume.updatedAt, source: 'legacy',
   summary: '浏览器演示初始版本', profile: structuredClone(mockResume)
 }];
+let mockPreparationState = initialMockPreparationState();
+let mockVersions = initialMockVersions();
+let mockVariants: ResumeVariantDetail[] = [];
+
+export function resetBrowserMockState() {
+  for (const timerId of mockTimerIds) window.clearTimeout(timerId);
+  mockTimerIds.clear();
+  mockListeners.clear();
+  mockState = structuredClone(mockSnapshot);
+  mockJobsState = structuredClone(mockJobs);
+  mockPreparationState = initialMockPreparationState();
+  mockVersions = initialMockVersions();
+  mockVariants = [];
+}
 
 function emitMock(task: TaskRun) {
   const index = mockState.tasks.findIndex((item) => item.id === task.id);
@@ -89,7 +114,8 @@ function createMockTask(kind: TaskKind, title: string): TaskRun {
 function advanceMockTask(task: TaskRun, steps: Array<{ progress: number; message: string }>, done?: () => void) {
   emitMock(task);
   steps.forEach((step, index) => {
-    window.setTimeout(() => {
+    const timerId = window.setTimeout(() => {
+      mockTimerIds.delete(timerId);
       task = {
         ...task,
         state: index === steps.length - 1 ? 'completed' : 'running',
@@ -101,6 +127,7 @@ function advanceMockTask(task: TaskRun, steps: Array<{ progress: number; message
       if (index === steps.length - 1) done?.();
       emitMock(task);
     }, 450 + index * 650);
+    mockTimerIds.add(timerId);
   });
 }
 
@@ -342,6 +369,140 @@ export const backend = {
     return invoke('save_resume', { resume });
   },
 
+  async listResumeVariants(): Promise<ResumeVariantSummary[]> {
+    if (browserMode()) return mockVariants.map(({ profile: _, ...item }) => ({
+      ...structuredClone(item), stale: Boolean(mockState.resume && mockState.resume.version > item.baseResumeVersion)
+    }));
+    return invoke('list_resume_variants');
+  },
+
+  async getResumeVariant(variantId: string): Promise<ResumeVariantDetail> {
+    if (browserMode()) {
+      const variant = mockVariants.find((item) => item.id === variantId);
+      if (!variant) throw new Error('variant_not_found: 岗位版本不存在');
+      return { ...structuredClone(variant), stale: Boolean(mockState.resume && mockState.resume.version > variant.baseResumeVersion) };
+    }
+    return invoke('get_resume_variant', { variantId });
+  },
+
+  async createResumeVariant(jobId: string, expectedResumeVersion: number): Promise<ResumeVariantDetail> {
+    if (browserMode()) {
+      const existing = mockVariants.find((item) => item.jobId === jobId);
+      if (existing) return structuredClone(existing);
+      const master = mockState.resume;
+      const job = mockJobsState.find((item) => item.id === jobId);
+      if (!master) throw new Error('请先导入主简历');
+      if (!job) throw new Error('岗位不存在');
+      if (master.version !== expectedResumeVersion) throw new Error('version_conflict: 主简历已变化');
+      const now = new Date().toISOString();
+      const id = crypto.randomUUID();
+      const profile = { ...structuredClone(master), id, version: 1, updatedAt: now };
+      const detail: ResumeVariantDetail = {
+        id, jobId, jobTitle: job.title, company: job.company, name: `${job.company} · ${job.title}`,
+        baseResumeId: master.id, baseResumeVersion: master.version, version: 1, createdAt: now, updatedAt: now, stale: false, profile
+      };
+      mockVariants.unshift(detail);
+      mockVersions.unshift({
+        id: crypto.randomUUID(), resumeId: id, version: 1, parentVersion: null, createdAt: now,
+        source: 'variant-create', summary: '创建岗位版本', jobId, profile: structuredClone(profile)
+      });
+      return structuredClone(detail);
+    }
+    return invoke('create_resume_variant', { jobId, expectedResumeVersion });
+  },
+
+  async saveResumeVariant(variantId: string, resume: ResumeProfile, expectedVersion: number): Promise<ResumeVariantCommitResult> {
+    if (browserMode()) {
+      const index = mockVariants.findIndex((item) => item.id === variantId);
+      if (index < 0) throw new Error('variant_not_found: 岗位版本不存在');
+      const current = mockVariants[index];
+      if (current.version !== expectedVersion) throw new Error('version_conflict: 岗位版本已变化');
+      const now = new Date().toISOString();
+      const profile = {
+        ...structuredClone(resume), id: variantId, version: current.version + 1, updatedAt: now,
+        facts: structuredClone(current.profile.facts), preferences: structuredClone(current.profile.preferences)
+      };
+      const variant = { ...current, version: profile.version, updatedAt: now, profile };
+      mockVariants[index] = variant;
+      const version: ResumeVersionSummary = {
+        id: crypto.randomUUID(), resumeId: variantId, version: profile.version, parentVersion: expectedVersion,
+        createdAt: now, source: 'variant-manual', summary: '手工保存岗位版本', jobId: current.jobId
+      };
+      mockVersions.unshift({ ...version, profile: structuredClone(profile) });
+      return structuredClone({ variant, version });
+    }
+    return invoke('save_resume_variant', { variantId, resume, expectedVersion });
+  },
+
+  async deleteResumeVariant(variantId: string): Promise<number> {
+    if (browserMode()) {
+      const previous = mockVariants.length;
+      mockVariants = mockVariants.filter((item) => item.id !== variantId);
+      mockVersions = mockVersions.filter((item) => item.resumeId !== variantId);
+      return previous - mockVariants.length;
+    }
+    return invoke('delete_resume_variant', { variantId });
+  },
+
+  async previewResumeVariantRebase(variantId: string): Promise<ResumeRebasePreview> {
+    if (browserMode()) {
+      const variant = mockVariants.find((item) => item.id === variantId);
+      const master = mockState.resume;
+      if (!variant || !master) throw new Error('无法读取岗位版本或主简历');
+      const base = mockVersions.find((item) => item.resumeId === variant.baseResumeId && item.version === variant.baseResumeVersion)?.profile;
+      if (!base) throw new Error('base_version_missing: 主简历基线不存在');
+      return buildResumeRebasePreview(variant.id, variant.version, variant.baseResumeVersion, base, master, variant.profile);
+    }
+    return invoke('preview_resume_variant_rebase', { variantId });
+  },
+
+  async applyResumeVariantRebase(
+    variantId: string,
+    expectedVariantVersion: number,
+    expectedMasterVersion: number,
+    resolutions: ResumeRebaseResolution[]
+  ): Promise<ResumeVariantCommitResult> {
+    if (browserMode()) {
+      const variant = mockVariants.find((item) => item.id === variantId);
+      const master = mockState.resume;
+      if (!variant || !master) throw new Error('无法读取岗位版本或主简历');
+      if (variant.version !== expectedVariantVersion || master.version !== expectedMasterVersion) throw new Error('version_conflict: 内容已变化');
+      const preview = await backend.previewResumeVariantRebase(variantId);
+      const candidate = applyResumeRebase(variant.profile, master, preview, resolutions);
+      const committed = await backend.saveResumeVariant(variantId, candidate, expectedVariantVersion);
+      const stored = mockVariants.find((item) => item.id === variantId)!;
+      stored.profile.facts = structuredClone(master.facts);
+      stored.profile.preferences = structuredClone(master.preferences);
+      stored.baseResumeVersion = master.version;
+      stored.stale = false;
+      committed.variant.baseResumeVersion = master.version;
+      committed.variant.profile.facts = structuredClone(master.facts);
+      committed.variant.profile.preferences = structuredClone(master.preferences);
+      committed.variant.stale = false;
+      committed.version.source = 'variant-rebase';
+      committed.version.summary = `同步主简历 v${master.version}`;
+      const storedVersion = mockVersions.find((item) => item.id === committed.version.id);
+      if (storedVersion) {
+        storedVersion.source = 'variant-rebase';
+        storedVersion.summary = committed.version.summary;
+        storedVersion.profile = structuredClone(stored.profile);
+      }
+      return structuredClone(committed);
+    }
+    return invoke('apply_resume_variant_rebase', { variantId, expectedVariantVersion, expectedMasterVersion, resolutions });
+  },
+
+  async restoreResumeVariantVersion(variantId: string, versionId: string, expectedVersion: number): Promise<ResumeVariantCommitResult> {
+    if (browserMode()) {
+      const version = mockVersions.find((item) => item.id === versionId && item.resumeId === variantId);
+      if (!version) throw new Error('简历版本不存在');
+      const result = await backend.saveResumeVariant(variantId, version.profile, expectedVersion);
+      result.version.source = 'variant-rollback'; result.version.summary = `恢复到 v${version.version} 的内容`;
+      return result;
+    }
+    return invoke('restore_resume_variant_version', { variantId, versionId, expectedVersion });
+  },
+
   async createResumeFromTemplate(templateId: ResumeTemplateId): Promise<ResumeProfile> {
     if (browserMode()) {
       const now = new Date().toISOString();
@@ -443,24 +604,44 @@ export const backend = {
 
   async renderResume(request: RenderResumeRequest): Promise<RenderResult> {
     if (browserMode()) return { path: request.outputPath || 'browser-demo://resume.pdf', fileName: request.outputPath.split(/[\\/]/).at(-1) || '主简历_demo.pdf' };
-    return invoke('render_resume', { outputPath: request.outputPath, colorTheme: request.colorTheme });
+    return invoke('render_resume', { outputPath: request.outputPath, colorTheme: request.colorTheme, target: request.target });
+  },
+
+  async analyzeResumeCoverage(target: ResumeTargetRef, force = false): Promise<ResumeCoverageReport> {
+    if (browserMode()) {
+      const variant = target.kind === 'variant' ? mockVariants.find((item) => item.id === target.id) : null;
+      const resume = variant?.profile ?? mockState.resume;
+      const job = variant ? mockJobsState.find((item) => item.id === variant.jobId) : null;
+      if (!resume || !job) throw new Error('岗位版本或关联岗位不存在');
+      const local = buildLocalResumeCoverage(job, target, resume);
+      return summarizeCoverage({
+        ...local,
+        source: 'ai',
+        generatedAt: new Date().toISOString(),
+        items: local.items.map((item) => ({ ...item, rationale: item.status === 'unknown' ? 'AI 未找到足够证据，保持未知。' : item.rationale }))
+      });
+    }
+    return invoke('analyze_resume_coverage', { target, force });
   },
 
   async proposeResumeChatEdits(request: ResumeChatRequest): Promise<ResumeChatProposal> {
     if (browserMode()) {
-      if (!mockState.resume) throw new Error('请先导入主简历');
+      const variant = request.target.kind === 'variant' ? mockVariants.find((item) => item.id === request.target.id) : null;
+      const resume = variant?.profile ?? mockState.resume;
+      if (!resume) throw new Error('请先导入主简历');
       if (!mockState.readiness.ai) throw new Error('请先配置并验证默认模型');
-      if (request.expectedVersion !== mockState.resume.version) throw new Error('version_conflict: 简历已变化');
+      if (request.expectedVersion !== resume.version) throw new Error('version_conflict: 简历已变化');
       const last = request.messages.at(-1)?.content ?? '';
       const shouldShorten = /精简|缩短|简洁/.test(last);
-      const after = shouldShorten ? mockState.resume.summary.slice(0, Math.max(40, Math.floor(mockState.resume.summary.length * 0.75))) : mockState.resume.summary;
+      const after = shouldShorten ? resume.summary.slice(0, Math.max(40, Math.floor(resume.summary.length * 0.75))) : resume.summary;
+      const jobId = variant?.jobId ?? request.jobId;
       return {
-        proposalId: crypto.randomUUID(), resumeId: mockState.resume.id, baseVersion: mockState.resume.version,
-        job: request.jobId ? (() => { const job = mockJobsState.find((item) => item.id === request.jobId); return job ? { id: job.id, title: job.title, company: job.company } : null; })() : null,
+        proposalId: crypto.randomUUID(), target: request.target, baseVersion: resume.version,
+        job: jobId ? (() => { const job = mockJobsState.find((item) => item.id === jobId); return job ? { id: job.id, title: job.title, company: job.company } : null; })() : null,
         assistantMessage: shouldShorten ? '我整理了一版更精简的个人简介，请审核后应用。' : '请告诉我希望修改的具体字段或目标；我不会在没有事实依据时改写。',
         edits: shouldShorten ? [{
           id: crypto.randomUUID(), path: '/summary', label: '个人简介', operation: 'replace',
-          before: mockState.resume.summary, after, rationale: '压缩重复表述，保留现有事实。',
+          before: resume.summary, after, rationale: '压缩重复表述，保留现有事实。',
           evidenceFactIds: [], requiredFactCandidateIds: []
         }] : [],
         factCandidates: [], warnings: []
@@ -469,8 +650,20 @@ export const backend = {
     return invoke('propose_resume_chat_edits', { request });
   },
 
-  async applyResumeChatEdits(request: ApplyResumeEditsRequest): Promise<ResumeCommitResult> {
+  async applyResumeChatEdits(request: ApplyResumeEditsRequest): Promise<ResumeEditCommitResult> {
     if (browserMode()) {
+      if (request.proposal.target.kind === 'variant') {
+        const variant = mockVariants.find((item) => item.id === request.proposal.target.id);
+        if (!variant || variant.version !== request.expectedVersion) throw new Error('version_conflict: 岗位版本已变化');
+        if (request.proposal.factCandidates.length || request.confirmedFactCandidateIds.length) throw new Error('fact_requires_master: 请先在主简历确认新事实');
+        const next = structuredClone(variant.profile) as ResumeProfile & Record<string, unknown>;
+        for (const edit of request.proposal.edits.filter((item) => request.selectedEditIds.includes(item.id))) {
+          const key = edit.path.slice(1); if (key in next) next[key] = structuredClone(edit.after);
+        }
+        const result = await backend.saveResumeVariant(variant.id, next, request.expectedVersion);
+        result.version.source = 'variant-ai'; result.version.summary = `岗位版本 AI 应用 ${request.selectedEditIds.length} 项修改`;
+        return result;
+      }
       if (!mockState.resume || mockState.resume.version !== request.expectedVersion) throw new Error('version_conflict: 简历已变化');
       const next = structuredClone(mockState.resume) as ResumeProfile & Record<string, unknown>;
       for (const edit of request.proposal.edits.filter((item) => request.selectedEditIds.includes(item.id))) {

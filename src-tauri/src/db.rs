@@ -1,13 +1,18 @@
 use crate::models::{
     AiProviderConfig, AppSettings, BossProfileState, InterviewPreparation, Job, JobOption, JobPage,
-    JobQuery, ReportKeyword, ResumeCommitResult, ResumeEducation, ResumeProfile,
-    ResumeVersionDetail, ResumeVersionSummary, ScrapeRun, SearchSpec, TaskRun,
+    JobQuery, ReportKeyword, ResumeCommitResult, ResumeCoverageReport, ResumeEducation,
+    ResumeProfile, ResumeRebaseChange, ResumeRebasePreview, ResumeRebaseResolution,
+    ResumeVariantCommitResult, ResumeVariantDetail, ResumeVariantSummary, ResumeVersionDetail,
+    ResumeVersionSummary, ScrapeRun, SearchSpec, TaskRun,
 };
 use crate::time;
 use base64::Engine;
 use rusqlite::backup::Backup;
 use rusqlite::types::Value as SqlValue;
-use rusqlite::{params, params_from_iter, Connection, OpenFlags, OptionalExtension, Transaction};
+use rusqlite::{
+    params, params_from_iter, Connection, OpenFlags, OptionalExtension, Transaction,
+    TransactionBehavior,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
@@ -17,7 +22,7 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 mod providers;
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 5;
+pub const CURRENT_SCHEMA_VERSION: i64 = 6;
 
 const HISTORICAL_KEYWORD_KEY: &str = "__historical_unclassified__";
 const HISTORICAL_KEYWORD_LABEL: &str = "历史未分类";
@@ -383,6 +388,7 @@ impl Database {
         Self::migrate_v3(&transaction)?;
         Self::migrate_v4(&transaction)?;
         Self::migrate_v5(&transaction)?;
+        Self::migrate_v6(&transaction)?;
         transaction.commit().map_err(|error| error.to_string())?;
         self.recover_interrupted_tasks()?;
         Ok(())
@@ -766,6 +772,63 @@ impl Database {
             .execute(
                 "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (5, datetime('now'))",
                 [],
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    fn migrate_v6(transaction: &Transaction<'_>) -> Result<(), String> {
+        let already_applied = transaction
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version=6)",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(|error| error.to_string())?;
+        if already_applied {
+            return Ok(());
+        }
+        transaction
+            .execute_batch(
+                r#"
+                CREATE TABLE IF NOT EXISTS resume_variants (
+                    id TEXT PRIMARY KEY,
+                    job_id TEXT NOT NULL UNIQUE,
+                    base_resume_id TEXT NOT NULL,
+                    base_resume_version INTEGER NOT NULL,
+                    version INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_resume_variants_updated
+                    ON resume_variants(updated_at DESC);
+                CREATE TABLE IF NOT EXISTS resume_coverage_cache (
+                    cache_key TEXT PRIMARY KEY,
+                    target_kind TEXT NOT NULL,
+                    target_id TEXT NOT NULL,
+                    target_version INTEGER NOT NULL,
+                    job_id TEXT NOT NULL,
+                    job_fingerprint TEXT NOT NULL,
+                    provider_fingerprint TEXT NOT NULL,
+                    skill_version TEXT NOT NULL,
+                    generated_at TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_resume_coverage_target
+                    ON resume_coverage_cache(target_kind,target_id,target_version);
+                CREATE TRIGGER IF NOT EXISTS cleanup_resume_variant_versions
+                AFTER DELETE ON resume_variants
+                BEGIN
+                    DELETE FROM resume_versions WHERE resume_id=OLD.id;
+                    DELETE FROM resume_coverage_cache WHERE target_kind='variant' AND target_id=OLD.id;
+                END;
+                INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+                VALUES (6, datetime('now'));
+                "#,
             )
             .map_err(|error| error.to_string())?;
         Ok(())
@@ -1243,6 +1306,513 @@ impl Database {
             resume: candidate,
             version,
         })
+    }
+
+    pub fn list_resume_variants(&self) -> Result<Vec<ResumeVariantSummary>, String> {
+        let connection = self.connect()?;
+        let master_version = active_resume_version(&connection)?;
+        let mut statement = connection
+            .prepare(
+                "SELECT v.id,v.job_id,j.title,j.company,v.name,v.base_resume_id,v.base_resume_version,v.version,v.created_at,v.updated_at
+                 FROM resume_variants v JOIN jobs j ON j.id=v.job_id ORDER BY v.updated_at DESC,v.id ASC",
+            )
+            .map_err(|error| error.to_string())?;
+        let rows = statement
+            .query_map([], |row| {
+                let base_resume_version: i64 = row.get(6)?;
+                Ok(ResumeVariantSummary {
+                    id: row.get(0)?,
+                    job_id: row.get(1)?,
+                    job_title: row.get(2)?,
+                    company: row.get(3)?,
+                    name: row.get(4)?,
+                    base_resume_id: row.get(5)?,
+                    base_resume_version,
+                    version: row.get(7)?,
+                    created_at: row.get(8)?,
+                    updated_at: row.get(9)?,
+                    stale: master_version.is_some_and(|version| version > base_resume_version),
+                })
+            })
+            .map_err(|error| error.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn get_resume_variant(&self, id: &str) -> Result<Option<ResumeVariantDetail>, String> {
+        self.resume_variant_by("v.id", id)
+    }
+
+    pub fn get_resume_variant_for_job(
+        &self,
+        job_id: &str,
+    ) -> Result<Option<ResumeVariantDetail>, String> {
+        self.resume_variant_by("v.job_id", job_id)
+    }
+
+    fn resume_variant_by(
+        &self,
+        column: &str,
+        value: &str,
+    ) -> Result<Option<ResumeVariantDetail>, String> {
+        let connection = self.connect()?;
+        let master_version = active_resume_version(&connection)?;
+        let sql = format!(
+            "SELECT v.id,v.job_id,j.title,j.company,v.name,v.base_resume_id,v.base_resume_version,v.version,v.created_at,v.updated_at,v.payload_json
+             FROM resume_variants v JOIN jobs j ON j.id=v.job_id WHERE {column}=?1"
+        );
+        let record: Option<(ResumeVariantSummary, String)> = connection
+            .query_row(&sql, [value], |row| {
+                let base_resume_version: i64 = row.get(6)?;
+                Ok((
+                    ResumeVariantSummary {
+                        id: row.get(0)?,
+                        job_id: row.get(1)?,
+                        job_title: row.get(2)?,
+                        company: row.get(3)?,
+                        name: row.get(4)?,
+                        base_resume_id: row.get(5)?,
+                        base_resume_version,
+                        version: row.get(7)?,
+                        created_at: row.get(8)?,
+                        updated_at: row.get(9)?,
+                        stale: master_version.is_some_and(|version| version > base_resume_version),
+                    },
+                    row.get(10)?,
+                ))
+            })
+            .optional()
+            .map_err(|error| error.to_string())?;
+        record
+            .map(|(summary, payload)| {
+                let mut profile: ResumeProfile =
+                    serde_json::from_str(&payload).map_err(|error| error.to_string())?;
+                ensure_resume_item_ids(&mut profile);
+                Ok(ResumeVariantDetail { summary, profile })
+            })
+            .transpose()
+    }
+
+    pub fn create_resume_variant(
+        &self,
+        job_id: &str,
+        expected_resume_version: i64,
+    ) -> Result<ResumeVariantDetail, String> {
+        // Creation is idempotent per job. Reopening an existing variant must not depend on the
+        // current master resume, so the expected version only applies to the initial clone below.
+        if let Some(existing) = self.get_resume_variant_for_job(job_id)? {
+            return Ok(existing);
+        }
+        let mut connection = self.connect()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| error.to_string())?;
+        let (job_title, company): (String, String) = transaction
+            .query_row(
+                "SELECT title,company FROM jobs WHERE id=?1",
+                [job_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "job_not_found: 岗位不存在。".to_string())?;
+        let master_payload: String = transaction
+            .query_row("SELECT payload_json FROM resume_profiles WHERE is_active=1 ORDER BY updated_at DESC LIMIT 1", [], |row| row.get(0))
+            .optional().map_err(|error| error.to_string())?
+            .ok_or_else(|| "resume_not_found: 请先导入主简历。".to_string())?;
+        let master: ResumeProfile =
+            serde_json::from_str(&master_payload).map_err(|error| error.to_string())?;
+        if master.version != expected_resume_version {
+            return Err(format!(
+                "version_conflict: 当前主简历为 v{}，请刷新后重试。",
+                master.version
+            ));
+        }
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = time::shanghai_rfc3339();
+        let mut profile = master.clone();
+        profile.id = id.clone();
+        profile.version = 1;
+        profile.updated_at = now.clone();
+        ensure_resume_item_ids(&mut profile);
+        let payload = serde_json::to_string(&profile).map_err(|error| error.to_string())?;
+        let name = format!("{company} · {job_title}");
+        transaction.execute(
+            "INSERT INTO resume_variants(id,job_id,base_resume_id,base_resume_version,version,name,created_at,updated_at,payload_json) VALUES (?1,?2,?3,?4,1,?5,?6,?6,?7)",
+            params![id, job_id, master.id, master.version, name, now, payload],
+        ).map_err(|error| error.to_string())?;
+        transaction.execute(
+            "INSERT INTO resume_versions(id,resume_id,version,parent_version,created_at,source,summary,job_id,profile_json) VALUES (?1,?2,1,NULL,?3,'variant-create','创建岗位版本',?4,?5)",
+            params![uuid::Uuid::new_v4().to_string(), id, now, job_id, payload],
+        ).map_err(|error| error.to_string())?;
+        transaction.commit().map_err(|error| error.to_string())?;
+        self.get_resume_variant(&id)?
+            .ok_or_else(|| "storage_error: 岗位版本创建后无法读取。".into())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn commit_resume_variant(
+        &self,
+        variant_id: &str,
+        mut candidate: ResumeProfile,
+        expected_version: i64,
+        source: &str,
+        summary: &str,
+        restored_from_version: Option<i64>,
+        new_base_resume_version: Option<i64>,
+    ) -> Result<ResumeVariantCommitResult, String> {
+        let mut connection = self.connect()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| error.to_string())?;
+        let current_record: Option<(String, i64, String, i64)> = transaction.query_row(
+            "SELECT payload_json,version,job_id,base_resume_version FROM resume_variants WHERE id=?1",
+            [variant_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        ).optional().map_err(|error| error.to_string())?;
+        let (current_payload, current_version, job_id, base_resume_version) =
+            current_record.ok_or_else(|| "variant_not_found: 岗位版本不存在。".to_string())?;
+        if current_version != expected_version {
+            return Err(format!(
+                "version_conflict: 当前岗位版本为 v{current_version}，请刷新后重试。"
+            ));
+        }
+        let current: ResumeProfile =
+            serde_json::from_str(&current_payload).map_err(|error| error.to_string())?;
+        candidate.id = variant_id.to_string();
+        candidate.version = current_version + 1;
+        candidate.updated_at = time::shanghai_rfc3339();
+        if new_base_resume_version.is_none() {
+            candidate.facts = current.facts;
+            candidate.preferences = current.preferences;
+        }
+        ensure_resume_item_ids(&mut candidate);
+        validate_resume_facts(&mut candidate)?;
+        let payload = serde_json::to_string(&candidate).map_err(|error| error.to_string())?;
+        let base_version = new_base_resume_version.unwrap_or(base_resume_version);
+        let changed = transaction.execute(
+            "UPDATE resume_variants SET payload_json=?1,version=?2,base_resume_version=?3,updated_at=?4 WHERE id=?5 AND version=?6",
+            params![payload, candidate.version, base_version, candidate.updated_at, variant_id, expected_version],
+        ).map_err(|error| error.to_string())?;
+        if changed != 1 {
+            return Err("version_conflict: 岗位版本已变化，请刷新后重试。".into());
+        }
+        let version = ResumeVersionSummary {
+            id: uuid::Uuid::new_v4().to_string(),
+            resume_id: variant_id.to_string(),
+            version: candidate.version,
+            parent_version: Some(current_version),
+            created_at: candidate.updated_at.clone(),
+            source: source.into(),
+            summary: summary.into(),
+            job_id: Some(job_id.clone()),
+            proposal_id: None,
+            restored_from_version,
+        };
+        transaction.execute(
+            "INSERT INTO resume_versions(id,resume_id,version,parent_version,created_at,source,summary,job_id,proposal_id,restored_from_version,profile_json) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,NULL,?9,?10)",
+            params![version.id, version.resume_id, version.version, version.parent_version, version.created_at, version.source, version.summary, job_id, version.restored_from_version, payload],
+        ).map_err(|error| error.to_string())?;
+        transaction
+            .execute(
+                "DELETE FROM resume_coverage_cache WHERE target_kind='variant' AND target_id=?1",
+                [variant_id],
+            )
+            .map_err(|error| error.to_string())?;
+        transaction.commit().map_err(|error| error.to_string())?;
+        let variant = self
+            .get_resume_variant(variant_id)?
+            .ok_or_else(|| "storage_error: 岗位版本保存后无法读取。".to_string())?;
+        Ok(ResumeVariantCommitResult { variant, version })
+    }
+
+    pub fn delete_resume_variant(&self, variant_id: &str) -> Result<i64, String> {
+        let connection = self.connect()?;
+        let changed = connection
+            .execute("DELETE FROM resume_variants WHERE id=?1", [variant_id])
+            .map_err(|error| error.to_string())?;
+        Ok(changed as i64)
+    }
+
+    pub fn restore_resume_variant_version(
+        &self,
+        variant_id: &str,
+        version_id: &str,
+        expected_version: i64,
+    ) -> Result<ResumeVariantCommitResult, String> {
+        let detail = self
+            .get_resume_version(version_id)?
+            .ok_or_else(|| "简历版本不存在。".to_string())?;
+        if detail.summary.resume_id != variant_id {
+            return Err("不能把其他简历的历史恢复到当前岗位版本。".into());
+        }
+        self.commit_resume_variant(
+            variant_id,
+            detail.profile,
+            expected_version,
+            "variant-rollback",
+            &format!("恢复到 v{} 的内容", detail.summary.version),
+            Some(detail.summary.version),
+            None,
+        )
+    }
+
+    pub fn preview_resume_variant_rebase(
+        &self,
+        variant_id: &str,
+    ) -> Result<ResumeRebasePreview, String> {
+        let variant = self
+            .get_resume_variant(variant_id)?
+            .ok_or_else(|| "variant_not_found: 岗位版本不存在。".to_string())?;
+        let master = self
+            .active_resume()?
+            .ok_or_else(|| "resume_not_found: 当前没有主简历。".to_string())?;
+        if master.id != variant.summary.base_resume_id {
+            return Err(
+                "base_resume_changed: 当前主简历与岗位版本基线不一致，请重新创建岗位版本。".into(),
+            );
+        }
+        let base = self
+            .resume_version_profile(
+                &variant.summary.base_resume_id,
+                variant.summary.base_resume_version,
+            )?
+            .ok_or_else(|| "base_version_missing: 岗位版本的主简历基线已不存在。".to_string())?;
+        let (auto_changes, conflicts) = compute_rebase_changes(&base, &master, &variant.profile)?;
+        Ok(ResumeRebasePreview {
+            variant_id: variant.summary.id,
+            variant_version: variant.summary.version,
+            base_resume_version: variant.summary.base_resume_version,
+            master_version: master.version,
+            auto_changes,
+            conflicts,
+        })
+    }
+
+    pub fn apply_resume_variant_rebase(
+        &self,
+        variant_id: &str,
+        expected_variant_version: i64,
+        expected_master_version: i64,
+        resolutions: &[ResumeRebaseResolution],
+    ) -> Result<ResumeVariantCommitResult, String> {
+        let mut connection = self.connect()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| error.to_string())?;
+
+        let variant_record: Option<(String, i64, String, String, i64)> = transaction
+            .query_row(
+                "SELECT payload_json,version,job_id,base_resume_id,base_resume_version FROM resume_variants WHERE id=?1",
+                [variant_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?;
+        let (variant_payload, variant_version, job_id, base_resume_id, base_resume_version) =
+            variant_record.ok_or_else(|| "variant_not_found: 岗位版本不存在。".to_string())?;
+        if variant_version != expected_variant_version {
+            return Err(format!(
+                "version_conflict: 当前岗位版本为 v{variant_version}，请刷新后重试。"
+            ));
+        }
+        let variant: ResumeProfile =
+            serde_json::from_str(&variant_payload).map_err(|error| error.to_string())?;
+
+        let master_payload: String = transaction
+            .query_row(
+                "SELECT payload_json FROM resume_profiles WHERE is_active=1 ORDER BY updated_at DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "resume_not_found: 当前没有主简历。".to_string())?;
+        let master: ResumeProfile =
+            serde_json::from_str(&master_payload).map_err(|error| error.to_string())?;
+        if master.version != expected_master_version {
+            return Err(format!(
+                "version_conflict: 当前主简历为 v{}，请重新检查同步差异。",
+                master.version
+            ));
+        }
+        if master.id != base_resume_id {
+            return Err(
+                "base_resume_changed: 当前主简历与岗位版本基线不一致，请重新创建岗位版本。".into(),
+            );
+        }
+
+        let base_payload: String = transaction
+            .query_row(
+                "SELECT profile_json FROM resume_versions WHERE resume_id=?1 AND version=?2",
+                params![base_resume_id, base_resume_version],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "base_version_missing: 岗位版本的主简历基线已不存在。".to_string())?;
+        let base: ResumeProfile =
+            serde_json::from_str(&base_payload).map_err(|error| error.to_string())?;
+        let (auto_changes, conflicts) = compute_rebase_changes(&base, &master, &variant)?;
+
+        let mut value = serde_json::to_value(&variant).map_err(|error| error.to_string())?;
+        let object = value
+            .as_object_mut()
+            .ok_or_else(|| "storage_error: 岗位版本结构无效。".to_string())?;
+        let resolution_map = resolutions
+            .iter()
+            .map(|item| (item.path.as_str(), item.choice.as_str()))
+            .collect::<std::collections::HashMap<_, _>>();
+        for change in &auto_changes {
+            object.insert(
+                change.path.trim_start_matches('/').into(),
+                change.master.clone(),
+            );
+        }
+        for conflict in &conflicts {
+            match resolution_map.get(conflict.path.as_str()).copied() {
+                Some("master") => {
+                    object.insert(
+                        conflict.path.trim_start_matches('/').into(),
+                        conflict.master.clone(),
+                    );
+                }
+                Some("variant") => {}
+                _ => {
+                    return Err(format!(
+                        "invalid_request: 请处理字段“{}”的同步冲突。",
+                        conflict.label
+                    ))
+                }
+            }
+        }
+        object.insert(
+            "facts".into(),
+            serde_json::to_value(&master.facts).map_err(|error| error.to_string())?,
+        );
+        object.insert(
+            "preferences".into(),
+            serde_json::to_value(&master.preferences).map_err(|error| error.to_string())?,
+        );
+        let mut candidate: ResumeProfile =
+            serde_json::from_value(value).map_err(|error| error.to_string())?;
+        candidate.id = variant_id.to_string();
+        candidate.version = variant_version + 1;
+        candidate.updated_at = time::shanghai_rfc3339();
+        ensure_resume_item_ids(&mut candidate);
+        validate_resume_facts(&mut candidate)?;
+        let payload = serde_json::to_string(&candidate).map_err(|error| error.to_string())?;
+        let changed = transaction
+            .execute(
+                "UPDATE resume_variants SET payload_json=?1,version=?2,base_resume_version=?3,updated_at=?4 WHERE id=?5 AND version=?6",
+                params![
+                    payload,
+                    candidate.version,
+                    master.version,
+                    candidate.updated_at,
+                    variant_id,
+                    expected_variant_version
+                ],
+            )
+            .map_err(|error| error.to_string())?;
+        if changed != 1 {
+            return Err("version_conflict: 岗位版本已变化，请刷新后重试。".into());
+        }
+        let version = ResumeVersionSummary {
+            id: uuid::Uuid::new_v4().to_string(),
+            resume_id: variant_id.to_string(),
+            version: candidate.version,
+            parent_version: Some(variant_version),
+            created_at: candidate.updated_at.clone(),
+            source: "variant-rebase".into(),
+            summary: format!("同步主简历 v{}", master.version),
+            job_id: Some(job_id.clone()),
+            proposal_id: None,
+            restored_from_version: None,
+        };
+        transaction
+            .execute(
+                "INSERT INTO resume_versions(id,resume_id,version,parent_version,created_at,source,summary,job_id,proposal_id,restored_from_version,profile_json) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,NULL,NULL,?9)",
+                params![
+                    version.id,
+                    version.resume_id,
+                    version.version,
+                    version.parent_version,
+                    version.created_at,
+                    version.source,
+                    version.summary,
+                    job_id,
+                    payload
+                ],
+            )
+            .map_err(|error| error.to_string())?;
+        transaction
+            .execute(
+                "DELETE FROM resume_coverage_cache WHERE target_kind='variant' AND target_id=?1",
+                [variant_id],
+            )
+            .map_err(|error| error.to_string())?;
+        transaction.commit().map_err(|error| error.to_string())?;
+
+        let variant = self
+            .get_resume_variant(variant_id)?
+            .ok_or_else(|| "storage_error: 岗位版本同步后无法读取。".to_string())?;
+        Ok(ResumeVariantCommitResult { variant, version })
+    }
+
+    fn resume_version_profile(
+        &self,
+        resume_id: &str,
+        version: i64,
+    ) -> Result<Option<ResumeProfile>, String> {
+        let connection = self.connect()?;
+        let payload: Option<String> = connection
+            .query_row(
+                "SELECT profile_json FROM resume_versions WHERE resume_id=?1 AND version=?2",
+                params![resume_id, version],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?;
+        payload
+            .map(|value| serde_json::from_str(&value).map_err(|error| error.to_string()))
+            .transpose()
+    }
+
+    pub fn resume_coverage_cache(
+        &self,
+        cache_key: &str,
+    ) -> Result<Option<ResumeCoverageReport>, String> {
+        let connection = self.connect()?;
+        let payload: Option<String> = connection
+            .query_row(
+                "SELECT payload_json FROM resume_coverage_cache WHERE cache_key=?1",
+                [cache_key],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?;
+        payload
+            .map(|value| serde_json::from_str(&value).map_err(|error| error.to_string()))
+            .transpose()
+    }
+
+    pub fn save_resume_coverage_cache(
+        &self,
+        cache_key: &str,
+        job_fingerprint: &str,
+        provider_fingerprint: &str,
+        skill_version: &str,
+        report: &ResumeCoverageReport,
+    ) -> Result<(), String> {
+        let connection = self.connect()?;
+        let payload = serde_json::to_string(report).map_err(|error| error.to_string())?;
+        connection.execute(
+            "INSERT INTO resume_coverage_cache(cache_key,target_kind,target_id,target_version,job_id,job_fingerprint,provider_fingerprint,skill_version,generated_at,payload_json)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)
+             ON CONFLICT(cache_key) DO UPDATE SET generated_at=excluded.generated_at,payload_json=excluded.payload_json",
+            params![cache_key, report.target.kind, report.target.id, report.target_version, report.job_id, job_fingerprint, provider_fingerprint, skill_version, report.generated_at, payload],
+        ).map_err(|error| error.to_string())?;
+        Ok(())
     }
 
     pub fn list_resume_versions(
@@ -2207,6 +2777,73 @@ fn clear_job_greetings(transaction: &Transaction<'_>) -> Result<(), String> {
     Ok(())
 }
 
+fn active_resume_version(connection: &Connection) -> Result<Option<i64>, String> {
+    let payload: Option<String> = connection
+        .query_row(
+            "SELECT payload_json FROM resume_profiles WHERE is_active=1 ORDER BY updated_at DESC LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    payload
+        .map(|value| {
+            serde_json::from_str::<ResumeProfile>(&value)
+                .map(|profile| profile.version)
+                .map_err(|error| error.to_string())
+        })
+        .transpose()
+}
+
+fn compute_rebase_changes(
+    base: &ResumeProfile,
+    master: &ResumeProfile,
+    variant: &ResumeProfile,
+) -> Result<(Vec<ResumeRebaseChange>, Vec<ResumeRebaseChange>), String> {
+    const PATHS: &[(&str, &str)] = &[
+        ("/name", "姓名"),
+        ("/headline", "职业标题"),
+        ("/email", "邮箱"),
+        ("/phone", "电话"),
+        ("/location", "所在地"),
+        ("/website", "个人主页"),
+        ("/summary", "个人简介"),
+        ("/templateId", "简历结构模板"),
+        ("/professionalSkills", "专业技能"),
+        ("/experiences", "工作经历"),
+        ("/education", "教育经历"),
+        ("/projects", "项目经历"),
+        ("/certifications", "证书 / 专业资质"),
+    ];
+    let base = serde_json::to_value(base).map_err(|error| error.to_string())?;
+    let master = serde_json::to_value(master).map_err(|error| error.to_string())?;
+    let variant = serde_json::to_value(variant).map_err(|error| error.to_string())?;
+    let mut automatic = Vec::new();
+    let mut conflicts = Vec::new();
+    for (path, label) in PATHS {
+        let key = path.trim_start_matches('/');
+        let base_value = base.get(key).cloned().unwrap_or(serde_json::Value::Null);
+        let master_value = master.get(key).cloned().unwrap_or(serde_json::Value::Null);
+        let variant_value = variant.get(key).cloned().unwrap_or(serde_json::Value::Null);
+        let change = ResumeRebaseChange {
+            path: (*path).into(),
+            label: (*label).into(),
+            base: base_value.clone(),
+            master: master_value.clone(),
+            variant: variant_value.clone(),
+        };
+        if variant_value == base_value && master_value != base_value {
+            automatic.push(change);
+        } else if variant_value != base_value
+            && master_value != base_value
+            && variant_value != master_value
+        {
+            conflicts.push(change);
+        }
+    }
+    Ok((automatic, conflicts))
+}
+
 fn resume_version_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ResumeVersionSummary> {
     Ok(ResumeVersionSummary {
         id: row.get(0)?,
@@ -2421,6 +3058,204 @@ mod tests {
             .unwrap();
 
         assert_eq!(db.list_jobs().unwrap()[0].greeting, None);
+    }
+
+    #[test]
+    fn v5_to_v6_migration_only_adds_empty_variant_tables() {
+        let dir = tempdir().unwrap();
+        let db = Database::new(dir.path().join("resume-v5.db"));
+        db.initialize().unwrap();
+        let master = db
+            .commit_resume(resume(vec![]), 0, "test", "initial", None, None, None)
+            .unwrap();
+        {
+            let connection = db.connect().unwrap();
+            connection
+                .execute_batch(
+                    "DROP TRIGGER IF EXISTS cleanup_resume_variant_versions;
+                     DROP TABLE resume_coverage_cache;
+                     DROP TABLE resume_variants;
+                     DELETE FROM schema_migrations WHERE version=6;",
+                )
+                .unwrap();
+        }
+
+        db.initialize().unwrap();
+
+        assert_eq!(db.schema_version().unwrap(), 6);
+        assert_eq!(db.active_resume().unwrap().unwrap().id, master.resume.id);
+        assert_eq!(
+            db.active_resume().unwrap().unwrap().version,
+            master.resume.version
+        );
+        assert!(db.list_resume_variants().unwrap().is_empty());
+        let connection = db.connect().unwrap();
+        let cache_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM resume_coverage_cache", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(cache_count, 0);
+    }
+
+    #[test]
+    fn resume_variants_are_unique_versioned_and_rebased_without_changing_master() {
+        let dir = tempdir().unwrap();
+        let db = Database::new(dir.path().join("variants.db"));
+        db.initialize().unwrap();
+        assert_eq!(db.schema_version().unwrap(), 6);
+
+        let mut master = resume(vec![]);
+        master.name = "林知远".into();
+        master.headline = "AI 工程师".into();
+        master.summary = "主简历简介".into();
+        let committed = db
+            .commit_resume(master, 0, "test", "initial", None, None, None)
+            .unwrap();
+        let stored_job = job("variant-job", "20-30K");
+        let job_id = stored_job.id.clone();
+        db.upsert_job(stored_job).unwrap();
+
+        let created = db
+            .create_resume_variant(&job_id, committed.resume.version)
+            .unwrap();
+        let duplicate = db
+            .create_resume_variant(&job_id, committed.resume.version)
+            .unwrap();
+        assert_eq!(created.summary.id, duplicate.summary.id);
+        assert_eq!(db.list_resume_variants().unwrap().len(), 1);
+
+        let mut tailored = created.profile.clone();
+        tailored.summary = "岗位定制简介".into();
+        let saved = db
+            .commit_resume_variant(
+                &created.summary.id,
+                tailored,
+                1,
+                "variant-manual",
+                "manual",
+                None,
+                None,
+            )
+            .unwrap();
+        assert_eq!(saved.variant.summary.version, 2);
+        assert_eq!(db.active_resume().unwrap().unwrap().summary, "主简历简介");
+
+        let mut changed_master = db.active_resume().unwrap().unwrap();
+        changed_master.headline = "高级 AI 工程师".into();
+        changed_master.summary = "更新后的主简历简介".into();
+        let changed_master = db
+            .commit_resume(
+                changed_master,
+                1,
+                "manual",
+                "master update",
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        let reopened_with_stale_create_version = db
+            .create_resume_variant(&job_id, committed.resume.version)
+            .unwrap();
+        assert_eq!(
+            created.summary.id,
+            reopened_with_stale_create_version.summary.id
+        );
+        assert!(reopened_with_stale_create_version.summary.stale);
+        let preview = db
+            .preview_resume_variant_rebase(&created.summary.id)
+            .unwrap();
+        assert!(preview
+            .auto_changes
+            .iter()
+            .any(|item| item.path == "/headline"));
+        assert!(preview.conflicts.iter().any(|item| item.path == "/summary"));
+
+        let stale_master_error = db
+            .apply_resume_variant_rebase(
+                &created.summary.id,
+                2,
+                changed_master.resume.version - 1,
+                &[ResumeRebaseResolution {
+                    path: "/summary".into(),
+                    choice: "variant".into(),
+                }],
+            )
+            .unwrap_err();
+        assert!(stale_master_error.starts_with("version_conflict:"));
+        assert_eq!(
+            db.get_resume_variant(&created.summary.id)
+                .unwrap()
+                .unwrap()
+                .summary
+                .version,
+            2
+        );
+
+        let rebased = db
+            .apply_resume_variant_rebase(
+                &created.summary.id,
+                2,
+                changed_master.resume.version,
+                &[ResumeRebaseResolution {
+                    path: "/summary".into(),
+                    choice: "variant".into(),
+                }],
+            )
+            .unwrap();
+        assert_eq!(rebased.variant.profile.headline, "高级 AI 工程师");
+        assert_eq!(rebased.variant.profile.summary, "岗位定制简介");
+        assert!(!rebased.variant.summary.stale);
+        assert_eq!(rebased.version.source, "variant-rebase");
+    }
+
+    #[test]
+    fn deleting_a_job_cascades_its_resume_variant_and_history() {
+        let dir = tempdir().unwrap();
+        let db = Database::new(dir.path().join("variant-cascade.db"));
+        db.initialize().unwrap();
+        let master = db
+            .commit_resume(resume(vec![]), 0, "test", "initial", None, None, None)
+            .unwrap();
+        let stored_job = job("variant-cascade", "20-30K");
+        let job_id = stored_job.id.clone();
+        db.upsert_job(stored_job).unwrap();
+        let variant = db
+            .create_resume_variant(&job_id, master.resume.version)
+            .unwrap();
+        assert_eq!(
+            db.list_resume_versions(&variant.summary.id).unwrap().len(),
+            1
+        );
+        let report = ResumeCoverageReport {
+            job_id: job_id.clone(),
+            target: crate::models::ResumeTargetRef {
+                kind: "variant".into(),
+                id: variant.summary.id.clone(),
+            },
+            target_version: variant.summary.version,
+            source: "ai".into(),
+            generated_at: time::shanghai_rfc3339(),
+            items: vec![],
+            covered_count: 0,
+            strengthenable_count: 0,
+            gap_count: 0,
+            unknown_count: 0,
+        };
+        db.save_resume_coverage_cache("cache", "job", "provider", "skill", &report)
+            .unwrap();
+
+        db.delete_job(&job_id).unwrap();
+        assert!(db
+            .get_resume_variant(&variant.summary.id)
+            .unwrap()
+            .is_none());
+        assert!(db
+            .list_resume_versions(&variant.summary.id)
+            .unwrap()
+            .is_empty());
+        assert!(db.resume_coverage_cache("cache").unwrap().is_none());
     }
 
     #[test]

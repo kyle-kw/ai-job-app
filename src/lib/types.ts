@@ -398,6 +398,7 @@ export type ResumeColorTheme = 'pine' | 'navy' | 'graphite';
 export interface RenderResumeRequest {
   outputPath: string;
   colorTheme: ResumeColorTheme;
+  target?: ResumeTargetRef;
 }
 
 export interface ReportBucket {
@@ -481,6 +482,99 @@ export interface ResumeChatMessage {
   content: string;
 }
 
+export interface ResumeTargetRef {
+  kind: 'master' | 'variant';
+  id: string;
+}
+
+export interface ResumeVariantSummary {
+  id: string;
+  jobId: string;
+  jobTitle: string;
+  company: string;
+  name: string;
+  baseResumeId: string;
+  baseResumeVersion: number;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  stale: boolean;
+}
+
+export interface ResumeVariantDetail extends ResumeVariantSummary {
+  profile: ResumeProfile;
+}
+
+export interface ResumeVariantCommitResult {
+  variant: ResumeVariantDetail;
+  version: ResumeVersionSummary;
+}
+
+export type ResumeHealthSeverity = 'error' | 'warning' | 'suggestion';
+
+export interface ResumeHealthIssue {
+  id: string;
+  code: string;
+  severity: ResumeHealthSeverity;
+  path: string;
+  label: string;
+  message: string;
+}
+
+export interface ResumeHealthReport {
+  issues: ResumeHealthIssue[];
+  errorCount: number;
+  warningCount: number;
+  suggestionCount: number;
+}
+
+export type ResumeCoverageStatus = 'covered' | 'strengthenable' | 'gap' | 'unknown';
+
+export interface ResumeCoverageItem {
+  id: string;
+  label: string;
+  kind: 'skill' | 'requirement';
+  status: ResumeCoverageStatus;
+  resumePaths: string[];
+  evidenceFactIds: string[];
+  rationale: string;
+}
+
+export interface ResumeCoverageReport {
+  jobId: string;
+  target: ResumeTargetRef;
+  targetVersion: number;
+  source: 'local' | 'ai';
+  generatedAt: string;
+  items: ResumeCoverageItem[];
+  coveredCount: number;
+  strengthenableCount: number;
+  gapCount: number;
+  unknownCount: number;
+}
+
+export interface ResumeRebaseChange {
+  path: string;
+  label: string;
+  base: unknown;
+  master: unknown;
+  variant: unknown;
+}
+
+export interface ResumeRebasePreview {
+  variantId: string;
+  variantVersion: number;
+  baseResumeVersion: number;
+  masterVersion: number;
+  autoChanges: ResumeRebaseChange[];
+  conflicts: ResumeRebaseChange[];
+}
+
+export interface ResumeRebaseResolution {
+  path: string;
+  choice: 'variant' | 'master';
+}
+
 export interface ResumeFactCandidate {
   id: string;
   category: ResumeFact['category'];
@@ -502,7 +596,7 @@ export interface ResumeFieldEdit {
 
 export interface ResumeChatProposal {
   proposalId: string;
-  resumeId: string;
+  target: ResumeTargetRef;
   baseVersion: number;
   job?: { id: string; title: string; company: string } | null;
   assistantMessage: string;
@@ -512,7 +606,7 @@ export interface ResumeChatProposal {
 }
 
 export interface ResumeChatRequest {
-  resumeId: string;
+  target: ResumeTargetRef;
   expectedVersion: number;
   jobId?: string | null;
   messages: ResumeChatMessage[];
@@ -525,7 +619,10 @@ export interface ApplyResumeEditsRequest {
   expectedVersion: number;
 }
 
-export type ResumeVersionSource = 'legacy' | 'import' | 'template' | 'manual' | 'ai-chat' | 'rollback';
+export type ResumeEditCommitResult = ResumeCommitResult | ResumeVariantCommitResult;
+
+export type ResumeVersionSource = 'legacy' | 'import' | 'template' | 'manual' | 'ai-chat' | 'rollback'
+  | 'variant-create' | 'variant-manual' | 'variant-ai' | 'variant-rebase' | 'variant-rollback';
 
 export interface ResumeVersionSummary {
   id: string;

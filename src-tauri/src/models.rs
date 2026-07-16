@@ -397,6 +397,101 @@ impl ResumeProfile {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResumeTargetRef {
+    pub kind: String,
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResumeVariantSummary {
+    pub id: String,
+    pub job_id: String,
+    pub job_title: String,
+    pub company: String,
+    pub name: String,
+    pub base_resume_id: String,
+    pub base_resume_version: i64,
+    pub version: i64,
+    pub created_at: String,
+    pub updated_at: String,
+    pub stale: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResumeVariantDetail {
+    #[serde(flatten)]
+    pub summary: ResumeVariantSummary,
+    pub profile: ResumeProfile,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResumeVariantCommitResult {
+    pub variant: ResumeVariantDetail,
+    pub version: ResumeVersionSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResumeRebaseChange {
+    pub path: String,
+    pub label: String,
+    pub base: serde_json::Value,
+    pub master: serde_json::Value,
+    pub variant: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResumeRebasePreview {
+    pub variant_id: String,
+    pub variant_version: i64,
+    pub base_resume_version: i64,
+    pub master_version: i64,
+    pub auto_changes: Vec<ResumeRebaseChange>,
+    pub conflicts: Vec<ResumeRebaseChange>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResumeRebaseResolution {
+    pub path: String,
+    pub choice: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResumeCoverageItem {
+    pub id: String,
+    pub label: String,
+    pub kind: String,
+    pub status: String,
+    #[serde(default)]
+    pub resume_paths: Vec<String>,
+    #[serde(default)]
+    pub evidence_fact_ids: Vec<String>,
+    pub rationale: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResumeCoverageReport {
+    pub job_id: String,
+    pub target: ResumeTargetRef,
+    pub target_version: i64,
+    pub source: String,
+    pub generated_at: String,
+    pub items: Vec<ResumeCoverageItem>,
+    pub covered_count: i64,
+    pub strengthenable_count: i64,
+    pub gap_count: i64,
+    pub unknown_count: i64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -888,7 +983,7 @@ pub struct ResumeFieldEdit {
 #[serde(rename_all = "camelCase")]
 pub struct ResumeChatProposal {
     pub proposal_id: String,
-    pub resume_id: String,
+    pub target: ResumeTargetRef,
     pub base_version: i64,
     #[serde(default)]
     pub job: Option<ResumeChatJob>,
@@ -912,7 +1007,7 @@ pub struct ResumeChatJob {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResumeChatRequest {
-    pub resume_id: String,
+    pub target: ResumeTargetRef,
     pub expected_version: i64,
     #[serde(default)]
     pub job_id: Option<String>,
@@ -961,6 +1056,13 @@ pub struct ResumeVersionDetail {
 pub struct ResumeCommitResult {
     pub resume: ResumeProfile,
     pub version: ResumeVersionSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ResumeEditCommitResult {
+    Master(Box<ResumeCommitResult>),
+    Variant(Box<ResumeVariantCommitResult>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

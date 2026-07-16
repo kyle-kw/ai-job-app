@@ -7,23 +7,27 @@
     JobOption,
     ResumeChatMessage,
     ResumeChatProposal,
-    ResumeCommitResult,
+    ResumeEditCommitResult,
     ResumeFactCandidate,
-    ResumeProfile
+    ResumeProfile,
+    ResumeTargetRef
   } from '$lib/types';
 
   export let open = false;
   export let resume: ResumeProfile | null = null;
   export let aiReady = false;
   export let initialJobId: string | null = null;
+  export let initialPrompt = '';
+  export let target: ResumeTargetRef | null = null;
 
   const dispatch = createEventDispatcher<{
-    applied: ResumeCommitResult;
+    applied: ResumeEditCommitResult;
     requestimport: void;
   }>();
 
   let selectedJobId = '';
   let lastInitialJobId: string | null = null;
+  let lastInitialPrompt = '';
   let wasOpen = false;
   let input = '';
   let messages: ResumeChatMessage[] = [];
@@ -43,6 +47,10 @@
       selectedJobId = initialJobId ?? '';
       lastInitialJobId = initialJobId;
       void loadJobOptions();
+    }
+    if (open && initialPrompt && (!wasOpen || initialPrompt !== lastInitialPrompt)) {
+      input = initialPrompt;
+      lastInitialPrompt = initialPrompt;
     }
     wasOpen = open;
   }
@@ -134,7 +142,7 @@
 
     try {
       const nextProposal = await backend.proposeResumeChatEdits({
-        resumeId: resume.id,
+        target: target ?? { kind: 'master', id: resume.id },
         expectedVersion: resume.version,
         jobId: selectedJobId || null,
         messages: requestMessages
@@ -164,10 +172,11 @@
         confirmedFactCandidateIds: [...confirmedFactCandidateIds],
         expectedVersion: proposal.baseVersion
       });
+      const committedVersion = 'variant' in result ? result.variant.version : result.resume.version;
       messages = [...messages, {
         id: crypto.randomUUID(),
         role: 'assistant',
-        content: `已应用 ${selectedEditIds.size} 项修改，并创建简历版本 ${result.resume.version}。`
+        content: `已应用 ${selectedEditIds.size} 项修改，并创建简历版本 ${committedVersion}。`
       }];
       proposal = null;
       selectedEditIds = new Set<string>();
@@ -187,7 +196,7 @@
     <header class="flex shrink-0 items-start justify-between gap-5 border-b px-6 py-5" style="border-color: var(--line);">
       <div>
         <div class="flex items-center gap-2 text-brand"><Sparkles size={17} /><p class="eyebrow">RESUME ASSISTANT</p></div>
-        <h2 id="resume-chat-title" class="mt-1 text-xl font-semibold">和 AI 一起修改主简历</h2>
+        <h2 id="resume-chat-title" class="mt-1 text-xl font-semibold">和 AI 一起修改{target?.kind === 'variant' ? '岗位版本' : '主简历'}</h2>
         <p class="mt-1 text-xs leading-5 body-muted">AI 只提出待审核修改；勾选并确认事实后才会写入新的本地版本。</p>
       </div>
       <button class="btn-icon shrink-0" aria-label="关闭" disabled={sending || applying} on:click={close}><X size={18} /></button>
@@ -216,9 +225,9 @@
         <div class="flex items-center gap-3">
           <BriefcaseBusiness size={15} class="shrink-0 body-muted" />
           <span class="shrink-0 text-xs font-semibold">关联岗位</span>
-          <input class="input h-9 min-w-0 flex-1" bind:value={jobQuery} on:input={() => void loadJobOptions()} placeholder="搜索岗位或公司" aria-label="搜索关联岗位" />
-          <select class="select h-9 min-w-0 flex-1" bind:value={selectedJobId} disabled={sending || applying} aria-label="关联岗位">
-            <option value="">{optionsLoading ? '正在加载岗位…' : '不指定岗位，优化通用主简历'}</option>
+          {#if target?.kind !== 'variant'}<input class="input h-9 min-w-0 flex-1" bind:value={jobQuery} on:input={() => void loadJobOptions()} placeholder="搜索岗位或公司" aria-label="搜索关联岗位" />{/if}
+          <select class="select h-9 min-w-0 flex-1" bind:value={selectedJobId} disabled={sending || applying || target?.kind === 'variant'} aria-label="关联岗位">
+            <option value="">{optionsLoading ? '正在加载岗位…' : target?.kind === 'variant' ? '正在读取固定岗位…' : '不指定岗位，优化通用主简历'}</option>
             {#each jobOptions as job}
               <option value={job.id}>{job.title} · {job.company}</option>
             {/each}
@@ -319,7 +328,7 @@
           <label class="min-w-0 flex-1"><span class="sr-only">发送给简历 AI 的消息</span><textarea class="textarea min-h-[72px] resize-none" bind:value={input} disabled={sending || applying} placeholder="描述希望修改的内容，或补充需要写入简历的真实事实…"></textarea></label>
           <button class="btn-primary h-[42px] shrink-0" type="submit" disabled={!input.trim() || sending || applying}><Send size={15} />发送</button>
         </form>
-        <p class="mt-2 text-[11px] body-muted">仅在发送时调用当前模型；请勿把岗位要求当作自己的经历或成果。</p>
+        <p class="mt-2 text-[11px] body-muted">仅在发送时调用当前模型；请勿把岗位要求当作自己的经历或成果。{target?.kind === 'variant' ? ' 新事实请先回到主简历确认并同步。' : ''}</p>
       </footer>
     {/if}
   </div>
