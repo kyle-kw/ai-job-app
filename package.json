@@ -65,6 +65,7 @@
     "plugins": [
       "prettier-plugin-svelte"
     ],
+    "endOfLine": "lf",
     "printWidth": 100,
     "proseWrap": "preserve",
     "semi": true,
