@@ -120,7 +120,8 @@ npm run sidecar:build
 版本更新使用：
 
 ```powershell
-npm run version:set -- 0.2.1
+$version = '<major.minor.patch>'
+npm run version:set -- $version
 ```
 
 该命令会同步 `package.json`、lockfile、Cargo、Tauri 和 sidecar 版本。更完整的发布操作见 [docs/RELEASE.md](docs/RELEASE.md)。

@@ -10,7 +10,7 @@ body:
     id: version
     attributes:
       label: 应用版本
-      placeholder: 0.2.0
+      placeholder: <major.minor.patch>
     validations:
       required: true
   - type: input

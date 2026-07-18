@@ -13,7 +13,7 @@ const packageLock = readJson('package-lock.json');
 const tauri = readJson('src-tauri/tauri.conf.json');
 const tauriMacOS = readJson('src-tauri/tauri.macos.conf.json');
 const tauriWindows = readJson('src-tauri/tauri.windows.conf.json');
-const workerVersion = readFileSync('sidecar/worker.py', 'utf8').match(
+const workerVersion = readFileSync('sidecar/worker_protocol.py', 'utf8').match(
   /^APP_VERSION\s*=\s*"([^"]+)"/m
 )?.[1];
 const uvProjectVersion = readFileSync('sidecar/uv.lock', 'utf8').match(
@@ -33,7 +33,7 @@ const versions = new Map([
   ],
   ['sidecar/pyproject.toml', matchVersion('sidecar/pyproject.toml')],
   ['sidecar/uv.lock', uvProjectVersion],
-  ['sidecar/worker.py', workerVersion]
+  ['sidecar/worker_protocol.py', workerVersion]
 ]);
 
 const expected = packageJson.version;

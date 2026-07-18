@@ -47,7 +47,7 @@ for (const [path, pattern, replacement] of [
     /(\[\[package\]\]\s*name\s*=\s*"ai-job-app-sidecar"\s*version\s*=\s*)"[^"]+"/m,
     `$1"${version}"`
   ],
-  ['sidecar/worker.py', /^APP_VERSION\s*=\s*"[^"]+"/m, `APP_VERSION = "${version}"`]
+  ['sidecar/worker_protocol.py', /^APP_VERSION\s*=\s*"[^"]+"/m, `APP_VERSION = "${version}"`]
 ]) {
   const source = readFileSync(path, 'utf8');
   const updated = source.replace(pattern, replacement);
