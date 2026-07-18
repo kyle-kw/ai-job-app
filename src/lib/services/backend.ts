@@ -2,7 +2,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { mockJobs, mockResume, mockSnapshot } from '$lib/mock-data';
 import { deterministicFit } from '$lib/fit';
-import { filterJobs } from '$lib/job-filters';
+import { filterJobs, sortJobs } from '$lib/job-filters';
 import { buildClientJobDataReport, buildScrapeSampleSummary } from '$lib/report';
 import { buildLocalReportCompetitiveness } from '$lib/report-competitiveness';
 import { flattenProfessionalSkills, suggestedProfessionalSkillGroups } from '$lib/resume-templates';
@@ -23,6 +23,7 @@ import type {
   ImportResumePayload,
   InterviewPreparationState,
   Job,
+  JobFilterOptions,
   JobOption,
   JobPage,
   JobQuery,
@@ -147,7 +148,7 @@ export const backend = {
   async listJobsPage(query: JobQuery): Promise<JobPage> {
     if (browserMode()) {
       const scoped = query.keywordKeys?.length ? mockJobsForKeywords(query.keywordKeys) : mockJobsState;
-      const filtered = filterJobs(scoped, query);
+      const filtered = sortJobs(filterJobs(scoped, query), query.sort);
       const offset = Number(query.cursor || 0);
       const items = filtered.slice(offset, offset + 50);
       return {
@@ -176,6 +177,25 @@ export const backend = {
       return [...new Set(mockJobsState.map((job) => job.location.split('·', 1)[0]?.trim()).filter(Boolean) as string[])].sort((left, right) => left.localeCompare(right, 'zh-CN'));
     }
     return invoke('list_job_cities');
+  },
+
+  async listJobFilterOptions(): Promise<JobFilterOptions> {
+    if (browserMode()) {
+      const skillCounts = new Map<string, { label: string; count: number }>();
+      for (const job of mockJobsState) {
+        for (const label of new Set(job.skills.map((skill) => skill.trim()).filter(Boolean))) {
+          const key = label.toLocaleLowerCase();
+          const current = skillCounts.get(key);
+          skillCounts.set(key, { label: current?.label ?? label, count: (current?.count ?? 0) + 1 });
+        }
+      }
+      return {
+        cities: [...new Set(mockJobsState.map((job) => job.location.split('·', 1)[0]?.trim()).filter(Boolean) as string[])].sort((left, right) => left.localeCompare(right, 'zh-CN')),
+        experiences: [...new Set(mockJobsState.map((job) => job.experience.trim()).filter(Boolean))].sort((left, right) => left.localeCompare(right, 'zh-CN', { numeric: true })),
+        skills: [...skillCounts.values()].sort((left, right) => right.count - left.count || left.label.localeCompare(right.label, 'zh-CN'))
+      };
+    }
+    return invoke('list_job_filter_options');
   },
 
   async getJob(jobId: string): Promise<Job> {
@@ -221,9 +241,9 @@ export const backend = {
     return invoke('get_job_data_report', { keywordKeys });
   },
 
-  async exportJobsJson(outputPath: string): Promise<RenderResult> {
+  async exportJobsJson(outputPath: string, query?: JobQuery): Promise<RenderResult> {
     if (browserMode()) return { path: outputPath || 'browser-demo://岗位数据.json', fileName: outputPath.split(/[\\/]/).at(-1) || '岗位数据_demo.json' };
-    return invoke('export_jobs_json', { outputPath });
+    return invoke('export_jobs_json', { outputPath, query: query ?? null });
   },
 
   async exportJobDataReport(keywordKeys: string[], outputPath: string): Promise<RenderResult> {

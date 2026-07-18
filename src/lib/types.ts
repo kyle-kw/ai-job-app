@@ -357,6 +357,8 @@ export interface BootstrapSnapshot {
   settings: AppSettings;
 }
 
+export type JobSort = 'recommended' | 'recent' | 'salary-desc';
+
 export interface JobQuery {
   query: string;
   minScore: number;
@@ -369,6 +371,7 @@ export interface JobQuery {
   skills?: string[];
   experience?: string;
   salaryBand?: ReportSalaryBand;
+  sort?: JobSort;
   cursor?: string | null;
 }
 
@@ -377,6 +380,12 @@ export interface JobPage {
   total: number;
   pendingDetailCount: number;
   nextCursor?: string | null;
+}
+
+export interface JobFilterOptions {
+  cities: string[];
+  experiences: string[];
+  skills: Array<{ label: string; count: number }>;
 }
 
 export interface JobOption {

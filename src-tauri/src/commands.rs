@@ -218,6 +218,11 @@ pub fn list_job_cities(state: State<'_, AppState>) -> Result<Vec<String>, String
 }
 
 #[tauri::command]
+pub fn list_job_filter_options(state: State<'_, AppState>) -> Result<JobFilterOptions, String> {
+    state.db.list_job_filter_options()
+}
+
+#[tauri::command]
 pub fn get_job(state: State<'_, AppState>, job_id: String) -> Result<Job, String> {
     state
         .db
@@ -261,10 +266,14 @@ pub fn get_job_data_report(
 pub fn export_jobs_json(
     state: State<'_, AppState>,
     output_path: String,
+    query: Option<JobQuery>,
 ) -> Result<RenderResult, String> {
-    let jobs = state.db.list_jobs()?;
+    let jobs = match query {
+        Some(query) => state.db.jobs_for_query(&query)?,
+        None => state.db.list_jobs()?,
+    };
     if jobs.is_empty() {
-        return Err("暂无岗位可导出。".into());
+        return Err("当前范围暂无岗位可导出。".into());
     }
     let output_path = validate_export_path(output_path, "json", "岗位 JSON")?;
     let payload = serialize_jobs_json(&jobs)?;
@@ -411,6 +420,7 @@ pub async fn start_scrape(
     }
     emit_task(&app, &task);
     let task_id = task.id.clone();
+    let scrape_run_id = Uuid::new_v4().to_string();
     let db = state.db.clone();
     tauri::async_runtime::spawn(async move {
         let mut task = task;
@@ -442,6 +452,7 @@ pub async fn start_scrape(
         let db_for_events = db.clone();
         let app_for_events = app.clone();
         let keyword_for_events = spec.keyword.clone();
+        let scrape_run_id_for_events = scrape_run_id.clone();
         match sidecar::request_with_events(request, move |event| {
             match event.get("type").and_then(Value::as_str) {
                 Some("progress") => {
@@ -495,7 +506,11 @@ pub async fn start_scrape(
                 });
             if phase == "detail" {
                 if !job.description.trim().is_empty() {
-                    db_for_events.upsert_scrape_detail_job(job, &keyword_for_events)?;
+                    db_for_events.upsert_scrape_detail_job_for_run(
+                        job,
+                        &keyword_for_events,
+                        &scrape_run_id_for_events,
+                    )?;
                 }
             } else {
                 let job_key = streamed_job_key(&job);
@@ -504,7 +519,11 @@ pub async fn start_scrape(
                     .map_err(|_| "岗位抓取统计状态不可用".to_string())?
                     .0
                     .contains(&job_key);
-                let stats = db_for_events.upsert_scrape_list_job(job, &keyword_for_events)?;
+                let stats = db_for_events.upsert_scrape_list_job_for_run(
+                    job,
+                    &keyword_for_events,
+                    &scrape_run_id_for_events,
+                )?;
                 if !already_seen {
                     let mut streamed = streamed_for_events
                         .lock()
@@ -546,7 +565,11 @@ pub async fn start_scrape(
                             .0
                             .contains(&job_key);
                         if !already_streamed {
-                            let stats = db.upsert_scrape_list_job(job.clone(), &spec.keyword)?;
+                            let stats = db.upsert_scrape_list_job_for_run(
+                                job.clone(),
+                                &spec.keyword,
+                                &scrape_run_id,
+                            )?;
                             let mut streamed = streamed
                                 .lock()
                                 .map_err(|_| "岗位抓取统计状态不可用".to_string())?;
@@ -556,7 +579,11 @@ pub async fn start_scrape(
                             }
                         }
                         if !job.description.trim().is_empty() {
-                            db.upsert_scrape_detail_job(job.clone(), &spec.keyword)?;
+                            db.upsert_scrape_detail_job_for_run(
+                                job.clone(),
+                                &spec.keyword,
+                                &scrape_run_id,
+                            )?;
                         }
                         Ok(())
                     });
@@ -580,7 +607,7 @@ pub async fn start_scrape(
                                 }
                             }
                             let run = ScrapeRun {
-                                id: Uuid::new_v4().to_string(),
+                                id: scrape_run_id.clone(),
                                 keyword: spec.keyword.clone(),
                                 city: spec.city.clone(),
                                 total_seen: sample.total_jobs,

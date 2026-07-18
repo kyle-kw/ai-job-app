@@ -188,6 +188,8 @@ pub struct JobQuery {
     #[serde(default)]
     pub salary_band: String,
     #[serde(default)]
+    pub sort: String,
+    #[serde(default)]
     pub cursor: Option<String>,
 }
 
@@ -198,6 +200,21 @@ pub struct JobPage {
     pub total: i64,
     pub pending_detail_count: i64,
     pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobFilterSkillOption {
+    pub label: String,
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobFilterOptions {
+    pub cities: Vec<String>,
+    pub experiences: Vec<String>,
+    pub skills: Vec<JobFilterSkillOption>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

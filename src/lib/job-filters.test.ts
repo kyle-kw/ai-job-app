@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   filterJobs,
   matchesCompanyScaleFilter,
+  matchesReportSalaryBand,
   matchesSalaryFilter,
   normalizeCompanyScale,
-  parseSalaryRange
+  parseSalaryRange,
+  sortJobs
 } from './job-filters';
 
 describe('job salary filters', () => {
@@ -20,6 +22,21 @@ describe('job salary filters', () => {
     expect(matchesSalaryFilter('薪资面议', '406')).toBe(false);
     expect(matchesSalaryFilter('20-30元/时', '406')).toBe(false);
     expect(matchesSalaryFilter('薪资面议', '')).toBe(true);
+    expect(matchesReportSalaryBand('50K以上', '50-plus')).toBe(true);
+  });
+});
+
+describe('job sorting', () => {
+  const jobs = [
+    { id: 'low-new', title: 'A', company: 'A', skills: [], salary: '20-30K', companyScale: '', location: '', description: '', isNew: true, lastSeen: '2026-07-18', fit: { overallScore: 70 } },
+    { id: 'high-old', title: 'B', company: 'B', skills: [], salary: '30-60K', companyScale: '', location: '', description: '', isNew: false, lastSeen: '2026-07-17', fit: { overallScore: 90 } },
+    { id: 'unknown', title: 'C', company: 'C', skills: [], salary: '面议', companyScale: '', location: '', description: '', isNew: false, lastSeen: '2026-07-19', fit: { overallScore: 95 } }
+  ];
+
+  it('uses stable recommendation, recency, and salary midpoint orders', () => {
+    expect(sortJobs(jobs, 'recommended').map((job) => job.id)).toEqual(['unknown', 'high-old', 'low-new']);
+    expect(sortJobs(jobs, 'recent').map((job) => job.id)).toEqual(['unknown', 'low-new', 'high-old']);
+    expect(sortJobs(jobs, 'salary-desc').map((job) => job.id)).toEqual(['high-old', 'low-new', 'unknown']);
   });
 });
 

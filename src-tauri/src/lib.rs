@@ -137,6 +137,7 @@ pub fn run() {
             commands::list_jobs_page,
             commands::list_job_options,
             commands::list_job_cities,
+            commands::list_job_filter_options,
             commands::get_job,
             commands::delete_job,
             commands::delete_missing_description_jobs,

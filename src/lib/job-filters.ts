@@ -1,4 +1,4 @@
-import type { ReportSalaryBand } from '$lib/types';
+import type { JobSort, ReportSalaryBand } from '$lib/types';
 
 export type SalaryFilterCode = '' | '402' | '403' | '404' | '405' | '406' | '407';
 export type CompanyScaleFilterCode = '' | '301' | '302' | '303' | '304' | '305' | '306';
@@ -106,7 +106,8 @@ export function matchesSalaryFilter(value: string, code: SalaryFilterCode): bool
 export function matchesReportSalaryBand(value: string, band: ReportSalaryBand = ''): boolean {
   if (!band) return true;
   const salary = parseSalaryRange(value);
-  if (!salary || !Number.isFinite(salary.max)) return false;
+  if (!salary) return false;
+  if (!Number.isFinite(salary.max)) return band === '50-plus' && salary.min >= 50;
   const midpoint = (salary.min + salary.max) / 2;
   if (band === 'under-15') return midpoint < 15;
   if (band === '15-25') return midpoint >= 15 && midpoint < 25;
@@ -153,5 +154,39 @@ export function filterJobs<T extends FilterableJob>(jobs: T[], filters: LocalJob
       && matchesReportSalaryBand(job.salary, filters.salaryBand)
       && requiredSkills.every((skill) => skills.has(skill))
       && (!filters.missingDescription || !job.description.trim());
+  });
+}
+
+export interface SortableJob extends FilterableJob {
+  id: string;
+  lastSeen: string;
+}
+
+const compareScore = (left: SortableJob, right: SortableJob) =>
+  (right.fit?.overallScore ?? 0) - (left.fit?.overallScore ?? 0);
+
+const compareLastSeen = (left: SortableJob, right: SortableJob) =>
+  right.lastSeen.localeCompare(left.lastSeen);
+
+const compareId = (left: SortableJob, right: SortableJob) => left.id.localeCompare(right.id);
+
+export function sortJobs<T extends SortableJob>(jobs: T[], sort: JobSort = 'recommended'): T[] {
+  return [...jobs].sort((left, right) => {
+    if (sort === 'recent') {
+      return compareLastSeen(left, right) || compareScore(left, right) || compareId(left, right);
+    }
+    if (sort === 'salary-desc') {
+      const leftSalary = parseSalaryRange(left.salary);
+      const rightSalary = parseSalaryRange(right.salary);
+      if (!leftSalary && rightSalary) return 1;
+      if (leftSalary && !rightSalary) return -1;
+      if (leftSalary && rightSalary) {
+        const leftMidpoint = Number.isFinite(leftSalary.max) ? (leftSalary.min + leftSalary.max) / 2 : leftSalary.min;
+        const rightMidpoint = Number.isFinite(rightSalary.max) ? (rightSalary.min + rightSalary.max) / 2 : rightSalary.min;
+        if (leftMidpoint !== rightMidpoint) return rightMidpoint - leftMidpoint;
+      }
+      return compareScore(left, right) || compareLastSeen(left, right) || compareId(left, right);
+    }
+    return compareScore(left, right) || compareLastSeen(left, right) || compareId(left, right);
   });
 }

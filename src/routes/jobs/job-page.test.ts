@@ -157,7 +157,7 @@ describe('job scraping controls', () => {
   it('passes the dynamic city and missing-description filters to the paged query', async () => {
     snapshot.set(structuredClone(mockSnapshot));
     const listJobsPage = vi.spyOn(backend, 'listJobsPage');
-    vi.spyOn(backend, 'listJobCities').mockResolvedValue(['上海', '杭州']);
+    vi.spyOn(backend, 'listJobFilterOptions').mockResolvedValue({ cities: ['上海', '杭州'], experiences: ['3-5年'], skills: [] });
     render(JobPage);
 
     const city = screen.getByLabelText('城市');
@@ -172,14 +172,85 @@ describe('job scraping controls', () => {
     })));
   });
 
-  it('exports all jobs with a timestamped JSON path and deletes one job after confirmation', async () => {
+  it('offers working recommended, recent, and salary sorting', async () => {
+    snapshot.set(structuredClone(mockSnapshot));
+    const listJobsPage = vi.spyOn(backend, 'listJobsPage');
+    render(JobPage);
+
+    const sort = screen.getByLabelText('岗位排序') as HTMLSelectElement;
+    expect(sort).toHaveValue('recommended');
+    expect(within(sort).getAllByRole('option').map((option) => option.textContent)).toEqual(['综合推荐', '最近发现', '薪资优先']);
+
+    await fireEvent.change(sort, { target: { value: 'recent' } });
+    await waitFor(() => expect(listJobsPage).toHaveBeenLastCalledWith(expect.objectContaining({ sort: 'recent', cursor: null })));
+    await fireEvent.change(sort, { target: { value: 'salary-desc' } });
+    await waitFor(() => expect(listJobsPage).toHaveBeenLastCalledWith(expect.objectContaining({ sort: 'salary-desc', cursor: null })));
+  });
+
+  it('omits the loaded count and dismisses the batch menu when clicking outside', async () => {
+    snapshot.set(structuredClone(mockSnapshot));
+    render(JobPage);
+
+    await screen.findByRole('button', { name: `导出当前结果（${mockJobs.length}）` });
+    expect(screen.queryByText('已加载')).not.toBeInTheDocument();
+
+    const trigger = screen.getByRole('button', { name: '批量操作' });
+    const menu = trigger.closest('details');
+    await fireEvent.click(trigger);
+    expect(menu).toHaveAttribute('open');
+
+    await fireEvent.pointerDown(screen.getByText('岗位列表'));
+    await waitFor(() => expect(menu).not.toHaveAttribute('open'));
+  });
+
+  it('defines new jobs by the latest completed scrape and passes that filter to the query', async () => {
+    snapshot.set(structuredClone(mockSnapshot));
+    const listJobsPage = vi.spyOn(backend, 'listJobsPage');
+    render(JobPage);
+
+    expect(screen.getByText(/AI Agent · .* · 新增 38/)).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('checkbox', { name: '最近一次抓取新增' }));
+    await waitFor(() => expect(listJobsPage).toHaveBeenLastCalledWith(expect.objectContaining({
+      onlyNew: true,
+      cursor: null
+    })));
+  });
+
+  it('searches and selects multiple skills with AND query semantics', async () => {
+    snapshot.set(structuredClone(mockSnapshot));
+    vi.spyOn(backend, 'listJobFilterOptions').mockResolvedValue({
+      cities: ['上海'], experiences: ['3-5年'], skills: [{ label: 'Python', count: 4 }, { label: 'RAG', count: 3 }]
+    });
+    const listJobsPage = vi.spyOn(backend, 'listJobsPage');
+    render(JobPage);
+
+    await fireEvent.click(screen.getByRole('button', { name: '技能筛选' }));
+    const search = await screen.findByLabelText('搜索技能');
+    await fireEvent.input(search, { target: { value: 'Python' } });
+    await fireEvent.keyDown(search, { key: 'Enter' });
+    await waitFor(() => expect(listJobsPage).toHaveBeenLastCalledWith(expect.objectContaining({ skills: ['Python'] })));
+
+    await fireEvent.input(search, { target: { value: 'RAG' } });
+    await fireEvent.keyDown(search, { key: 'Enter' });
+    await waitFor(() => expect(listJobsPage).toHaveBeenLastCalledWith(expect.objectContaining({ skills: ['Python', 'RAG'] })));
+
+    await fireEvent.click(screen.getByRole('button', { name: '移除技能 Python' }));
+    await waitFor(() => expect(listJobsPage).toHaveBeenLastCalledWith(expect.objectContaining({ skills: ['RAG'] })));
+  });
+
+  it('exports the current filtered result with a timestamped JSON path and deletes one job after confirmation', async () => {
     snapshot.set(structuredClone(mockSnapshot));
     const exportJobsJson = vi.spyOn(backend, 'exportJobsJson').mockResolvedValue({ path: '岗位数据.json', fileName: '岗位数据.json' });
     const deleteJob = vi.spyOn(backend, 'deleteJob').mockResolvedValue({ deletedCount: 1 });
     render(JobPage);
 
-    await fireEvent.click(screen.getByRole('button', { name: '导出全部岗位 JSON' }));
-    await waitFor(() => expect(exportJobsJson).toHaveBeenCalledWith(expect.stringMatching(/^岗位数据_\d{8}_\d{6}\.json$/)));
+    await screen.findByRole('button', { name: `导出当前结果（${mockJobs.length}）` });
+    await fireEvent.click(screen.getByRole('button', { name: '批量操作' }));
+    await fireEvent.click(screen.getByRole('button', { name: `导出当前结果（${mockJobs.length}）` }));
+    await waitFor(() => expect(exportJobsJson).toHaveBeenCalledWith(
+      expect.stringMatching(/^岗位筛选结果_\d{8}_\d{6}\.json$/),
+      expect.objectContaining({ onlyNew: false, cursor: null })
+    ));
 
     const deleteButton = await screen.findByRole('button', { name: '删除岗位' });
     await fireEvent.click(deleteButton);
@@ -198,7 +269,7 @@ describe('job scraping controls', () => {
   it('only offers bulk deletion for the filtered missing-description result set', async () => {
     snapshot.set(structuredClone(mockSnapshot));
     const missingJob = { ...mockJobs[0], description: '' };
-    vi.spyOn(backend, 'listJobCities').mockResolvedValue(['上海']);
+    vi.spyOn(backend, 'listJobFilterOptions').mockResolvedValue({ cities: ['上海'], experiences: [], skills: [] });
     vi.spyOn(backend, 'listJobsPage').mockImplementation(async (query) => ({
       items: query.missingDescription ? [missingJob] : [missingJob, mockJobs[1]],
       total: query.missingDescription ? 1 : 2,
@@ -222,7 +293,7 @@ describe('job scraping controls', () => {
   it('restores report drilldown filters while dropping the obsolete window state', async () => {
     window.history.replaceState({}, '', '/jobs?from=report&window=30&keyword=ai-agent&keyword=data-analysis&skill=Python&skill=RAG&experience=3-5%E5%B9%B4&salaryBand=25-35');
     snapshot.set(structuredClone(mockSnapshot));
-    vi.spyOn(backend, 'listJobCities').mockResolvedValue(['上海', '杭州']);
+    vi.spyOn(backend, 'listJobFilterOptions').mockResolvedValue({ cities: ['上海', '杭州'], experiences: ['3-5年'], skills: [{ label: 'Python', count: 4 }, { label: 'RAG', count: 3 }] });
     const listJobsPage = vi.spyOn(backend, 'listJobsPage');
     render(JobPage);
 
@@ -231,9 +302,12 @@ describe('job scraping controls', () => {
       keywordKeys: ['ai-agent', 'data-analysis'],
       skills: ['Python', 'RAG'],
       experience: '3-5年',
-      salaryBand: '25-35'
+      salaryBand: '25-35',
+      salary: ''
     })));
-    const returnLink = screen.getByRole('link', { name: '返回数据报告' });
+    expect(screen.getByLabelText('经验要求')).toHaveValue('3-5年');
+    expect(screen.getByLabelText('薪资范围')).toHaveValue('25-35');
+    const returnLink = screen.getByRole('link', { name: '返回报告' });
     const returnUrl = new URL(returnLink.getAttribute('href')!, 'http://localhost');
     expect(returnUrl.searchParams.has('window')).toBe(false);
     expect(returnUrl.searchParams.getAll('keyword')).toEqual(['ai-agent', 'data-analysis']);

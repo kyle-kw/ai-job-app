@@ -1,10 +1,11 @@
 use crate::analytics;
 use crate::models::{
-    AiProviderConfig, AppSettings, BossProfileState, InterviewPreparation, Job, JobOption, JobPage,
-    JobQuery, ReportCompetitivenessAnalysis, ReportKeyword, ResumeCommitResult,
-    ResumeCoverageReport, ResumeEducation, ResumeProfile, ResumeRebaseChange, ResumeRebasePreview,
-    ResumeRebaseResolution, ResumeVariantCommitResult, ResumeVariantDetail, ResumeVariantSummary,
-    ResumeVersionDetail, ResumeVersionSummary, ScrapeRun, SearchSpec, TaskRun,
+    AiProviderConfig, AppSettings, BossProfileState, InterviewPreparation, Job, JobFilterOptions,
+    JobFilterSkillOption, JobOption, JobPage, JobQuery, ReportCompetitivenessAnalysis,
+    ReportKeyword, ResumeCommitResult, ResumeCoverageReport, ResumeEducation, ResumeProfile,
+    ResumeRebaseChange, ResumeRebasePreview, ResumeRebaseResolution, ResumeVariantCommitResult,
+    ResumeVariantDetail, ResumeVariantSummary, ResumeVersionDetail, ResumeVersionSummary,
+    ScrapeRun, SearchSpec, TaskRun,
 };
 use crate::time;
 use base64::Engine;
@@ -24,7 +25,7 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 mod providers;
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 7;
+pub const CURRENT_SCHEMA_VERSION: i64 = 8;
 
 const HISTORICAL_KEYWORD_KEY: &str = "__historical_unclassified__";
 const HISTORICAL_KEYWORD_LABEL: &str = "历史未分类";
@@ -183,6 +184,25 @@ pub struct ReportCompetitivenessCacheRecord {
 }
 
 const JOB_PAGE_SIZE: usize = 50;
+const JOB_SALARY_SORT_SQL: &str = "CASE WHEN salary_min IS NULL OR salary_max IS NULL THEN NULL WHEN salary_max>=1.0e308 THEN salary_min ELSE ((salary_min+salary_max)/2.0) END";
+
+fn normalize_job_sort(value: &str) -> &'static str {
+    match value.trim() {
+        "recent" => "recent",
+        "salary-desc" => "salary-desc",
+        _ => "recommended",
+    }
+}
+
+fn job_order_by(sort: &str) -> String {
+    match sort {
+        "recent" => "last_seen DESC,COALESCE(fit_score,0) DESC,id ASC".into(),
+        "salary-desc" => format!(
+            "({JOB_SALARY_SORT_SQL} IS NULL) ASC,{JOB_SALARY_SORT_SQL} DESC,COALESCE(fit_score,0) DESC,last_seen DESC,id ASC"
+        ),
+        _ => "COALESCE(fit_score,0) DESC,last_seen DESC,id ASC".into(),
+    }
+}
 
 #[derive(Debug)]
 struct JobQueryMetadata {
@@ -219,8 +239,10 @@ impl JobQueryMetadata {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct JobCursor {
+    sort: String,
     score: i64,
     last_seen: String,
+    salary_mid: Option<f64>,
     id: String,
 }
 
@@ -418,6 +440,7 @@ impl Database {
         Self::migrate_v5(&transaction)?;
         Self::migrate_v6(&transaction)?;
         Self::migrate_v7(&transaction)?;
+        Self::migrate_v8(&transaction)?;
         transaction.commit().map_err(|error| error.to_string())?;
         self.recover_interrupted_tasks()?;
         Ok(())
@@ -888,6 +911,40 @@ impl Database {
         Ok(())
     }
 
+    fn migrate_v8(transaction: &Transaction<'_>) -> Result<(), String> {
+        transaction
+            .execute_batch(
+                r#"
+                CREATE TABLE IF NOT EXISTS job_scrape_runs (
+                    run_id TEXT NOT NULL,
+                    job_id TEXT NOT NULL,
+                    was_inserted INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY(run_id, job_id),
+                    FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_job_scrape_runs_latest_new
+                    ON job_scrape_runs(run_id, was_inserted, job_id);
+                INSERT OR IGNORE INTO job_scrape_runs(run_id, job_id, was_inserted)
+                SELECT latest.id, jobs.id, 1
+                FROM jobs
+                JOIN (
+                    SELECT id, payload_json
+                    FROM scrape_runs
+                    WHERE json_extract(payload_json,'$.completedAt') IS NOT NULL
+                    ORDER BY started_at DESC, id DESC
+                    LIMIT 1
+                ) AS latest
+                WHERE COALESCE(json_extract(jobs.payload_json,'$.isNew'),0)=1
+                  AND jobs.first_seen>=json_extract(latest.payload_json,'$.startedAt')
+                  AND jobs.first_seen<=json_extract(latest.payload_json,'$.completedAt');
+                INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+                VALUES (8, datetime('now'));
+                "#,
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
     pub fn list_jobs(&self) -> Result<Vec<Job>, String> {
         let connection = self.connect()?;
         let mut statement = connection
@@ -896,14 +953,18 @@ impl Database {
         let rows = statement
             .query_map([], |row| row.get::<_, String>(0))
             .map_err(|error| error.to_string())?;
-        rows.map(|row| {
-            let json = row.map_err(|error| error.to_string())?;
-            serde_json::from_str(&json).map_err(|error| error.to_string())
-        })
-        .collect()
+        let mut jobs = rows
+            .map(|row| {
+                let json = row.map_err(|error| error.to_string())?;
+                serde_json::from_str(&json).map_err(|error| error.to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        mark_latest_new_jobs(&connection, &mut jobs)?;
+        Ok(jobs)
     }
 
     pub fn list_jobs_page(&self, query: &JobQuery) -> Result<JobPage, String> {
+        let sort = normalize_job_sort(&query.sort);
         let connection = self.connect()?;
         let (where_without_cursor, count_values) = job_query_where(query, false)?;
         let total = connection
@@ -922,7 +983,8 @@ impl Database {
             .map_err(|error| error.to_string())?;
         let (where_clause, values) = job_query_where(query, true)?;
         let sql = format!(
-            "SELECT payload_json,COALESCE(fit_score,0),last_seen,id FROM jobs WHERE {where_clause} ORDER BY COALESCE(fit_score,0) DESC,last_seen DESC,id ASC LIMIT {}",
+            "SELECT payload_json,COALESCE(fit_score,0),last_seen,{JOB_SALARY_SORT_SQL},id FROM jobs WHERE {where_clause} ORDER BY {} LIMIT {}",
+            job_order_by(sort),
             JOB_PAGE_SIZE + 1
         );
         let mut statement = connection
@@ -934,7 +996,8 @@ impl Database {
                     row.get::<_, String>(0)?,
                     row.get::<_, i64>(1)?,
                     row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
+                    row.get::<_, Option<f64>>(3)?,
+                    row.get::<_, String>(4)?,
                 ))
             })
             .map_err(|error| error.to_string())?;
@@ -946,10 +1009,12 @@ impl Database {
         let next_cursor = if has_more {
             records
                 .last()
-                .map(|(_, score, last_seen, id)| {
+                .map(|(_, score, last_seen, salary_mid, id)| {
                     encode_job_cursor(&JobCursor {
+                        sort: sort.to_string(),
                         score: *score,
                         last_seen: last_seen.clone(),
+                        salary_mid: *salary_mid,
                         id: id.clone(),
                     })
                 })
@@ -957,12 +1022,13 @@ impl Database {
         } else {
             None
         };
-        let items = records
+        let mut items = records
             .into_iter()
-            .map(|(payload, _, _, _)| {
+            .map(|(payload, _, _, _, _)| {
                 serde_json::from_str(&payload).map_err(|error| error.to_string())
             })
             .collect::<Result<Vec<_>, _>>()?;
+        mark_latest_new_jobs(&connection, &mut items)?;
         Ok(JobPage {
             items,
             total,
@@ -1006,13 +1072,63 @@ impl Database {
             .map_err(|error| error.to_string())
     }
 
+    pub fn list_job_filter_options(&self) -> Result<JobFilterOptions, String> {
+        let cities = self.list_job_cities()?;
+        let connection = self.connect()?;
+        let experiences = {
+            let mut statement = connection
+                .prepare(
+                    "SELECT DISTINCT trim(json_extract(payload_json,'$.experience')) AS experience \
+                     FROM jobs WHERE trim(COALESCE(json_extract(payload_json,'$.experience'),''))<>'' \
+                     ORDER BY experience COLLATE NOCASE",
+                )
+                .map_err(|error| error.to_string())?;
+            let rows = statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|error| error.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| error.to_string())?;
+            rows
+        };
+        let skills = {
+            let mut statement = connection
+                .prepare(
+                    "SELECT MIN(trim(skill.value)) AS label, COUNT(DISTINCT jobs.id) AS job_count \
+                     FROM jobs JOIN json_each(jobs.payload_json,'$.skills') AS skill \
+                     WHERE trim(COALESCE(skill.value,''))<>'' \
+                     GROUP BY lower(trim(skill.value)) \
+                     ORDER BY job_count DESC, label COLLATE NOCASE",
+                )
+                .map_err(|error| error.to_string())?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok(JobFilterSkillOption {
+                        label: row.get(0)?,
+                        count: row.get(1)?,
+                    })
+                })
+                .map_err(|error| error.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| error.to_string())?;
+            rows
+        };
+        Ok(JobFilterOptions {
+            cities,
+            experiences,
+            skills,
+        })
+    }
+
     pub fn job_ids_for_query(&self, query: &JobQuery) -> Result<Vec<String>, String> {
         let mut query = query.clone();
         query.cursor = None;
         let (where_clause, values) = job_query_where(&query, false)?;
         let connection = self.connect()?;
         let mut statement = connection
-            .prepare(&format!("SELECT id FROM jobs WHERE {where_clause} ORDER BY COALESCE(fit_score,0) DESC,last_seen DESC,id ASC"))
+            .prepare(&format!(
+                "SELECT id FROM jobs WHERE {where_clause} ORDER BY {}",
+                job_order_by(normalize_job_sort(&query.sort))
+            ))
             .map_err(|error| error.to_string())?;
         let rows = statement
             .query_map(params_from_iter(values.iter()), |row| {
@@ -1021,6 +1137,16 @@ impl Database {
             .map_err(|error| error.to_string())?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|error| error.to_string())
+    }
+
+    pub fn jobs_for_query(&self, query: &JobQuery) -> Result<Vec<Job>, String> {
+        self.job_ids_for_query(query)?
+            .into_iter()
+            .map(|id| {
+                self.get_job(&id)?
+                    .ok_or_else(|| format!("岗位 {id} 不存在或已被删除。"))
+            })
+            .collect()
     }
 
     pub fn pending_detail_jobs(&self) -> Result<Vec<Job>, String> {
@@ -1141,12 +1267,17 @@ impl Database {
             })
             .optional()
             .map_err(|error| error.to_string())?;
-        json.map(|value| serde_json::from_str(&value).map_err(|error| error.to_string()))
-            .transpose()
+        let mut job = json
+            .map(|value| serde_json::from_str(&value).map_err(|error| error.to_string()))
+            .transpose()?;
+        if let Some(job) = job.as_mut() {
+            mark_latest_new_jobs(&connection, std::slice::from_mut(job))?;
+        }
+        Ok(job)
     }
 
     pub fn upsert_jobs(&self, jobs: Vec<Job>) -> Result<UpsertStats, String> {
-        self.upsert_jobs_internal(jobs, false, UpsertMode::Generic, None)
+        self.upsert_jobs_internal(jobs, false, UpsertMode::Generic, None, None)
     }
 
     fn upsert_jobs_internal(
@@ -1155,6 +1286,7 @@ impl Database {
         preserve_is_new_on_update: bool,
         mode: UpsertMode,
         keyword: Option<&str>,
+        scrape_run_id: Option<&str>,
     ) -> Result<UpsertStats, String> {
         let mut connection = self.connect()?;
         let transaction = connection
@@ -1168,6 +1300,7 @@ impl Database {
                 preserve_is_new_on_update,
                 mode,
                 keyword,
+                scrape_run_id,
             )?;
             stats.inserted += item.inserted;
             stats.updated += item.updated;
@@ -1181,18 +1314,63 @@ impl Database {
     }
 
     pub fn update_streamed_job(&self, job: Job) -> Result<UpsertStats, String> {
-        self.upsert_jobs_internal(vec![job], true, UpsertMode::Generic, None)
+        self.upsert_jobs_internal(vec![job], true, UpsertMode::Generic, None, None)
     }
 
     pub fn upsert_scrape_list_job(&self, job: Job, keyword: &str) -> Result<UpsertStats, String> {
-        self.upsert_jobs_internal(vec![job], false, UpsertMode::ScrapeList, Some(keyword))
+        self.upsert_jobs_internal(
+            vec![job],
+            false,
+            UpsertMode::ScrapeList,
+            Some(keyword),
+            None,
+        )
+    }
+
+    pub fn upsert_scrape_list_job_for_run(
+        &self,
+        job: Job,
+        keyword: &str,
+        scrape_run_id: &str,
+    ) -> Result<UpsertStats, String> {
+        self.upsert_jobs_internal(
+            vec![job],
+            false,
+            UpsertMode::ScrapeList,
+            Some(keyword),
+            Some(scrape_run_id),
+        )
     }
 
     pub fn upsert_scrape_detail_job(&self, job: Job, keyword: &str) -> Result<UpsertStats, String> {
         if job.description.trim().is_empty() {
             return Err("岗位详情为空，未写入数据库。".into());
         }
-        self.upsert_jobs_internal(vec![job], true, UpsertMode::ScrapeDetail, Some(keyword))
+        self.upsert_jobs_internal(
+            vec![job],
+            true,
+            UpsertMode::ScrapeDetail,
+            Some(keyword),
+            None,
+        )
+    }
+
+    pub fn upsert_scrape_detail_job_for_run(
+        &self,
+        job: Job,
+        keyword: &str,
+        scrape_run_id: &str,
+    ) -> Result<UpsertStats, String> {
+        if job.description.trim().is_empty() {
+            return Err("岗位详情为空，未写入数据库。".into());
+        }
+        self.upsert_jobs_internal(
+            vec![job],
+            true,
+            UpsertMode::ScrapeDetail,
+            Some(keyword),
+            Some(scrape_run_id),
+        )
     }
 
     pub fn save_job(&self, job: &Job) -> Result<(), String> {
@@ -2307,6 +2485,7 @@ fn upsert_job_in_transaction(
     preserve_is_new_on_update: bool,
     mode: UpsertMode,
     keyword: Option<&str>,
+    scrape_run_id: Option<&str>,
 ) -> Result<UpsertStats, String> {
     let fingerprint = fingerprint(&job.company, &job.title, &job.location);
     let external_key = if job.external_id.trim().is_empty() {
@@ -2373,6 +2552,15 @@ fn upsert_job_in_transaction(
             params![job.id,job.source,external_key,fingerprint,job.title,job.company,job.location,job.first_seen,job.last_seen,payload,meta.search_text,meta.salary_min,meta.salary_max,meta.company_scale_code,meta.city,meta.is_new,meta.fit_score,meta.has_description,meta.has_structured_details],
         )
         .map_err(|error| error.to_string())?;
+    if let Some(run_id) = scrape_run_id {
+        transaction
+            .execute(
+                "INSERT INTO job_scrape_runs(run_id,job_id,was_inserted) VALUES (?1,?2,?3) \
+                 ON CONFLICT(run_id,job_id) DO UPDATE SET was_inserted=MAX(was_inserted,excluded.was_inserted)",
+                params![run_id, job.id, stats.inserted],
+            )
+            .map_err(|error| error.to_string())?;
+    }
     if let Some(keyword) = keyword {
         associate_job_keyword(transaction, &job, keyword)?;
     }
@@ -2457,6 +2645,28 @@ fn push_job_condition(
     conditions.push(condition.replace('?', &format!("?{}", values.len())));
 }
 
+fn mark_latest_new_jobs(connection: &Connection, jobs: &mut [Job]) -> Result<(), String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT job_id FROM job_scrape_runs \
+             WHERE was_inserted=1 AND run_id=( \
+                 SELECT id FROM scrape_runs \
+                 WHERE json_extract(payload_json,'$.completedAt') IS NOT NULL \
+                 ORDER BY started_at DESC,id DESC LIMIT 1 \
+             )",
+        )
+        .map_err(|error| error.to_string())?;
+    let latest_new_ids = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|error| error.to_string())?
+        .collect::<Result<HashSet<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    for job in jobs {
+        job.is_new = latest_new_ids.contains(&job.id);
+    }
+    Ok(())
+}
+
 fn job_query_where(
     query: &JobQuery,
     include_cursor: bool,
@@ -2481,7 +2691,18 @@ fn job_query_where(
         );
     }
     if query.only_new {
-        conditions.push("query_is_new=1".into());
+        conditions.push(
+            "EXISTS ( \
+                SELECT 1 FROM job_scrape_runs AS latest_new \
+                WHERE latest_new.job_id=jobs.id AND latest_new.was_inserted=1 \
+                  AND latest_new.run_id=( \
+                      SELECT id FROM scrape_runs \
+                      WHERE json_extract(payload_json,'$.completedAt') IS NOT NULL \
+                      ORDER BY started_at DESC,id DESC LIMIT 1 \
+                  ) \
+            )"
+            .into(),
+        );
     }
     if !query.company_scale.trim().is_empty() {
         push_job_condition(
@@ -2573,22 +2794,62 @@ fn job_query_where(
     if include_cursor {
         if let Some(encoded) = query.cursor.as_deref() {
             let cursor = decode_job_cursor(encoded)?;
-            values.push(cursor.score.into());
-            let score_less = values.len();
-            values.push(cursor.score.into());
-            let score_equal = values.len();
-            values.push(cursor.last_seen.clone().into());
-            let seen_less = values.len();
-            values.push(cursor.last_seen.into());
-            let seen_equal = values.len();
-            values.push(cursor.id.into());
-            let id_after = values.len();
-            conditions.push(format!(
-                "(COALESCE(fit_score,0)<?{score_less} OR (COALESCE(fit_score,0)=?{score_equal} AND (last_seen<?{seen_less} OR (last_seen=?{seen_equal} AND id>?{id_after}))))"
-            ));
+            let sort = normalize_job_sort(&query.sort);
+            if cursor.sort != sort {
+                return Err("Job page cursor does not match the requested sort.".into());
+            }
+            conditions.push(job_cursor_condition(&mut values, cursor, sort)?);
         }
     }
     Ok((conditions.join(" AND "), values))
+}
+
+fn job_cursor_condition(
+    values: &mut Vec<SqlValue>,
+    cursor: JobCursor,
+    sort: &str,
+) -> Result<String, String> {
+    let mut bind = |value: SqlValue| {
+        values.push(value);
+        values.len()
+    };
+    if sort == "recent" {
+        let seen_less = bind(cursor.last_seen.clone().into());
+        let seen_equal = bind(cursor.last_seen.into());
+        let score_less = bind(cursor.score.into());
+        let score_equal = bind(cursor.score.into());
+        let id_after = bind(cursor.id.into());
+        return Ok(format!(
+            "(last_seen<?{seen_less} OR (last_seen=?{seen_equal} AND (COALESCE(fit_score,0)<?{score_less} OR (COALESCE(fit_score,0)=?{score_equal} AND id>?{id_after}))))"
+        ));
+    }
+    if sort == "salary-desc" {
+        let score_less = bind(cursor.score.into());
+        let score_equal = bind(cursor.score.into());
+        let seen_less = bind(cursor.last_seen.clone().into());
+        let seen_equal = bind(cursor.last_seen.into());
+        let id_after = bind(cursor.id.into());
+        let ties = format!(
+            "COALESCE(fit_score,0)<?{score_less} OR (COALESCE(fit_score,0)=?{score_equal} AND (last_seen<?{seen_less} OR (last_seen=?{seen_equal} AND id>?{id_after})))"
+        );
+        return Ok(if let Some(salary_mid) = cursor.salary_mid {
+            let salary_less = bind(salary_mid.into());
+            let salary_equal = bind(salary_mid.into());
+            format!(
+                "({JOB_SALARY_SORT_SQL} IS NULL OR ({JOB_SALARY_SORT_SQL}<?{salary_less} OR ({JOB_SALARY_SORT_SQL}=?{salary_equal} AND ({ties}))))"
+            )
+        } else {
+            format!("({JOB_SALARY_SORT_SQL} IS NULL AND ({ties}))")
+        });
+    }
+    let score_less = bind(cursor.score.into());
+    let score_equal = bind(cursor.score.into());
+    let seen_less = bind(cursor.last_seen.clone().into());
+    let seen_equal = bind(cursor.last_seen.into());
+    let id_after = bind(cursor.id.into());
+    Ok(format!(
+        "(COALESCE(fit_score,0)<?{score_less} OR (COALESCE(fit_score,0)=?{score_equal} AND (last_seen<?{seen_less} OR (last_seen=?{seen_equal} AND id>?{id_after}))))"
+    ))
 }
 
 fn encode_job_cursor(cursor: &JobCursor) -> Result<String, String> {
@@ -3111,7 +3372,7 @@ mod tests {
         assert_eq!(profile.education[0].degree, "其他");
         assert_eq!(profile.education[0].degree_detail, "Bachelor of Science");
     }
-    use crate::models::{InterviewPreparation, Job, JobStructuredDetails, ResumeFact};
+    use crate::models::{FitReport, InterviewPreparation, Job, JobStructuredDetails, ResumeFact};
     use tempfile::tempdir;
 
     fn job(external_id: &str, salary: &str) -> Job {
@@ -3141,6 +3402,27 @@ mod tests {
             greeting: None,
             patches: vec![],
             structured_details: None,
+        }
+    }
+
+    fn fit(score: i64) -> FitReport {
+        FitReport {
+            overall_score: score,
+            confidence: 100,
+            verdict: String::new(),
+            recommendation: String::new(),
+            summary: String::new(),
+            dimensions: vec![],
+            hard_constraints: vec![],
+            strengths: vec![],
+            gaps: vec![],
+            evidence: vec![],
+            generated_at: String::new(),
+            skill_version: String::new(),
+            input_hash: String::new(),
+            analysis_source: "local".into(),
+            fallback_reason: None,
+            cache_status: "fresh".into(),
         }
     }
 
@@ -3516,7 +3798,7 @@ mod tests {
     }
 
     #[test]
-    fn streamed_detail_update_keeps_new_status() {
+    fn streamed_detail_update_does_not_invent_a_completed_scrape_batch() {
         let dir = tempdir().unwrap();
         let db = Database::new(dir.path().join("test.db"));
         db.initialize().unwrap();
@@ -3525,7 +3807,7 @@ mod tests {
 
         let jobs = db.list_jobs().unwrap();
         assert_eq!(jobs[0].salary, "25-35K");
-        assert!(jobs[0].is_new);
+        assert!(!jobs[0].is_new);
     }
 
     #[test]
@@ -3711,6 +3993,86 @@ mod tests {
     }
 
     #[test]
+    fn only_new_tracks_insertions_from_the_latest_completed_scrape_run() {
+        let dir = tempdir().unwrap();
+        let db = Database::new(dir.path().join("latest-new.db"));
+        db.initialize().unwrap();
+
+        db.upsert_scrape_list_job_for_run(job("old", "20-30K"), "AI Agent", "run-old")
+            .unwrap();
+        db.save_scrape_run(&ScrapeRun {
+            id: "run-old".into(),
+            keyword: "AI Agent".into(),
+            city: "上海".into(),
+            total_seen: 1,
+            inserted: 1,
+            updated: 0,
+            started_at: "2026-07-17T10:00:00+08:00".into(),
+            completed_at: Some("2026-07-17T10:05:00+08:00".into()),
+            report_markdown: None,
+            search_spec: None,
+            resolved_city: Some("上海".into()),
+            detail_summary: None,
+            sample: None,
+        })
+        .unwrap();
+
+        db.upsert_scrape_list_job_for_run(job("old", "25-35K"), "AI Agent", "run-latest")
+            .unwrap();
+        db.upsert_scrape_list_job_for_run(job("new", "30-40K"), "AI Agent", "run-latest")
+            .unwrap();
+        db.save_scrape_run(&ScrapeRun {
+            id: "run-latest".into(),
+            keyword: "AI Agent".into(),
+            city: "上海".into(),
+            total_seen: 2,
+            inserted: 1,
+            updated: 1,
+            started_at: "2026-07-18T10:00:00+08:00".into(),
+            completed_at: Some("2026-07-18T10:05:00+08:00".into()),
+            report_markdown: None,
+            search_spec: None,
+            resolved_city: Some("上海".into()),
+            detail_summary: None,
+            sample: None,
+        })
+        .unwrap();
+
+        db.upsert_scrape_list_job_for_run(job("failed-run", "40-50K"), "AI Agent", "run-failed")
+            .unwrap();
+
+        let latest = db
+            .list_jobs_page(&JobQuery {
+                only_new: true,
+                ..JobQuery::default()
+            })
+            .unwrap();
+        assert_eq!(latest.total, 1);
+        assert_eq!(latest.items[0].external_id, "new");
+        assert!(latest.items[0].is_new);
+
+        let all = db.list_jobs().unwrap();
+        assert!(
+            all.iter()
+                .find(|job| job.external_id == "new")
+                .unwrap()
+                .is_new
+        );
+        assert!(
+            !all.iter()
+                .find(|job| job.external_id == "old")
+                .unwrap()
+                .is_new
+        );
+        assert!(
+            !all.iter()
+                .find(|job| job.external_id == "failed-run")
+                .unwrap()
+                .is_new
+        );
+    }
+
+    #[test]
     fn pagination_and_atomic_task_reservation_are_stable() {
         let dir = tempdir().unwrap();
         let db = Database::new(dir.path().join("test.db"));
@@ -3728,9 +4090,10 @@ mod tests {
         let first = db.list_jobs_page(&query).unwrap();
         assert_eq!(first.total, 61);
         assert_eq!(first.items.len(), JOB_PAGE_SIZE);
+        let recommended_cursor = first.next_cursor.clone();
         let second = db
             .list_jobs_page(&JobQuery {
-                cursor: first.next_cursor,
+                cursor: recommended_cursor.clone(),
                 ..query
             })
             .unwrap();
@@ -3741,6 +4104,39 @@ mod tests {
             .map(|job| job.id)
             .collect::<HashSet<_>>();
         assert!(second.items.iter().all(|job| !first_ids.contains(&job.id)));
+
+        for sort in ["recent", "salary-desc"] {
+            let first = db
+                .list_jobs_page(&JobQuery {
+                    query: "rust".into(),
+                    sort: sort.into(),
+                    ..JobQuery::default()
+                })
+                .unwrap();
+            let second = db
+                .list_jobs_page(&JobQuery {
+                    query: "rust".into(),
+                    sort: sort.into(),
+                    cursor: first.next_cursor.clone(),
+                    ..JobQuery::default()
+                })
+                .unwrap();
+            let first_ids = first
+                .items
+                .iter()
+                .map(|job| job.id.clone())
+                .collect::<HashSet<_>>();
+            assert_eq!(first.items.len() + second.items.len(), 61);
+            assert!(second.items.iter().all(|job| !first_ids.contains(&job.id)));
+        }
+        assert!(db
+            .list_jobs_page(&JobQuery {
+                query: "rust".into(),
+                sort: "recent".into(),
+                cursor: recommended_cursor,
+                ..JobQuery::default()
+            })
+            .is_err());
 
         let now = time::shanghai_rfc3339();
         let task = TaskRun {
@@ -3761,6 +4157,62 @@ mod tests {
         };
         assert!(db.reserve_task(&task).unwrap());
         assert!(!db.reserve_task(&competing).unwrap());
+    }
+
+    #[test]
+    fn job_filter_options_and_sort_orders_are_consistent() {
+        let dir = tempdir().unwrap();
+        let db = Database::new(dir.path().join("test.db"));
+        db.initialize().unwrap();
+
+        let mut high_score = job("high-score", "20-30K");
+        high_score.last_seen = "2026-07-17".into();
+        high_score.skills = vec!["Python".into()];
+        high_score.fit = Some(fit(90));
+        db.upsert_job(high_score).unwrap();
+
+        let mut high_salary = job("high-salary", "50-70K");
+        high_salary.last_seen = "2026-07-18".into();
+        high_salary.experience = "5-10年".into();
+        high_salary.skills = vec!["Python".into(), "RAG".into()];
+        high_salary.fit = Some(fit(70));
+        db.upsert_job(high_salary).unwrap();
+
+        let mut unknown_salary = job("unknown-salary", "面议");
+        unknown_salary.last_seen = "2026-07-19".into();
+        unknown_salary.skills = vec!["Rust".into()];
+        unknown_salary.fit = Some(fit(95));
+        db.upsert_job(unknown_salary).unwrap();
+
+        let ids_for = |sort: &str| {
+            db.list_jobs_page(&JobQuery {
+                sort: sort.into(),
+                ..JobQuery::default()
+            })
+            .unwrap()
+            .items
+            .into_iter()
+            .map(|job| job.external_id)
+            .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            ids_for("recommended"),
+            vec!["unknown-salary", "high-score", "high-salary"]
+        );
+        assert_eq!(
+            ids_for("recent"),
+            vec!["unknown-salary", "high-salary", "high-score"]
+        );
+        assert_eq!(
+            ids_for("salary-desc"),
+            vec!["high-salary", "high-score", "unknown-salary"]
+        );
+
+        let options = db.list_job_filter_options().unwrap();
+        assert_eq!(options.cities, vec!["上海"]);
+        assert_eq!(options.experiences, vec!["3-5年", "5-10年"]);
+        assert_eq!(options.skills[0].label, "Python");
+        assert_eq!(options.skills[0].count, 2);
     }
 
     #[test]

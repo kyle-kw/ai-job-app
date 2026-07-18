@@ -1300,7 +1300,7 @@ mod tests {
             .unwrap();
         connection
             .execute(
-                "DELETE FROM schema_migrations WHERE version IN (4,5,6,7)",
+                "DELETE FROM schema_migrations WHERE version IN (4,5,6,7,8)",
                 [],
             )
             .unwrap();

@@ -4,24 +4,22 @@
   import { ArrowUpRight, BriefcaseBusiness, Check, CheckCircle2, ChevronDown, Clipboard, Download, Filter, Info, MapPin, MessageCircle, Search, Sparkles, Trash2, X, XCircle } from 'lucide-svelte';
   import DeleteJobDialog from '$lib/components/DeleteJobDialog.svelte';
   import FitScore from '$lib/components/FitScore.svelte';
+  import JobSkillFilter from '$lib/components/JobSkillFilter.svelte';
   import JobSearchDialog from '$lib/components/JobSearchDialog.svelte';
   import { chooseLocalExportPath, localExportStamp } from '$lib/export-file';
   import {
     COMPANY_SCALE_FILTER_OPTIONS,
-    SALARY_FILTER_OPTIONS,
-    type CompanyScaleFilterCode,
-    type SalaryFilterCode
+    type CompanyScaleFilterCode
   } from '$lib/job-filters';
   import { backend } from '$lib/services/backend';
   import { createSearchSpec } from '$lib/search-spec';
   import { refresh, snapshot, startScrape } from '$lib/stores/app';
-  import type { Job, JobQuery, ReportSalaryBand, SearchSpec } from '$lib/types';
+  import type { Job, JobFilterOptions, JobQuery, JobSort, ReportSalaryBand, SearchSpec } from '$lib/types';
 
   let selectedId = '';
   let query = '';
   let minScore = 0;
   let onlyNew = false;
-  let salaryFilter: SalaryFilterCode = '';
   let companyScaleFilter: CompanyScaleFilterCode = '';
   let cityFilter = '';
   let missingDescription = false;
@@ -31,11 +29,13 @@
   let salaryBandFilter: ReportSalaryBand = '';
   let fromReport = false;
   let requestedJobId: string | null = null;
-  let cities: string[] = [];
+  let jobFilterOptions: JobFilterOptions = { cities: [], experiences: [], skills: [] };
+  let sort: JobSort = 'recommended';
   let activeTab: 'description' | 'fit' = 'description';
   let scraping = false;
   let extractionStarting = false;
   let batchStarting = false;
+  let batchMenuOpen = false;
   let analyzingJobId = '';
   let exportingJobs = false;
   let deletingJobId = '';
@@ -61,21 +61,21 @@
     nextQuery: string,
     nextMinScore: number,
     nextOnlyNew: boolean,
-    nextSalary: SalaryFilterCode,
     nextCompanyScale: CompanyScaleFilterCode,
     nextCity: string,
     nextMissingDescription: boolean,
     nextKeywordKeys: string[],
     nextSkills: string[],
     nextExperience: string,
-    nextSalaryBand: ReportSalaryBand
+    nextSalaryBand: ReportSalaryBand,
+    nextSort: JobSort
   ) => JSON.stringify([
-    nextQuery.trim(), nextMinScore, nextOnlyNew, nextSalary, nextCompanyScale, nextCity,
-    nextMissingDescription, nextKeywordKeys, nextSkills, nextExperience, nextSalaryBand
+    nextQuery.trim(), nextMinScore, nextOnlyNew, nextCompanyScale, nextCity,
+    nextMissingDescription, nextKeywordKeys, nextSkills, nextExperience, nextSalaryBand, nextSort
   ]);
   $: filterKey = makeFilterKey(
-    query, minScore, onlyNew, salaryFilter, companyScaleFilter, cityFilter,
-    missingDescription, keywordKeys, skillFilters, experienceFilter, salaryBandFilter
+    query, minScore, onlyNew, companyScaleFilter, cityFilter,
+    missingDescription, keywordKeys, skillFilters, experienceFilter, salaryBandFilter, sort
   );
   $: if (mounted && filterKey !== lastFilterKey) {
     lastFilterKey = filterKey;
@@ -91,7 +91,7 @@
   $: if (mounted && terminalTaskKey && terminalTaskKey !== lastTerminalTaskKey) {
     lastTerminalTaskKey = terminalTaskKey;
     void reloadJobs();
-    void reloadCities();
+    void reloadFilterOptions();
   }
   $: {
     const selectedIsVisible = jobs.some((job) => job.id === selectedId);
@@ -107,20 +107,19 @@
   $: detailExtractionRunning = extractionStarting || $snapshot.tasks.some((task) => task.kind === 'job-detail-extraction' && (task.state === 'queued' || task.state === 'running'));
   $: fitBatchRunning = batchStarting || $snapshot.tasks.some((task) => task.kind === 'fit' && (task.state === 'queued' || task.state === 'running'));
   $: scrapeTaskRunning = scraping || $snapshot.tasks.some((task) => task.kind === 'scrape' && (task.state === 'queued' || task.state === 'running'));
-  $: hasActiveFilters = Boolean(query.trim() || minScore || onlyNew || salaryFilter || companyScaleFilter || cityFilter || missingDescription || keywordKeys.length || skillFilters.length || experienceFilter || salaryBandFilter);
+  $: latestCompletedScrape = $snapshot.scrapeRuns.find((run) => Boolean(run.completedAt));
+  $: hasActiveFilters = Boolean(query.trim() || minScore || onlyNew || companyScaleFilter || cityFilter || missingDescription || keywordKeys.length || skillFilters.length || experienceFilter || salaryBandFilter);
 
   function currentJobQuery(cursor: string | null = null): JobQuery {
     return {
-      query, minScore, onlyNew, salary: salaryFilter, companyScale: companyScaleFilter, city: cityFilter,
-      missingDescription, keywordKeys, skills: skillFilters, experience: experienceFilter, salaryBand: salaryBandFilter, cursor
+      query, minScore, onlyNew, salary: '', companyScale: companyScaleFilter, city: cityFilter,
+      missingDescription, keywordKeys, skills: skillFilters, experience: experienceFilter, salaryBand: salaryBandFilter, sort, cursor
     };
   }
 
-  async function reloadCities() {
+  async function reloadFilterOptions() {
     try {
-      const nextCities = await backend.listJobCities();
-      cities = nextCities;
-      if (cityFilter && !nextCities.includes(cityFilter)) cityFilter = '';
+      jobFilterOptions = await backend.listJobFilterOptions();
     } catch (error) {
       showToast(error instanceof Error ? error.message : String(error));
     }
@@ -176,6 +175,30 @@
     return { destroy: () => observer.disconnect() };
   }
 
+  function dismissBatchMenu(node: HTMLElement) {
+    const onPointerDown = (event: PointerEvent) => {
+      const details = node as HTMLDetailsElement;
+      if (details.open && event.target && !node.contains(event.target as Node)) {
+        details.open = false;
+        batchMenuOpen = false;
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && (node as HTMLDetailsElement).open) {
+        (node as HTMLDetailsElement).open = false;
+        batchMenuOpen = false;
+      }
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return {
+      destroy() {
+        document.removeEventListener('pointerdown', onPointerDown);
+        document.removeEventListener('keydown', onKeyDown);
+      }
+    };
+  }
+
   onMount(() => {
     const params = new URL(window.location.href).searchParams;
     requestedJobId = params.get('job');
@@ -189,12 +212,12 @@
       ? requestedSalaryBand as ReportSalaryBand : '';
     mounted = true;
     lastFilterKey = makeFilterKey(
-      query, minScore, onlyNew, salaryFilter, companyScaleFilter, cityFilter,
-      missingDescription, keywordKeys, skillFilters, experienceFilter, salaryBandFilter
+      query, minScore, onlyNew, companyScaleFilter, cityFilter,
+      missingDescription, keywordKeys, skillFilters, experienceFilter, salaryBandFilter, sort
     );
     lastTerminalTaskKey = terminalTaskKey;
     void reloadJobs();
-    void reloadCities();
+    void reloadFilterOptions();
     return () => window.clearTimeout(filterTimer);
   });
 
@@ -237,7 +260,7 @@
       await backend.startJobDetailExtraction();
       await refresh();
       await reloadJobs();
-      showToast('岗位详情批量提取已启动');
+      showToast('结构化详情批量提取已启动');
     } catch (error) {
       showToast(error instanceof Error ? error.message : String(error));
     } finally {
@@ -255,7 +278,6 @@
     query = '';
     minScore = 0;
     onlyNew = false;
-    salaryFilter = '';
     companyScaleFilter = '';
     cityFilter = '';
     missingDescription = false;
@@ -292,10 +314,6 @@
     return `/reports?${params.toString()}`;
   }
 
-  function removeReportSkill(skill: string) {
-    skillFilters = skillFilters.filter((item) => item !== skill);
-  }
-
   async function openSource() {
     if (!selected) return;
     try {
@@ -329,6 +347,7 @@
   }
 
   async function analyzeFilteredJobs() {
+    batchMenuOpen = false;
     if (fitBatchRunning || totalJobs === 0) return;
     batchStarting = true;
     try {
@@ -342,19 +361,20 @@
     }
   }
 
-  async function exportAllJobs() {
+  async function exportCurrentJobs() {
+    batchMenuOpen = false;
     if (exportingJobs) return;
     exportingJobs = true;
     try {
-      const fileName = `岗位数据_${localExportStamp()}.json`;
+      const fileName = `岗位筛选结果_${localExportStamp()}.json`;
       const outputPath = await chooseLocalExportPath({
-        title: '导出全部岗位 JSON',
+        title: '导出当前筛选结果 JSON',
         fileName,
         filterName: '岗位 JSON',
         extension: 'json'
       });
       if (!outputPath) return;
-      const result = await backend.exportJobsJson(outputPath);
+      const result = await backend.exportJobsJson(outputPath, currentJobQuery());
       showToast(`已导出：${result.path}`);
     } catch (error) {
       showToast(error instanceof Error ? error.message : String(error));
@@ -386,7 +406,7 @@
         ? await backend.deleteJob(confirmation.job.id)
         : await backend.deleteMissingDescriptionJobs(confirmation.query);
       selectedId = '';
-      await reloadCities();
+      await reloadFilterOptions();
       await reloadJobs();
       deleteConfirmation = null;
       showToast(confirmation.mode === 'single' ? '岗位已删除' : `已删除 ${result.deletedCount} 个无原始详情岗位`);
@@ -406,43 +426,41 @@
     llm_failed: '模型调用失败，本次已回退到本地基础匹配。',
     invalid_output: '模型结果格式无效，本次已回退到本地基础匹配。'
   }[reason ?? ''] ?? '');
-  const reportSalaryBandLabel = (band: ReportSalaryBand) => band ? ({
-    'under-15': '15K 以下', '15-25': '15–25K', '25-35': '25–35K', '35-50': '35–50K', '50-plus': '50K 以上'
-  }[band] ?? '') : '';
+  const JOB_SALARY_BAND_OPTIONS: Array<{ value: ReportSalaryBand; label: string }> = [
+    { value: '', label: '不限' },
+    { value: 'under-15', label: '15K 以下' },
+    { value: '15-25', label: '15–25K' },
+    { value: '25-35', label: '25–35K' },
+    { value: '35-50', label: '35–50K' },
+    { value: '50-plus', label: '50K 以上' }
+  ];
+
+  function latestScrapeLabel() {
+    if (!latestCompletedScrape) return '完成一次抓取后可用';
+    const completedAt = latestCompletedScrape.completedAt ?? latestCompletedScrape.startedAt;
+    const time = new Intl.DateTimeFormat('zh-CN', {
+      month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit'
+    }).format(new Date(completedAt));
+    return `${latestCompletedScrape.keyword} · ${time} · 新增 ${latestCompletedScrape.inserted}`;
+  }
 </script>
 
 <div class="flex h-[calc(100vh-74px)] min-h-[646px] overflow-hidden">
   <aside class="filter-sidebar scrollbar-thin w-[250px] shrink-0 overflow-y-auto border-r p-4" style="border-color: var(--line); background: color-mix(in srgb, var(--canvas) 72%, var(--panel));">
-    <button class="btn-primary mb-2 w-full" type="button" on:click|stopPropagation={openSearchDialog} disabled={scrapeTaskRunning}><Search size={16} />{scrapeTaskRunning ? '岗位抓取中…' : '抓取新岗位'}</button>
-    <button class="btn mb-2 w-full" on:click={extractJobDetails} disabled={detailExtractionRunning || pendingDetailCount === 0}><Sparkles size={15} />{detailExtractionRunning ? '正在批量提取…' : pendingDetailCount ? `批量提取详情（${pendingDetailCount}）` : '岗位详情已提取'}</button>
-    <button class="btn mb-2 w-full" on:click={analyzeFilteredJobs} disabled={fitBatchRunning || totalJobs === 0}><CheckCircle2 size={15} />{fitBatchRunning ? '正在批量分析…' : `批量分析全部结果（${totalJobs}）`}</button>
-    <button class="btn mb-4 w-full" on:click={exportAllJobs} disabled={exportingJobs}><Download size={15} />{exportingJobs ? '正在导出…' : '导出全部岗位 JSON'}</button>
-    {#if fromReport}
-      <div class="mb-4 rounded-xl border p-3" style="border-color: color-mix(in srgb, var(--brand) 30%, var(--line)); background: var(--brand-faint);">
-        <p class="text-xs font-semibold text-brand">来自数据报告</p>
-        <p class="mt-1 text-[11px] leading-5 body-muted">当前岗位组成了报告中的选中统计项。</p>
-        <a href={reportReturnHref()} class="mt-2 inline-flex text-xs font-semibold text-brand">返回数据报告</a>
-      </div>
-    {/if}
-    {#if keywordKeys.length || skillFilters.length || cityFilter || experienceFilter || salaryBandFilter}
-      <div class="mb-4 flex flex-wrap gap-1.5" aria-label="报告筛选条件">
-        {#if keywordKeys.length}<button class="chip gap-1 px-2 py-1" aria-label="移除关键词范围" on:click={() => keywordKeys = []}>{keywordKeys.length} 组关键词<X size={11} /></button>{/if}
-        {#each skillFilters as skill}<button class="chip gap-1 px-2 py-1" aria-label={`移除技能 ${skill}`} on:click={() => removeReportSkill(skill)}>{skill}<X size={11} /></button>{/each}
-        {#if cityFilter}<button class="chip gap-1 px-2 py-1" aria-label={`移除城市 ${cityFilter}`} on:click={() => cityFilter = ''}>{cityFilter}<X size={11} /></button>{/if}
-        {#if experienceFilter}<button class="chip gap-1 px-2 py-1" aria-label={`移除经验 ${experienceFilter}`} on:click={() => experienceFilter = ''}>{experienceFilter}<X size={11} /></button>{/if}
-        {#if salaryBandFilter}<button class="chip gap-1 px-2 py-1" aria-label={`移除薪资 ${reportSalaryBandLabel(salaryBandFilter)}`} on:click={() => salaryBandFilter = ''}>{reportSalaryBandLabel(salaryBandFilter)}<X size={11} /></button>{/if}
-      </div>
-    {/if}
+    <button class="btn-primary mb-4 w-full" type="button" on:click|stopPropagation={openSearchDialog} disabled={scrapeTaskRunning}><Search size={16} />{scrapeTaskRunning ? '岗位抓取中…' : '抓取新岗位'}</button>
     <label class="relative block">
       <Search size={15} class="pointer-events-none absolute left-3 top-3 body-muted" />
       <input class="input pl-9" bind:value={query} placeholder="搜索岗位或公司" />
     </label>
     <div class="mt-5 flex items-center justify-between"><span class="eyebrow flex items-center gap-1.5"><Filter size={13} />筛选条件</span>{#if hasActiveFilters}<button class="text-xs text-brand" on:click={clearFilters}>清除筛选</button>{/if}</div>
     <label class="mt-4 block"><span class="label flex justify-between"><span>最低匹配度</span><span class="text-brand">{minScore}%</span></span><input class="w-full accent-[var(--brand)]" type="range" min="0" max="90" step="10" bind:value={minScore} /></label>
-    <label class="mt-4 block"><span class="label">城市</span><select class="select" bind:value={cityFilter}><option value="">不限</option>{#each cities as city}<option value={city}>{city}</option>{/each}</select></label>
-    <label class="mt-4 block"><span class="label">薪资范围</span><select class="select" bind:value={salaryFilter}>{#each SALARY_FILTER_OPTIONS as option}<option value={option.value}>{option.label}</option>{/each}</select></label>
+    <label class="mt-4 block"><span class="label">城市</span><select class="select" bind:value={cityFilter}><option value="">不限</option>{#if cityFilter && !jobFilterOptions.cities.includes(cityFilter)}<option value={cityFilter}>{cityFilter}</option>{/if}{#each jobFilterOptions.cities as city}<option value={city}>{city}</option>{/each}</select></label>
+    <label class="mt-4 block"><span class="label">薪资范围</span><select class="select" bind:value={salaryBandFilter}>{#each JOB_SALARY_BAND_OPTIONS as option}<option value={option.value}>{option.label}</option>{/each}</select></label>
+    <label class="mt-4 block"><span class="label">经验要求</span><select class="select" bind:value={experienceFilter}><option value="">不限</option>{#if experienceFilter && !jobFilterOptions.experiences.includes(experienceFilter)}<option value={experienceFilter}>{experienceFilter}</option>{/if}{#each jobFilterOptions.experiences as experience}<option value={experience}>{experience}</option>{/each}</select></label>
     <label class="mt-4 block"><span class="label">公司规模</span><select class="select" bind:value={companyScaleFilter}>{#each COMPANY_SCALE_FILTER_OPTIONS as option}<option value={option.value}>{option.label}</option>{/each}</select></label>
-    <label class="mt-4 flex cursor-pointer items-center gap-2 text-sm"><input class="h-4 w-4 accent-[var(--brand)]" type="checkbox" bind:checked={onlyNew} />只看本次新增</label>
+    <div class="mt-4"><span class="label">技能（同时包含）</span><JobSkillFilter options={jobFilterOptions.skills} bind:selected={skillFilters} /></div>
+    <label class="mt-4 flex items-center gap-2 text-sm" class:cursor-pointer={Boolean(latestCompletedScrape)} class:opacity-60={!latestCompletedScrape}><input class="h-4 w-4 accent-[var(--brand)]" type="checkbox" bind:checked={onlyNew} disabled={!latestCompletedScrape} />最近一次抓取新增</label>
+    <p class="ml-6 mt-1 truncate text-[11px] body-muted" title={latestScrapeLabel()}>{latestScrapeLabel()}</p>
     <label class="mt-3 flex cursor-pointer items-center gap-2 text-sm"><input class="h-4 w-4 accent-[var(--brand)]" type="checkbox" bind:checked={missingDescription} />只看无原始详情</label>
     {#if missingDescription && totalJobs > 0}
       <button class="btn-danger mt-4 w-full" on:click={requestDeleteFilteredMissingJobs} disabled={bulkDeleting}><Trash2 size={15} />{bulkDeleting ? '正在删除…' : `删除无详情岗位（${totalJobs}）`}</button>
@@ -450,14 +468,34 @@
     <div class="my-5 divider"></div>
     <div class="space-y-2 text-xs body-muted">
       <div class="flex justify-between"><span>岗位数量</span><strong class="text-ink">{totalJobs}</strong></div>
-      <div class="flex justify-between"><span>最高匹配</span><strong class="text-ink">{jobs[0]?.fit?.overallScore ?? 0}%</strong></div>
       <div class="flex justify-between"><span>数据来源</span><strong class="text-ink">BOSS 直聘</strong></div>
+      <div class="flex items-center justify-between gap-2"><span>全部岗位详情</span>{#if pendingDetailCount > 0}<button class="font-semibold text-brand disabled:opacity-60" on:click={extractJobDetails} disabled={detailExtractionRunning}>{detailExtractionRunning ? '提取中…' : `${pendingDetailCount} 条待提取`}</button>{:else}<strong class="text-success">已完成</strong>{/if}</div>
     </div>
   </aside>
 
   <section class="job-list scrollbar-thin w-[382px] shrink-0 overflow-y-auto border-r bg-panel" style="border-color: var(--line);">
-    <div class="sticky top-0 z-10 flex h-14 items-center justify-between border-b px-4" style="border-color: var(--line); background: color-mix(in srgb, var(--panel) 92%, transparent); backdrop-filter: blur(10px);">
-      <p class="text-sm font-semibold">匹配排序</p><button class="btn-ghost h-8 text-xs"><ChevronDown size={14} /> 综合推荐</button>
+    <div class="sticky top-0 z-10 border-b" style="border-color: var(--line); background: color-mix(in srgb, var(--panel) 94%, transparent); backdrop-filter: blur(10px);">
+      <div class="flex h-12 items-center justify-between gap-2 px-4">
+        <div class="flex min-w-0 items-baseline gap-2"><p class="shrink-0 text-sm font-semibold">岗位列表</p><span class="truncate text-[11px] body-muted" aria-label={`当前结果 ${totalJobs}`}>{totalJobs}</span></div>
+        <div class="flex shrink-0 items-center gap-2">
+          <label><span class="sr-only">岗位排序</span><select class="select h-8 w-auto min-w-[104px] py-0 text-xs" aria-label="岗位排序" bind:value={sort}><option value="recommended">综合推荐</option><option value="recent">最近发现</option><option value="salary-desc">薪资优先</option></select></label>
+          <details class="group relative" bind:open={batchMenuOpen} use:dismissBatchMenu>
+          <!-- svelte-ignore a11y_no_redundant_roles -->
+            <summary class="btn h-8 cursor-pointer list-none px-2.5 text-[11px] [&::-webkit-details-marker]:hidden" role="button" aria-label="批量操作"><span>批量</span><ChevronDown size={13} class="transition group-open:rotate-180" /></summary>
+            <div class="absolute right-0 top-9 z-30 w-60 rounded-xl border bg-panel p-2 shadow-xl" style="border-color: var(--line);">
+              <p class="px-2 pb-1.5 pt-1 text-[10px] font-semibold uppercase tracking-[0.08em] body-muted">仅作用于当前筛选结果</p>
+              <button class="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs hover:bg-[var(--brand-faint)] disabled:opacity-50" on:click={analyzeFilteredJobs} disabled={fitBatchRunning || totalJobs === 0}><CheckCircle2 size={14} class="text-brand" />{fitBatchRunning ? '正在批量分析…' : `分析当前结果（${totalJobs}）`}</button>
+              <button class="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs hover:bg-[var(--brand-faint)] disabled:opacity-50" on:click={exportCurrentJobs} disabled={exportingJobs || totalJobs === 0}><Download size={14} class="text-brand" />{exportingJobs ? '正在导出…' : `导出当前结果（${totalJobs}）`}</button>
+            </div>
+          </details>
+        </div>
+      </div>
+      {#if fromReport}
+        <div class="flex items-center justify-between gap-2 border-t px-4 py-2 text-[11px]" style="border-color: var(--line); background: var(--brand-faint);">
+          <span class="min-w-0 truncate"><strong class="text-brand">来自数据报告</strong>{#if keywordKeys.length}<span class="body-muted"> · {keywordKeys.length} 组关键词</span>{/if}</span>
+          <span class="flex shrink-0 items-center gap-2">{#if keywordKeys.length}<button class="text-brand" aria-label="移除关键词范围" on:click={() => keywordKeys = []}>移除范围</button>{/if}<a href={reportReturnHref()} class="font-semibold text-brand">返回报告</a></span>
+        </div>
+      {/if}
     </div>
     {#if jobsLoading && jobs.length === 0}
       <div class="grid min-h-[400px] place-items-center px-8 text-center"><p class="text-sm body-muted">正在加载岗位…</p></div>
@@ -489,7 +527,7 @@
       <div class="sticky top-0 z-10 border-b bg-canvas px-6 pt-5" style="border-color: var(--line);">
         <div class="pb-4">
           <div class="min-w-0">
-            <div class="flex items-center gap-2"><h2 class="truncate text-[22px] font-semibold tracking-[-0.035em]">{selected.title}</h2>{#if selected.isNew}<span class="chip-brand">本次新增</span>{/if}</div>
+            <div class="flex items-center gap-2"><h2 class="truncate text-[22px] font-semibold tracking-[-0.035em]">{selected.title}</h2>{#if selected.isNew}<span class="chip-brand">最近新增</span>{/if}</div>
             <p class="mt-1 text-sm body-muted">{selected.company} · {selected.companyScale} · {selected.industry}</p>
             <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm"><strong class="text-brand">{selected.salary}</strong><span class="flex items-center gap-1 body-muted"><MapPin size={14} />{selected.location}</span><span class="body-muted">{selected.experience} · {selected.degree}</span></div>
           </div>
