@@ -189,14 +189,18 @@ class WorkerTests(unittest.TestCase):
                 worker.render_pdf_page(pathlib.Path("resume.pdf"), 0, pathlib.Path(temporary))
         self.assertEqual(closed, ["image", "bitmap", "page", "document"])
 
-    def test_sigterm_cleanup_is_scoped_to_active_boss(self):
-        fake = object()
-        worker._active_boss = fake
+    def test_sigterm_cleanup_uses_browser_active_boss(self):
+        stale = object()
+        active = object()
+        worker._active_boss = stale
         worker._cleaning_boss = False
+        worker.browser_ops._active_boss = active
+        worker.browser_ops._cleaning_boss = False
         with patch.object(worker, "close_boss_session") as close:
             worker.cleanup_active_boss()
-        close.assert_called_once()
+        close.assert_called_once_with(active, action="进程退出前")
         self.assertIsNone(worker._active_boss)
+        self.assertIsNone(worker.browser_ops._active_boss)
 
     def test_text_extraction_does_not_invent_experience(self):
         profile = worker.profile_from_text(

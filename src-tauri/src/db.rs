@@ -1979,6 +1979,18 @@ mod tests {
             ids_for("salary-desc"),
             vec!["high-salary", "high-score", "unknown-salary"]
         );
+        assert_eq!(
+            db.jobs_for_query(&JobQuery {
+                skills: vec!["Python".into()],
+                sort: "salary-desc".into(),
+                ..JobQuery::default()
+            })
+            .unwrap()
+            .into_iter()
+            .map(|job| job.external_id)
+            .collect::<Vec<_>>(),
+            vec!["high-salary", "high-score"]
+        );
 
         let options = db.list_job_filter_options().unwrap();
         assert_eq!(options.cities, vec!["上海"]);

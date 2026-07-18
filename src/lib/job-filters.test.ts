@@ -23,6 +23,8 @@ describe('job salary filters', () => {
     expect(matchesSalaryFilter('20-30元/时', '406')).toBe(false);
     expect(matchesSalaryFilter('薪资面议', '')).toBe(true);
     expect(matchesReportSalaryBand('50K以上', '50-plus')).toBe(true);
+    expect(matchesReportSalaryBand('40K以上', '50-plus')).toBe(false);
+    expect(matchesReportSalaryBand('50K以上', '35-50')).toBe(false);
   });
 });
 
@@ -83,6 +85,31 @@ describe('job sorting', () => {
     expect(sortJobs(jobs, 'salary-desc').map((job) => job.id)).toEqual([
       'high-old',
       'low-new',
+      'unknown'
+    ]);
+  });
+
+  it('sorts open-ended salaries by their lower bound', () => {
+    const base = {
+      title: '',
+      company: '',
+      skills: [],
+      companyScale: '',
+      location: '',
+      description: '',
+      isNew: false,
+      lastSeen: '2026-07-18',
+      fit: null
+    };
+    const salaries = [
+      { ...base, id: 'range', salary: '40-50K' },
+      { ...base, id: 'unknown', salary: '面议' },
+      { ...base, id: 'open', salary: '50K以上' }
+    ];
+
+    expect(sortJobs(salaries, 'salary-desc').map((job) => job.id)).toEqual([
+      'open',
+      'range',
       'unknown'
     ]);
   });

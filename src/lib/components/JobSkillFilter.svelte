@@ -107,6 +107,11 @@
         <input
           bind:this={searchInput}
           class="input h-8 pl-8 text-xs"
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={open}
+          aria-controls="job-skill-options"
+          aria-activedescendant={activeIndex >= 0 ? `job-skill-option-${activeIndex}` : undefined}
           value={query}
           placeholder="搜索技能"
           on:input={(event) => {
@@ -126,6 +131,7 @@
         {#if filteredOptions.length}
           {#each filteredOptions as option, index}
             <button
+              id={`job-skill-option-${index}`}
               type="button"
               role="option"
               aria-selected={selectedKeys.has(option.label.toLocaleLowerCase())}

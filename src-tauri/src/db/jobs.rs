@@ -1,5 +1,16 @@
 use super::*;
 
+fn list_job_cities_with_connection(connection: &Connection) -> Result<Vec<String>, String> {
+    let mut statement = connection
+        .prepare("SELECT DISTINCT city FROM jobs WHERE city<>'' ORDER BY city COLLATE NOCASE")
+        .map_err(|error| error.to_string())?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|error| error.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())
+}
+
 impl Database {
     pub fn list_jobs(&self) -> Result<Vec<Job>, String> {
         let connection = self.connect()?;
@@ -118,19 +129,12 @@ impl Database {
 
     pub fn list_job_cities(&self) -> Result<Vec<String>, String> {
         let connection = self.connect()?;
-        let mut statement = connection
-            .prepare("SELECT DISTINCT city FROM jobs WHERE city<>'' ORDER BY city COLLATE NOCASE")
-            .map_err(|error| error.to_string())?;
-        let rows = statement
-            .query_map([], |row| row.get::<_, String>(0))
-            .map_err(|error| error.to_string())?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|error| error.to_string())
+        list_job_cities_with_connection(&connection)
     }
 
     pub fn list_job_filter_options(&self) -> Result<JobFilterOptions, String> {
-        let cities = self.list_job_cities()?;
         let connection = self.connect()?;
+        let cities = list_job_cities_with_connection(&connection)?;
         let experiences = {
             let mut statement = connection
                 .prepare(
@@ -196,13 +200,29 @@ impl Database {
     }
 
     pub fn jobs_for_query(&self, query: &JobQuery) -> Result<Vec<Job>, String> {
-        self.job_ids_for_query(query)?
-            .into_iter()
-            .map(|id| {
-                self.get_job(&id)?
-                    .ok_or_else(|| format!("岗位 {id} 不存在或已被删除。"))
+        let mut query = query.clone();
+        query.cursor = None;
+        let (where_clause, values) = job_query_where(&query, false)?;
+        let connection = self.connect()?;
+        let mut statement = connection
+            .prepare(&format!(
+                "SELECT payload_json FROM jobs WHERE {where_clause} ORDER BY {}",
+                job_order_by(normalize_job_sort(&query.sort))
+            ))
+            .map_err(|error| error.to_string())?;
+        let rows = statement
+            .query_map(params_from_iter(values.iter()), |row| {
+                row.get::<_, String>(0)
             })
-            .collect()
+            .map_err(|error| error.to_string())?;
+        let mut jobs = rows
+            .map(|row| {
+                let json = row.map_err(|error| error.to_string())?;
+                serde_json::from_str(&json).map_err(|error| error.to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        mark_latest_new_jobs(&connection, &mut jobs)?;
+        Ok(jobs)
     }
 
     pub fn pending_detail_jobs(&self) -> Result<Vec<Job>, String> {

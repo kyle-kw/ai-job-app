@@ -117,10 +117,7 @@ def scrape_jobs(params: dict[str, Any]) -> dict[str, Any]:
 
 
 def cleanup_active_boss() -> None:
-    global _active_boss, _cleaning_boss
     _sync_browser_hooks()
-    browser_ops._active_boss = _active_boss
-    browser_ops._cleaning_boss = _cleaning_boss
     browser_ops.cleanup_active_boss()
     _sync_state_from_browser()
 
