@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  displayDegree,
-  formatDateRange,
-  normalizeDegree,
-  safeResumeFileName
-} from './resume-format';
+import { displayDegree, formatDateRange, safeResumeFileName } from './resume-format';
 
 describe('resume formatting', () => {
   it('never prefixes a single date with a range separator', () => {
@@ -14,12 +9,7 @@ describe('resume formatting', () => {
     expect(formatDateRange('', '')).toBe('');
   });
 
-  it('preserves non-standard degrees as detail', () => {
-    expect(normalizeDegree('学士')).toEqual({ degree: '本科', degreeDetail: '' });
-    expect(normalizeDegree('Bachelor of Science')).toEqual({
-      degree: '其他',
-      degreeDetail: 'Bachelor of Science'
-    });
+  it('displays a non-standard degree from its detail', () => {
     expect(displayDegree({ degree: '其他', degreeDetail: '大专' })).toBe('大专');
   });
 

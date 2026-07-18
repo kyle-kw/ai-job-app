@@ -27,37 +27,13 @@
   import type {
     InterviewPreparationState,
     JobDataReport,
-    RenderResult,
     ReportBucket,
     ReportCompetitivenessState,
+    ReportKeyword,
     ReportSalaryBand
   } from '$lib/types';
 
-  type ReportKeyword = {
-    key: string;
-    label: string;
-    jobCount: number;
-    lastSeen: string;
-  };
   const HISTORICAL_UNCLASSIFIED_KEY = '__historical_unclassified__';
-
-  type KeywordReportBackend = {
-    listReportKeywords: () => Promise<ReportKeyword[]>;
-    getJobDataReport: (keywordKeys: string[]) => Promise<JobDataReport>;
-    exportJobDataReport: (keywordKeys: string[], outputPath: string) => Promise<RenderResult>;
-    getInterviewPreparationState: (keywordKeys: string[]) => Promise<InterviewPreparationState>;
-    generateInterviewPreparation: (
-      keywordKeys: string[],
-      force?: boolean
-    ) => Promise<InterviewPreparationState>;
-    getReportCompetitivenessState: (keywordKeys: string[]) => Promise<ReportCompetitivenessState>;
-    generateReportCompetitiveness: (
-      keywordKeys: string[],
-      force?: boolean
-    ) => Promise<ReportCompetitivenessState>;
-  };
-
-  const reportBackend = backend as unknown as KeywordReportBackend;
 
   let report: JobDataReport | null = null;
   let loading = true;
@@ -127,7 +103,7 @@
     keywordsLoading = true;
     keywordsError = '';
     try {
-      keywords = await reportBackend.listReportKeywords();
+      keywords = await backend.listReportKeywords();
       const latest = mostRecentKeyword(keywords);
       latestKeywordKey = latest?.key ?? '';
       const currentUrl = typeof window === 'undefined' ? null : new URL(window.location.href);
@@ -174,7 +150,7 @@
     loading = true;
     error = '';
     try {
-      const nextReport = await reportBackend.getJobDataReport(keywordKeys);
+      const nextReport = await backend.getJobDataReport(keywordKeys);
       if (requestId === reportRequestId) report = nextReport;
     } catch (reason) {
       if (requestId === reportRequestId)
@@ -196,7 +172,7 @@
     interviewLoading = true;
     interviewError = '';
     try {
-      const nextState = await reportBackend.getInterviewPreparationState(keywordKeys);
+      const nextState = await backend.getInterviewPreparationState(keywordKeys);
       if (requestId === interviewRequestId) interviewState = nextState;
     } catch (reason) {
       if (requestId === interviewRequestId)
@@ -218,7 +194,7 @@
     competitivenessLoading = true;
     competitivenessError = '';
     try {
-      const nextState = await reportBackend.getReportCompetitivenessState(keywordKeys);
+      const nextState = await backend.getReportCompetitivenessState(keywordKeys);
       if (requestId === competitivenessRequestId) competitivenessState = nextState;
     } catch (reason) {
       if (requestId === competitivenessRequestId)
@@ -253,11 +229,7 @@
     url.searchParams.delete('window');
     selectedKeywordKeys.forEach((key) => url.searchParams.append('keyword', key));
     const nextUrl = `${url.pathname}${url.search}${url.hash}`;
-    try {
-      replaceState(nextUrl, {});
-    } catch {
-      window.history.replaceState(window.history.state, '', nextUrl);
-    }
+    replaceState(nextUrl, {});
   }
 
   async function generateReportCompetitiveness() {
@@ -266,7 +238,7 @@
     competitivenessGenerating = true;
     competitivenessError = '';
     try {
-      const nextState = await reportBackend.generateReportCompetitiveness(
+      const nextState = await backend.generateReportCompetitiveness(
         [...selectedKeywordKeys],
         competitivenessState?.status !== 'missing'
       );
@@ -286,7 +258,7 @@
     interviewGenerating = true;
     interviewError = '';
     try {
-      const nextState = await reportBackend.generateInterviewPreparation(
+      const nextState = await backend.generateInterviewPreparation(
         keywordKeys,
         interviewState?.status !== 'missing'
       );
@@ -312,7 +284,7 @@
         extension: 'html'
       });
       if (!outputPath) return;
-      const result = await reportBackend.exportJobDataReport([...selectedKeywordKeys], outputPath);
+      const result = await backend.exportJobDataReport([...selectedKeywordKeys], outputPath);
       exportMessage = `已导出：${result.path}`;
     } catch (reason) {
       exportMessage = reason instanceof Error ? reason.message : String(reason);

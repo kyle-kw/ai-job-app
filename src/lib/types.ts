@@ -311,7 +311,7 @@ export interface AppInfo {
   os: string;
   arch: string;
   webview: string;
-  schemaVersion: number;
+  schemaVersion: number | null;
   sidecarProtocol: string;
   chrome: ChromeStatus;
   dataDir: string;

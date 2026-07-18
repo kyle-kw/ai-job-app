@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { replaceState } from '$app/navigation';
 import { mockJobs } from '$lib/mock-data';
 import { buildClientJobDataReport } from '$lib/report';
 import { backend } from '$lib/services/backend';
@@ -10,6 +11,13 @@ import type {
   ReportCompetitivenessState
 } from '$lib/types';
 import ReportPage from './+page.svelte';
+
+const navigationMocks = vi.hoisted(() => ({
+  replaceState: vi.fn((url: string | URL, state: object) => {
+    window.history.replaceState(state, '', url);
+  })
+}));
+vi.mock('$app/navigation', () => ({ replaceState: navigationMocks.replaceState }));
 
 const exportFileMocks = vi.hoisted(() => ({ choosePath: vi.fn<() => Promise<string | null>>() }));
 vi.mock('$lib/export-file', () => ({
@@ -135,7 +143,7 @@ const generateReportCompetitiveness =
 
 describe('full job data report page', () => {
   beforeEach(() => {
-    window.history.replaceState({}, '', '/');
+    replaceState('/', {});
     Object.assign(backend, {
       listReportKeywords,
       getJobDataReport,
@@ -160,7 +168,7 @@ describe('full job data report page', () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
-    window.history.replaceState({}, '', '/');
+    replaceState('/', {});
   });
 
   it('keeps local analytics available and offers a general plan without a resume', async () => {
@@ -284,7 +292,7 @@ describe('full job data report page', () => {
   });
 
   it('restores valid URL state, silently removes the old window parameter, and exposes drilldowns', async () => {
-    window.history.replaceState({}, '', '/reports?keyword=ai-agent&keyword=missing&window=30');
+    replaceState('/reports?keyword=ai-agent&keyword=missing&window=30', {});
     render(ReportPage);
 
     await screen.findByText('最近两次同条件样本对比');

@@ -1,5 +1,6 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { Channel, invoke } from '@tauri-apps/api/core';
+import packageMetadata from '../../../package.json';
 import { mockJobs, mockResume, mockSnapshot } from '$lib/mock-data';
 import { deterministicFit } from '$lib/fit';
 import { filterJobs, sortJobs } from '$lib/job-filters';
@@ -210,19 +211,6 @@ export const backend = {
         .map(({ id, title, company, lastSeen }) => ({ id, title, company, lastSeen }));
     }
     return invoke('list_job_options', { query });
-  },
-
-  async listJobCities(): Promise<string[]> {
-    if (browserMode()) {
-      return [
-        ...new Set(
-          mockJobsState
-            .map((job) => job.location.split('·', 1)[0]?.trim())
-            .filter(Boolean) as string[]
-        )
-      ].sort((left, right) => left.localeCompare(right, 'zh-CN'));
-    }
-    return invoke('list_job_cities');
   },
 
   async listJobFilterOptions(): Promise<JobFilterOptions> {
@@ -1307,12 +1295,12 @@ export const backend = {
   async getAppInfo(): Promise<AppInfo> {
     if (browserMode()) {
       return {
-        version: '0.2.0',
+        version: packageMetadata.version,
         identifier: 'io.github.aijobapp',
         os: 'browser',
         arch: 'demo',
         webview: navigator.userAgent,
-        schemaVersion: 7,
+        schemaVersion: null,
         sidecarProtocol: 'demo',
         chrome: { installed: true, version: '浏览器演示', executablePath: null },
         dataDir: '<browser-demo>',

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { latestSuccessfulScrapeKeyword } from './scrape-history';
+import { latestCompletedScrapeRun, latestNonEmptyScrapeRun } from './scrape-history';
 import type { ScrapeRun } from './types';
 
 const run = (overrides: Partial<ScrapeRun>): ScrapeRun => ({
@@ -14,20 +14,32 @@ const run = (overrides: Partial<ScrapeRun>): ScrapeRun => ({
   ...overrides
 });
 
-describe('latestSuccessfulScrapeKeyword', () => {
-  it('returns empty when there is no completed scrape', () => {
-    expect(latestSuccessfulScrapeKeyword([])).toBe('');
-    expect(latestSuccessfulScrapeKeyword([run({ keyword: '失败尝试', completedAt: null })])).toBe(
-      ''
-    );
+describe('scrape history selectors', () => {
+  it('returns null when there is no completed scrape with a keyword', () => {
+    expect(latestCompletedScrapeRun([])).toBeNull();
+    expect(latestCompletedScrapeRun([run({ completedAt: null })])).toBeNull();
+    expect(latestCompletedScrapeRun([run({ keyword: '   ' })])).toBeNull();
   });
 
-  it('uses the newest completed non-empty keyword regardless of array order', () => {
+  it('selects the latest completed run regardless of array order or result count', () => {
     const runs = [
-      run({ keyword: ' 数据分析 ', startedAt: '2026-07-12T08:00:00.000Z' }),
-      run({ keyword: '财务会计', startedAt: '2026-07-11T08:00:00.000Z' }),
-      run({ keyword: '   ', startedAt: '2026-07-13T08:00:00.000Z' })
+      run({ keyword: 'newest', totalSeen: 0, startedAt: '2026-07-12T08:00:00.000Z' }),
+      run({ keyword: 'older', startedAt: '2026-07-11T08:00:00.000Z' })
     ];
-    expect(latestSuccessfulScrapeKeyword(runs)).toBe('数据分析');
+    expect(latestCompletedScrapeRun(runs)?.keyword).toBe('newest');
+  });
+
+  it('skips completed zero-result runs for non-empty selection', () => {
+    const runs = [
+      run({ keyword: 'zero', totalSeen: 0, startedAt: '2026-07-13T08:00:00.000Z' }),
+      run({ keyword: 'non-empty', totalSeen: 2, startedAt: '2026-07-12T08:00:00.000Z' })
+    ];
+    expect(latestNonEmptyScrapeRun(runs)?.keyword).toBe('non-empty');
+  });
+
+  it('keeps the first input when timestamps are equal', () => {
+    const first = run({ keyword: 'first' });
+    const second = run({ keyword: 'second' });
+    expect(latestCompletedScrapeRun([first, second])).toBe(first);
   });
 });

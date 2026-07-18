@@ -213,11 +213,6 @@ pub fn list_job_options(
 }
 
 #[tauri::command]
-pub fn list_job_cities(state: State<'_, AppState>) -> Result<Vec<String>, String> {
-    state.db.list_job_cities()
-}
-
-#[tauri::command]
 pub fn list_job_filter_options(state: State<'_, AppState>) -> Result<JobFilterOptions, String> {
     state.db.list_job_filter_options()
 }

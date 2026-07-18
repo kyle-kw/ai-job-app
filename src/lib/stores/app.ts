@@ -1,4 +1,4 @@
-import { derived, get, writable } from 'svelte/store';
+import { derived, writable } from 'svelte/store';
 import { backend } from '$lib/services/backend';
 import type {
   AppSettings,
@@ -108,8 +108,4 @@ export async function savePreferences(preferences: JobPreferences) {
 export async function saveSettings(settings: AppSettings) {
   const saved = await backend.saveSettings(settings);
   snapshot.update((value) => ({ ...value, settings: saved }));
-}
-
-export function currentSnapshot() {
-  return get(snapshot);
 }

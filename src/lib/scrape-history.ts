@@ -5,13 +5,24 @@ function startedAtMillis(run: ScrapeRun): number {
   return Number.isFinite(value) ? value : Number.NEGATIVE_INFINITY;
 }
 
-export function latestSuccessfulScrapeKeyword(runs: readonly ScrapeRun[]): string {
-  const latest = runs
-    .filter((run) => Boolean(run.completedAt) && Boolean(run.keyword.trim()))
-    .reduce<ScrapeRun | null>((selected, run) => {
-      if (!selected || startedAtMillis(run) > startedAtMillis(selected)) return run;
-      return selected;
-    }, null);
+function latestRun(
+  runs: readonly ScrapeRun[],
+  predicate: (run: ScrapeRun) => boolean
+): ScrapeRun | null {
+  return runs.reduce<ScrapeRun | null>((selected, run) => {
+    if (!predicate(run)) return selected;
+    if (!selected || startedAtMillis(run) > startedAtMillis(selected)) return run;
+    return selected;
+  }, null);
+}
 
-  return latest?.keyword.trim() ?? '';
+export function latestCompletedScrapeRun(runs: readonly ScrapeRun[]): ScrapeRun | null {
+  return latestRun(runs, (run) => Boolean(run.completedAt) && Boolean(run.keyword.trim()));
+}
+
+export function latestNonEmptyScrapeRun(runs: readonly ScrapeRun[]): ScrapeRun | null {
+  return latestRun(
+    runs,
+    (run) => Boolean(run.completedAt) && Boolean(run.keyword.trim()) && run.totalSeen > 0
+  );
 }

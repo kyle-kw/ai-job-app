@@ -1,9 +1,17 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { replaceState } from '$app/navigation';
 import { mockJobs, mockSnapshot } from '$lib/mock-data';
 import { backend } from '$lib/services/backend';
 import { snapshot } from '$lib/stores/app';
 import JobPage from './+page.svelte';
+
+const navigationMocks = vi.hoisted(() => ({
+  replaceState: vi.fn((url: string | URL, state: object) => {
+    window.history.replaceState(state, '', url);
+  })
+}));
+vi.mock('$app/navigation', () => ({ replaceState: navigationMocks.replaceState }));
 
 const cities = [
   '北京',
@@ -37,7 +45,7 @@ describe('job scraping controls', () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
-    window.history.replaceState({}, '', '/');
+    replaceState('/', {});
   });
 
   it('shows the popular city list, defaults to one page, and updates the estimate', async () => {
@@ -404,10 +412,9 @@ describe('job scraping controls', () => {
   });
 
   it('restores report drilldown filters while dropping the obsolete window state', async () => {
-    window.history.replaceState(
-      {},
-      '',
-      '/jobs?from=report&window=30&keyword=ai-agent&keyword=data-analysis&skill=Python&skill=RAG&experience=3-5%E5%B9%B4&salaryBand=25-35'
+    replaceState(
+      '/jobs?from=report&window=30&keyword=ai-agent&keyword=data-analysis&skill=Python&skill=RAG&experience=3-5%E5%B9%B4&salaryBand=25-35',
+      {}
     );
     snapshot.set(structuredClone(mockSnapshot));
     vi.spyOn(backend, 'listJobFilterOptions').mockResolvedValue({

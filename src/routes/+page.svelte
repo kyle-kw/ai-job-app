@@ -21,6 +21,7 @@
   import JobSearchDialog from '$lib/components/JobSearchDialog.svelte';
   import MarkdownView from '$lib/components/MarkdownView.svelte';
   import { availableProviderConfigs } from '$lib/provider-policy';
+  import { latestNonEmptyScrapeRun } from '$lib/scrape-history';
   import { createSearchSpec } from '$lib/search-spec';
   import { backend } from '$lib/services/backend';
   import { loading, refresh, snapshot, startScrape } from '$lib/stores/app';
@@ -83,7 +84,7 @@
     llmResult = null;
     llmError = '';
   }
-  $: latestRun = $snapshot.scrapeRuns.find((run) => Boolean(run.completedAt) && run.totalSeen > 0);
+  $: latestRun = latestNonEmptyScrapeRun($snapshot.scrapeRuns);
   $: topJobs = dashboardPage?.items.slice(0, 3) ?? [];
   $: scrapeTaskRunning =
     scraping ||

@@ -26,6 +26,7 @@
   import { chooseLocalExportPath, localExportStamp } from '$lib/export-file';
   import { COMPANY_SCALE_FILTER_OPTIONS, type CompanyScaleFilterCode } from '$lib/job-filters';
   import { backend } from '$lib/services/backend';
+  import { latestCompletedScrapeRun } from '$lib/scrape-history';
   import { createSearchSpec } from '$lib/search-spec';
   import { refresh, snapshot, startScrape } from '$lib/stores/app';
   import type {
@@ -169,7 +170,7 @@
     $snapshot.tasks.some(
       (task) => task.kind === 'scrape' && (task.state === 'queued' || task.state === 'running')
     );
-  $: latestCompletedScrape = $snapshot.scrapeRuns.find((run) => Boolean(run.completedAt));
+  $: latestCompletedScrape = latestCompletedScrapeRun($snapshot.scrapeRuns);
   $: hasActiveFilters = Boolean(
     query.trim() ||
     minScore ||
@@ -439,11 +440,7 @@
     if (experienceFilter) url.searchParams.set('experience', experienceFilter);
     if (salaryBandFilter) url.searchParams.set('salaryBand', salaryBandFilter);
     const nextUrl = `${url.pathname}${url.search}${url.hash}`;
-    try {
-      replaceState(nextUrl, {});
-    } catch {
-      window.history.replaceState(window.history.state, '', nextUrl);
-    }
+    replaceState(nextUrl, {});
   }
 
   function reportReturnHref() {
