@@ -5,13 +5,25 @@ import { buildLocalResumeCoverage, coverageRequirements } from '$lib/resume-cove
 describe('local resume coverage', () => {
   it('separates resume evidence, confirmed facts, real skill gaps and semantic unknowns', () => {
     const resume = structuredClone(mockResume);
-    resume.professionalSkills = resume.professionalSkills.map((group) => ({ ...group, items: group.items.filter((item) => item !== 'Docker') }));
-    resume.experiences = resume.experiences.map((item) => ({ ...item, highlights: item.highlights.map((value) => value.replace('Docker', '容器')) }));
-    const report = buildLocalResumeCoverage(mockJobs[0], { kind: 'variant', id: 'variant' }, resume);
+    resume.professionalSkills = resume.professionalSkills.map((group) => ({
+      ...group,
+      items: group.items.filter((item) => item !== 'Docker')
+    }));
+    resume.experiences = resume.experiences.map((item) => ({
+      ...item,
+      highlights: item.highlights.map((value) => value.replace('Docker', '容器'))
+    }));
+    const report = buildLocalResumeCoverage(
+      mockJobs[0],
+      { kind: 'variant', id: 'variant' },
+      resume
+    );
 
     expect(report.items.find((item) => item.label === 'Python')?.status).toBe('covered');
     expect(report.items.find((item) => item.label === 'Docker')?.status).toBe('strengthenable');
-    expect(report.items.some((item) => item.kind === 'requirement' && item.status === 'unknown')).toBe(true);
+    expect(
+      report.items.some((item) => item.kind === 'requirement' && item.status === 'unknown')
+    ).toBe(true);
   });
 
   it('does not count a longer ASCII token as an exact skill match', () => {
@@ -23,7 +35,12 @@ describe('local resume coverage', () => {
     resume.education = [];
     resume.certifications = [];
     resume.facts = [];
-    const job = { ...structuredClone(mockJobs[0]), structuredDetails: undefined, description: '', skills: ['Java'] };
+    const job = {
+      ...structuredClone(mockJobs[0]),
+      structuredDetails: undefined,
+      description: '',
+      skills: ['Java']
+    };
 
     const report = buildLocalResumeCoverage(job, { kind: 'variant', id: 'variant' }, resume);
 

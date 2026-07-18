@@ -1,6 +1,13 @@
 import { derived, get, writable } from 'svelte/store';
 import { backend } from '$lib/services/backend';
-import type { AppSettings, BootstrapSnapshot, ImportResumePayload, JobPreferences, SearchSpec, TaskEvent } from '$lib/types';
+import type {
+  AppSettings,
+  BootstrapSnapshot,
+  ImportResumePayload,
+  JobPreferences,
+  SearchSpec,
+  TaskEvent
+} from '$lib/types';
 
 const empty: BootstrapSnapshot = {
   readiness: { ai: false, resume: false, boss: false },
@@ -8,8 +15,17 @@ const empty: BootstrapSnapshot = {
     boss: { state: 'needs_setup', message: '需要配置 BOSS 专用浏览器。' },
     llm: { state: 'needs_setup', message: '需要配置默认模型。' }
   },
-  resume: null, providers: [], tasks: [], scrapeRuns: [], lastSearchSpec: null,
-  settings: { advancedMode: false, automaticUpdateChecks: true, privacyAcknowledgedVersion: null, lastUpdateCheckAt: null }
+  resume: null,
+  providers: [],
+  tasks: [],
+  scrapeRuns: [],
+  lastSearchSpec: null,
+  settings: {
+    advancedMode: false,
+    automaticUpdateChecks: true,
+    privacyAcknowledgedVersion: null,
+    lastUpdateCheckAt: null
+  }
 };
 
 export const snapshot = writable<BootstrapSnapshot>(empty);
@@ -18,8 +34,12 @@ export const appError = writable<string | null>(null);
 let unlisten: (() => void) | null = null;
 let bootstrapRequestId = 0;
 
-export const runningTasks = derived(snapshot, ($snapshot) => $snapshot.tasks.filter((task) => task.state === 'queued' || task.state === 'running'));
-export const completedTasks = derived(snapshot, ($snapshot) => $snapshot.tasks.filter((task) => task.state === 'completed' || task.state === 'failed'));
+export const runningTasks = derived(snapshot, ($snapshot) =>
+  $snapshot.tasks.filter((task) => task.state === 'queued' || task.state === 'running')
+);
+export const completedTasks = derived(snapshot, ($snapshot) =>
+  $snapshot.tasks.filter((task) => task.state === 'completed' || task.state === 'failed')
+);
 
 function mergeTask(event: TaskEvent) {
   snapshot.update((value) => {
@@ -29,7 +49,8 @@ function mergeTask(event: TaskEvent) {
     else tasks.unshift(event);
     return { ...value, tasks };
   });
-  if (event.state === 'completed' || event.state === 'failed' || event.state === 'cancelled') void refresh();
+  if (event.state === 'completed' || event.state === 'failed' || event.state === 'cancelled')
+    void refresh();
 }
 
 export async function initialize() {
@@ -44,7 +65,8 @@ export async function initialize() {
     unlisten?.();
     unlisten = await backend.onTaskEvent(mergeTask);
   } catch (error) {
-    if (requestId === bootstrapRequestId) appError.set(error instanceof Error ? error.message : String(error));
+    if (requestId === bootstrapRequestId)
+      appError.set(error instanceof Error ? error.message : String(error));
   } finally {
     if (requestId === bootstrapRequestId) loading.set(false);
   }
@@ -58,7 +80,8 @@ export async function refresh() {
     snapshot.set(value);
     appError.set(null);
   } catch (error) {
-    if (requestId === bootstrapRequestId) appError.set(error instanceof Error ? error.message : String(error));
+    if (requestId === bootstrapRequestId)
+      appError.set(error instanceof Error ? error.message : String(error));
   }
 }
 

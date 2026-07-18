@@ -12,12 +12,16 @@ function updateJson(path, mutate) {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
 }
 
-updateJson('package.json', (value) => { value.version = version; });
+updateJson('package.json', (value) => {
+  value.version = version;
+});
 updateJson('package-lock.json', (value) => {
   value.version = version;
   value.packages[''].version = version;
 });
-updateJson('src-tauri/tauri.conf.json', (value) => { value.version = version; });
+updateJson('src-tauri/tauri.conf.json', (value) => {
+  value.version = version;
+});
 
 for (const path of ['src-tauri/Cargo.toml', 'sidecar/pyproject.toml']) {
   const source = readFileSync(path, 'utf8');
@@ -38,7 +42,11 @@ for (const path of ['src-tauri/Cargo.toml', 'sidecar/pyproject.toml']) {
 }
 
 for (const [path, pattern, replacement] of [
-  ['sidecar/uv.lock', /(\[\[package\]\]\s*name\s*=\s*"ai-job-app-sidecar"\s*version\s*=\s*)"[^"]+"/m, `$1"${version}"`],
+  [
+    'sidecar/uv.lock',
+    /(\[\[package\]\]\s*name\s*=\s*"ai-job-app-sidecar"\s*version\s*=\s*)"[^"]+"/m,
+    `$1"${version}"`
+  ],
   ['sidecar/worker.py', /^APP_VERSION\s*=\s*"[^"]+"/m, `APP_VERSION = "${version}"`]
 ]) {
   const source = readFileSync(path, 'utf8');

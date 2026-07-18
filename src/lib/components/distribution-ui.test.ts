@@ -24,7 +24,10 @@ describe('public beta distribution UI', () => {
     const onAccept = vi.fn();
     const onExit = vi.fn();
     render(PrivacyGate, { accepting: false, onAccept, onExit });
-    expect(screen.getByRole('dialog', { name: '隐私与使用说明' })).toHaveAttribute('aria-modal', 'true');
+    expect(screen.getByRole('dialog', { name: '隐私与使用说明' })).toHaveAttribute(
+      'aria-modal',
+      'true'
+    );
     expect(screen.getByText(/不会检查更新、访问 BOSS/)).toBeInTheDocument();
     await fireEvent.click(screen.getByRole('button', { name: '同意并继续' }));
     await fireEvent.click(screen.getByRole('button', { name: '退出应用' }));
@@ -35,13 +38,27 @@ describe('public beta distribution UI', () => {
   it('protects active tasks from update installation', () => {
     snapshot.set({
       ...structuredClone(mockSnapshot),
-      tasks: [{
-        id: 'task', kind: 'fit', title: '分析', state: 'running', progress: 10,
-        message: '运行中', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), logs: []
-      }]
+      tasks: [
+        {
+          id: 'task',
+          kind: 'fit',
+          title: '分析',
+          state: 'running',
+          progress: 10,
+          message: '运行中',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          logs: []
+        }
+      ]
     });
     render(UpdateDialog, {
-      update: { version: '0.2.1', currentVersion: '0.2.0', notes: '安全更新', downloadSize: 10 * 1024 * 1024 },
+      update: {
+        version: '0.2.1',
+        currentVersion: '0.2.0',
+        notes: '安全更新',
+        downloadSize: 10 * 1024 * 1024
+      },
       onLater: vi.fn()
     });
     expect(screen.getByText('安全更新')).toBeInTheDocument();
@@ -62,15 +79,19 @@ describe('public beta distribution UI', () => {
   });
 
   it('does not bootstrap a deleted database after clearing all data', () => {
-    expect(shouldReloadAfterClear({
-      complete: true,
-      items: [{ item: 'applicationData', ok: true, message: '已清除' }],
-      restartRequired: true
-    })).toBe(false);
-    expect(shouldReloadAfterClear({
-      complete: true,
-      items: [{ item: 'modelKeys', ok: true, message: '已清除' }],
-      restartRequired: false
-    })).toBe(true);
+    expect(
+      shouldReloadAfterClear({
+        complete: true,
+        items: [{ item: 'applicationData', ok: true, message: '已清除' }],
+        restartRequired: true
+      })
+    ).toBe(false);
+    expect(
+      shouldReloadAfterClear({
+        complete: true,
+        items: [{ item: 'modelKeys', ok: true, message: '已清除' }],
+        restartRequired: false
+      })
+    ).toBe(true);
   });
 });

@@ -73,7 +73,10 @@ export function jobCity(location: string): string {
 }
 
 export function parseSalaryRange(value: string): NumericRange | null {
-  const normalized = value.trim().replace(/,/g, '').replace(/－|—|–|~|～|至/g, '-');
+  const normalized = value
+    .trim()
+    .replace(/,/g, '')
+    .replace(/－|—|–|~|～|至/g, '-');
   if (!normalized || /面议|保密|待定|negotiable/i.test(normalized)) return null;
 
   const range = normalized.match(/(\d+(?:\.\d+)?)\s*(?:K|千)?\s*-\s*(\d+(?:\.\d+)?)\s*(?:K|千)/i);
@@ -124,7 +127,8 @@ export function normalizeCompanyScale(value: string): CompanyScaleFilterCode {
     .replace(/，/g, ',');
   if (!normalized || /不限|未知|未标注|面议/.test(normalized)) return '';
 
-  if (/^(?:0|1)?-?20人(?:以下|以内)?$|^(?:少于|小于|不满)20人$|^20人以下$/.test(normalized)) return '301';
+  if (/^(?:0|1)?-?20人(?:以下|以内)?$|^(?:少于|小于|不满)20人$|^20人以下$/.test(normalized))
+    return '301';
   if (/^20-99人$|^20-100人$/.test(normalized)) return '302';
   if (/^100-499人$|^100-500人$/.test(normalized)) return '303';
   if (/^500-999人$|^500-1000人$/.test(normalized)) return '304';
@@ -140,20 +144,24 @@ export function matchesCompanyScaleFilter(value: string, code: CompanyScaleFilte
 
 export function filterJobs<T extends FilterableJob>(jobs: T[], filters: LocalJobFilters): T[] {
   const query = filters.query.trim().toLocaleLowerCase();
-  const requiredSkills = (filters.skills ?? []).map((skill) => skill.trim().toLocaleLowerCase()).filter(Boolean);
+  const requiredSkills = (filters.skills ?? [])
+    .map((skill) => skill.trim().toLocaleLowerCase())
+    .filter(Boolean);
   return jobs.filter((job) => {
     const searchable = `${job.title} ${job.company} ${job.skills.join(' ')}`.toLocaleLowerCase();
     const skills = new Set(job.skills.map((skill) => skill.trim().toLocaleLowerCase()));
-    return (!query || searchable.includes(query))
-      && (job.fit?.overallScore ?? 0) >= filters.minScore
-      && (!filters.onlyNew || job.isNew)
-      && matchesSalaryFilter(job.salary, filters.salary)
-      && matchesCompanyScaleFilter(job.companyScale, filters.companyScale)
-      && (!filters.city || jobCity(job.location) === filters.city)
-      && (!filters.experience || (job.experience ?? '').trim() === filters.experience.trim())
-      && matchesReportSalaryBand(job.salary, filters.salaryBand)
-      && requiredSkills.every((skill) => skills.has(skill))
-      && (!filters.missingDescription || !job.description.trim());
+    return (
+      (!query || searchable.includes(query)) &&
+      (job.fit?.overallScore ?? 0) >= filters.minScore &&
+      (!filters.onlyNew || job.isNew) &&
+      matchesSalaryFilter(job.salary, filters.salary) &&
+      matchesCompanyScaleFilter(job.companyScale, filters.companyScale) &&
+      (!filters.city || jobCity(job.location) === filters.city) &&
+      (!filters.experience || (job.experience ?? '').trim() === filters.experience.trim()) &&
+      matchesReportSalaryBand(job.salary, filters.salaryBand) &&
+      requiredSkills.every((skill) => skills.has(skill)) &&
+      (!filters.missingDescription || !job.description.trim())
+    );
   });
 }
 
@@ -181,8 +189,12 @@ export function sortJobs<T extends SortableJob>(jobs: T[], sort: JobSort = 'reco
       if (!leftSalary && rightSalary) return 1;
       if (leftSalary && !rightSalary) return -1;
       if (leftSalary && rightSalary) {
-        const leftMidpoint = Number.isFinite(leftSalary.max) ? (leftSalary.min + leftSalary.max) / 2 : leftSalary.min;
-        const rightMidpoint = Number.isFinite(rightSalary.max) ? (rightSalary.min + rightSalary.max) / 2 : rightSalary.min;
+        const leftMidpoint = Number.isFinite(leftSalary.max)
+          ? (leftSalary.min + leftSalary.max) / 2
+          : leftSalary.min;
+        const rightMidpoint = Number.isFinite(rightSalary.max)
+          ? (rightSalary.min + rightSalary.max) / 2
+          : rightSalary.min;
         if (leftMidpoint !== rightMidpoint) return rightMidpoint - leftMidpoint;
       }
       return compareScore(left, right) || compareLastSeen(left, right) || compareId(left, right);

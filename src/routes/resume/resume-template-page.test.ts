@@ -22,7 +22,9 @@ describe('resume template examples', () => {
     await fireEvent.click(within(dataCard!).getByRole('button', { name: '查看完整示例' }));
 
     expect(screen.getByRole('dialog', { name: '数据分析简历' })).toBeInTheDocument();
-    expect(screen.getByText('示例内容，请勿直接用于投递。示例不会写入主简历或事实库。')).toBeInTheDocument();
+    expect(
+      screen.getByText('示例内容，请勿直接用于投递。示例不会写入主简历或事实库。')
+    ).toBeInTheDocument();
     expect(screen.getByText(/星河零售（示例公司）/)).toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole('button', { name: '关闭' }));

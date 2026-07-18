@@ -12,9 +12,7 @@ export function rustEnvironment() {
   const cargoHome = env.CARGO_HOME || join(homedir(), '.cargo');
   const cargoBin = join(cargoHome, 'bin');
   const pathKey = Object.keys(env).find((key) => key.toLowerCase() === 'path');
-  const pathEntries = (pathKey ? env[pathKey] : '')
-    .split(delimiter)
-    .filter(Boolean);
+  const pathEntries = (pathKey ? env[pathKey] : '').split(delimiter).filter(Boolean);
   const requiredEntries = [dirname(process.execPath)];
 
   if (existsSync(cargoExecutable(cargoBin))) {
@@ -25,13 +23,10 @@ export function rustEnvironment() {
     if (key.toLowerCase() === 'path') delete env[key];
   }
 
-  const normalized = (value) =>
-    process.platform === 'win32' ? value.toLowerCase() : value;
+  const normalized = (value) => (process.platform === 'win32' ? value.toLowerCase() : value);
   const uniqueEntries = [...requiredEntries, ...pathEntries].filter(
     (entry, index, entries) =>
-      entries.findIndex(
-        (candidate) => normalized(candidate) === normalized(entry)
-      ) === index
+      entries.findIndex((candidate) => normalized(candidate) === normalized(entry)) === index
   );
   env.PATH = uniqueEntries.join(delimiter);
 
@@ -52,14 +47,10 @@ export function runTauri(args, options = {}) {
     return { status: 1 };
   }
 
-  return spawnSync(
-    process.execPath,
-    [resolve('node_modules/@tauri-apps/cli/tauri.js'), ...args],
-    {
-      stdio: 'inherit',
-      env,
-      windowsHide: false,
-      ...options
-    }
-  );
+  return spawnSync(process.execPath, [resolve('node_modules/@tauri-apps/cli/tauri.js'), ...args], {
+    stdio: 'inherit',
+    env,
+    windowsHide: false,
+    ...options
+  });
 }

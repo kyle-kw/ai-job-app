@@ -11,7 +11,9 @@ function readyState() {
   state.readiness.boss = true;
   state.configuration.boss.state = 'ready';
   state.configuration.llm.state = 'ready';
-  state.providers = state.providers.map((provider) => provider.isDefault ? { ...provider, verified: true } : provider);
+  state.providers = state.providers.map((provider) =>
+    provider.isDefault ? { ...provider, verified: true } : provider
+  );
   return state;
 }
 
@@ -34,15 +36,29 @@ describe('dashboard', () => {
     expect(screen.getByText('先完成两项必要配置')).toBeInTheDocument();
     expect(screen.getByText('登录 BOSS 直聘')).toBeInTheDocument();
     expect(screen.getByText('配置默认模型')).toBeInTheDocument();
-    expect(screen.getByText('配置未完成时，其他页面仍然可以正常查看。', { exact: false })).toBeInTheDocument();
+    expect(
+      screen.getByText('配置未完成时，其他页面仍然可以正常查看。', { exact: false })
+    ).toBeInTheDocument();
     expect(screen.queryByText('求职工作台')).not.toBeInTheDocument();
   });
 
   it('switches to the workbench and loads counts, matches, and the latest successful report', async () => {
     const state = readyState();
     state.scrapeRuns = [
-      { ...state.scrapeRuns[0], id: 'failed', keyword: '失败任务', totalSeen: 0, completedAt: null },
-      { ...state.scrapeRuns[0], id: 'successful', keyword: '数据分析', totalSeen: 42, reportMarkdown: '## 数据分析观察\n\n- Python 需求最多。' }
+      {
+        ...state.scrapeRuns[0],
+        id: 'failed',
+        keyword: '失败任务',
+        totalSeen: 0,
+        completedAt: null
+      },
+      {
+        ...state.scrapeRuns[0],
+        id: 'successful',
+        keyword: '数据分析',
+        totalSeen: 42,
+        reportMarkdown: '## 数据分析观察\n\n- Python 需求最多。'
+      }
     ];
     snapshot.set(state);
     render(Dashboard);
@@ -56,7 +72,10 @@ describe('dashboard', () => {
     expect(screen.getByText(/最近抓取 · 数据分析/)).toBeInTheDocument();
     expect(screen.getByText('本次岗位样本观察')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '数据分析观察' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: '管理连接' })).toHaveAttribute('href', '/settings#boss');
+    expect(screen.getByRole('link', { name: '管理连接' })).toHaveAttribute(
+      'href',
+      '/settings#boss'
+    );
   });
 
   it('falls back to recent jobs when no resume exists', async () => {
@@ -74,7 +93,12 @@ describe('dashboard', () => {
 
   it('shows an empty state when the local job library has no jobs', async () => {
     snapshot.set(readyState());
-    vi.spyOn(backend, 'listJobsPage').mockResolvedValue({ items: [], total: 0, pendingDetailCount: 0, nextCursor: null });
+    vi.spyOn(backend, 'listJobsPage').mockResolvedValue({
+      items: [],
+      total: 0,
+      pendingDetailCount: 0,
+      nextCursor: null
+    });
     render(Dashboard);
 
     expect(await screen.findByText('岗位库还是空的')).toBeInTheDocument();
@@ -83,7 +107,13 @@ describe('dashboard', () => {
   it('restores the same persisted search controls from the dashboard', async () => {
     const state = readyState();
     state.lastSearchSpec = {
-      keyword: '财务分析', city: '北京', pages: 3, experience: '106', salary: '406', degree: '', companyScale: '304'
+      keyword: '财务分析',
+      city: '北京',
+      pages: 3,
+      experience: '106',
+      salary: '406',
+      degree: '',
+      companyScale: '304'
     };
     snapshot.set(state);
     render(Dashboard);
@@ -101,17 +131,29 @@ describe('dashboard', () => {
   it('shows a retryable dashboard error and refreshes after a scrape finishes', async () => {
     snapshot.set(readyState());
     const listJobs = vi.spyOn(backend, 'listJobsPage');
-    listJobs.mockRejectedValueOnce(new Error('数据库暂时不可用')).mockRejectedValueOnce(new Error('数据库暂时不可用'));
+    listJobs
+      .mockRejectedValueOnce(new Error('数据库暂时不可用'))
+      .mockRejectedValueOnce(new Error('数据库暂时不可用'));
     render(Dashboard);
     expect(await screen.findByText(/看板数据加载失败：数据库暂时不可用/)).toBeInTheDocument();
 
     listJobs.mockResolvedValue({ items: [], total: 0, pendingDetailCount: 0, nextCursor: null });
     snapshot.update((state) => ({
       ...state,
-      tasks: [{
-        id: 'scrape-done', kind: 'scrape', title: '抓取完成', state: 'completed', progress: 100,
-        message: '抓取完成', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), logs: []
-      }, ...state.tasks]
+      tasks: [
+        {
+          id: 'scrape-done',
+          kind: 'scrape',
+          title: '抓取完成',
+          state: 'completed',
+          progress: 100,
+          message: '抓取完成',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          logs: []
+        },
+        ...state.tasks
+      ]
     }));
     await waitFor(() => expect(listJobs).toHaveBeenCalledTimes(4));
     await waitFor(() => expect(screen.queryByText(/看板数据加载失败/)).not.toBeInTheDocument());

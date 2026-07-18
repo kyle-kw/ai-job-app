@@ -3,7 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mockJobs } from '$lib/mock-data';
 import { buildClientJobDataReport } from '$lib/report';
 import { backend } from '$lib/services/backend';
-import type { InterviewPreparationState, JobDataReport, RenderResult, ReportCompetitivenessState } from '$lib/types';
+import type {
+  InterviewPreparationState,
+  JobDataReport,
+  RenderResult,
+  ReportCompetitivenessState
+} from '$lib/types';
 import ReportPage from './+page.svelte';
 
 const exportFileMocks = vi.hoisted(() => ({ choosePath: vi.fn<() => Promise<string | null>>() }));
@@ -14,7 +19,12 @@ vi.mock('$lib/export-file', () => ({
 
 const localReport = buildClientJobDataReport(mockJobs);
 const reportKeywords = [
-  { key: '__historical_unclassified__', label: '历史未分类', jobCount: 5, lastSeen: '2026-07-12T08:00:00.000Z' },
+  {
+    key: '__historical_unclassified__',
+    label: '历史未分类',
+    jobCount: 5,
+    lastSeen: '2026-07-12T08:00:00.000Z'
+  },
   { key: 'ai-agent', label: 'AI Agent', jobCount: 18, lastSeen: '2026-07-10T08:00:00.000Z' },
   { key: 'data-analysis', label: '数据分析', jobCount: 12, lastSeen: '2026-07-11T08:00:00.000Z' }
 ];
@@ -36,8 +46,18 @@ const freshState: InterviewPreparationState = {
   preparation: {
     summary: '优先补齐 RAG 评测与系统设计表达，并准备一个可量化的落地案例。',
     skills: [
-      { name: 'RAG 评测', gap: '缺少离线评测方法的完整说明', action: '整理一套指标、数据集与误差分析流程。', jobCount: 2 },
-      { name: '系统设计', gap: '需要更清晰地解释取舍', action: '按容量、延迟、成本和可靠性演练架构题。', jobCount: 3 }
+      {
+        name: 'RAG 评测',
+        gap: '缺少离线评测方法的完整说明',
+        action: '整理一套指标、数据集与误差分析流程。',
+        jobCount: 2
+      },
+      {
+        name: '系统设计',
+        gap: '需要更清晰地解释取舍',
+        action: '按容量、延迟、成本和可靠性演练架构题。',
+        jobCount: 3
+      }
     ],
     projectIdeas: ['准备一个从检索基线到上线监控的完整项目案例。'],
     practiceQuestions: ['如何定位 RAG 系统中召回率下降的原因？']
@@ -63,10 +83,18 @@ const localCompetitivenessState: ReportCompetitivenessState = {
     resumeId: 'resume-master',
     resumeVersion: 3,
     generatedAt: '2026-07-16T08:00:00.000Z',
-    items: [{
-      id: 'report-skill-1', label: 'Python', jobCount: 4, percentage: 80,
-      status: 'covered', resumePaths: ['/summary'], evidenceFactIds: [], rationale: '主简历正文中已有明确表达。'
-    }]
+    items: [
+      {
+        id: 'report-skill-1',
+        label: 'Python',
+        jobCount: 4,
+        percentage: 80,
+        status: 'covered',
+        resumePaths: ['/summary'],
+        evidenceFactIds: [],
+        rationale: '主简历正文中已有明确表达。'
+      }
+    ]
   },
   ai: null,
   effectiveSource: 'local'
@@ -82,33 +110,46 @@ const freshCompetitivenessState: ReportCompetitivenessState = {
     ...localCompetitivenessState.local!,
     source: 'ai',
     generatedAt: '2026-07-16T09:00:00.000Z',
-    items: [{
-      ...localCompetitivenessState.local!.items[0],
-      rationale: 'AI 语义复核确认了项目中的 Python 证据。'
-    }]
+    items: [
+      {
+        ...localCompetitivenessState.local!.items[0],
+        rationale: 'AI 语义复核确认了项目中的 Python 证据。'
+      }
+    ]
   },
   effectiveSource: 'ai'
 };
 
 const listReportKeywords = vi.fn<() => Promise<typeof reportKeywords>>();
 const getJobDataReport = vi.fn<(keywordKeys: string[]) => Promise<JobDataReport>>();
-const exportJobDataReport = vi.fn<(keywordKeys: string[], outputPath: string) => Promise<RenderResult>>();
-const getInterviewPreparationState = vi.fn<(keywordKeys: string[]) => Promise<InterviewPreparationState>>();
-const generateInterviewPreparation = vi.fn<(keywordKeys: string[], force?: boolean) => Promise<InterviewPreparationState>>();
-const getReportCompetitivenessState = vi.fn<(keywordKeys: string[]) => Promise<ReportCompetitivenessState>>();
-const generateReportCompetitiveness = vi.fn<(keywordKeys: string[], force?: boolean) => Promise<ReportCompetitivenessState>>();
+const exportJobDataReport =
+  vi.fn<(keywordKeys: string[], outputPath: string) => Promise<RenderResult>>();
+const getInterviewPreparationState =
+  vi.fn<(keywordKeys: string[]) => Promise<InterviewPreparationState>>();
+const generateInterviewPreparation =
+  vi.fn<(keywordKeys: string[], force?: boolean) => Promise<InterviewPreparationState>>();
+const getReportCompetitivenessState =
+  vi.fn<(keywordKeys: string[]) => Promise<ReportCompetitivenessState>>();
+const generateReportCompetitiveness =
+  vi.fn<(keywordKeys: string[], force?: boolean) => Promise<ReportCompetitivenessState>>();
 
 describe('full job data report page', () => {
   beforeEach(() => {
     window.history.replaceState({}, '', '/');
     Object.assign(backend, {
-      listReportKeywords, getJobDataReport, exportJobDataReport,
-      getInterviewPreparationState, generateInterviewPreparation,
-      getReportCompetitivenessState, generateReportCompetitiveness
+      listReportKeywords,
+      getJobDataReport,
+      exportJobDataReport,
+      getInterviewPreparationState,
+      generateInterviewPreparation,
+      getReportCompetitivenessState,
+      generateReportCompetitiveness
     });
     listReportKeywords.mockReset().mockResolvedValue(reportKeywords);
     getJobDataReport.mockReset().mockResolvedValue(localReport);
-    exportJobDataReport.mockReset().mockResolvedValue({ path: 'C:\\tmp\\report.html', fileName: 'report.html' });
+    exportJobDataReport
+      .mockReset()
+      .mockResolvedValue({ path: 'C:\\tmp\\report.html', fileName: 'report.html' });
     exportFileMocks.choosePath.mockReset().mockResolvedValue('C:\\tmp\\report.html');
     getInterviewPreparationState.mockReset().mockResolvedValue(missingGeneralState);
     generateInterviewPreparation.mockReset().mockResolvedValue(freshState);
@@ -156,7 +197,9 @@ describe('full job data report page', () => {
     expect(await screen.findByText('这是岗位数据变化前生成的准备建议。')).toBeInTheDocument();
     await fireEvent.click(screen.getByRole('button', { name: '刷新建议' }));
 
-    await waitFor(() => expect(generateInterviewPreparation).toHaveBeenCalledWith(['data-analysis'], true));
+    await waitFor(() =>
+      expect(generateInterviewPreparation).toHaveBeenCalledWith(['data-analysis'], true)
+    );
     expect(await screen.findByText(freshState.preparation!.summary)).toBeInTheDocument();
     expect(screen.queryByText('这是岗位数据变化前生成的准备建议。')).not.toBeInTheDocument();
   });
@@ -195,14 +238,26 @@ describe('full job data report page', () => {
     await screen.findByText('技能需求与共现组合');
 
     await fireEvent.click(screen.getByRole('checkbox', { name: /AI Agent/ }));
-    await waitFor(() => expect(getJobDataReport).toHaveBeenLastCalledWith(['ai-agent', 'data-analysis']));
+    await waitFor(() =>
+      expect(getJobDataReport).toHaveBeenLastCalledWith(['ai-agent', 'data-analysis'])
+    );
     expect(getInterviewPreparationState).toHaveBeenLastCalledWith(['ai-agent', 'data-analysis']);
 
     await fireEvent.click(screen.getByRole('button', { name: '生成 AI 面试准备' }));
-    await waitFor(() => expect(generateInterviewPreparation).toHaveBeenCalledWith(['ai-agent', 'data-analysis'], false));
+    await waitFor(() =>
+      expect(generateInterviewPreparation).toHaveBeenCalledWith(
+        ['ai-agent', 'data-analysis'],
+        false
+      )
+    );
 
     await fireEvent.click(screen.getByRole('button', { name: '导出 HTML' }));
-    await waitFor(() => expect(exportJobDataReport).toHaveBeenCalledWith(['ai-agent', 'data-analysis'], 'C:\\tmp\\report.html'));
+    await waitFor(() =>
+      expect(exportJobDataReport).toHaveBeenCalledWith(
+        ['ai-agent', 'data-analysis'],
+        'C:\\tmp\\report.html'
+      )
+    );
   });
 
   it('does not invoke report export when the save dialog is cancelled', async () => {
@@ -250,7 +305,9 @@ describe('full job data report page', () => {
     expect(drilldown.searchParams.getAll('skill')).toEqual(['Python']);
 
     await fireEvent.click(screen.getByRole('button', { name: '导出 HTML' }));
-    await waitFor(() => expect(exportJobDataReport).toHaveBeenCalledWith(['ai-agent'], 'C:\\tmp\\report.html'));
+    await waitFor(() =>
+      expect(exportJobDataReport).toHaveBeenCalledWith(['ai-agent'], 'C:\\tmp\\report.html')
+    );
   });
 
   it('renders comparable batch deltas without treating missing ids as removed jobs', async () => {
@@ -258,11 +315,40 @@ describe('full job data report page', () => {
     getJobDataReport.mockResolvedValue({
       ...localReport,
       batchComparison: {
-        status: 'available', reason: null,
-        previous: { runId: 'previous', completedAt: '2026-07-15T10:00:00+08:00', searchSpec: spec, totalJobs: 4, detailCoverage: 50, salarySampleCount: 3, medianSalaryK: 25 },
-        current: { runId: 'current', completedAt: '2026-07-16T10:00:00+08:00', searchSpec: spec, totalJobs: 5, detailCoverage: 60, salarySampleCount: 4, medianSalaryK: 30 },
-        jobCountChangePercentage: 25, newlyObservedJobs: 2, notObservedJobs: 1, salaryMedianDeltaK: 5,
-        skillChanges: [{ label: 'Python', currentCount: 4, currentPercentage: 80, previousCount: 2, previousPercentage: 50, deltaPercentagePoints: 30 }]
+        status: 'available',
+        reason: null,
+        previous: {
+          runId: 'previous',
+          completedAt: '2026-07-15T10:00:00+08:00',
+          searchSpec: spec,
+          totalJobs: 4,
+          detailCoverage: 50,
+          salarySampleCount: 3,
+          medianSalaryK: 25
+        },
+        current: {
+          runId: 'current',
+          completedAt: '2026-07-16T10:00:00+08:00',
+          searchSpec: spec,
+          totalJobs: 5,
+          detailCoverage: 60,
+          salarySampleCount: 4,
+          medianSalaryK: 30
+        },
+        jobCountChangePercentage: 25,
+        newlyObservedJobs: 2,
+        notObservedJobs: 1,
+        salaryMedianDeltaK: 5,
+        skillChanges: [
+          {
+            label: 'Python',
+            currentCount: 4,
+            currentPercentage: 80,
+            previousCount: 2,
+            previousPercentage: 50,
+            deltaPercentagePoints: 30
+          }
+        ]
       }
     });
     render(ReportPage);
@@ -275,14 +361,20 @@ describe('full job data report page', () => {
   });
 
   it('runs competitiveness AI only after an explicit click', async () => {
-    getReportCompetitivenessState.mockResolvedValue({ ...localCompetitivenessState, hasProvider: true, reason: null });
+    getReportCompetitivenessState.mockResolvedValue({
+      ...localCompetitivenessState,
+      hasProvider: true,
+      reason: null
+    });
     render(ReportPage);
 
     expect(await screen.findByText('主简历正文中已有明确表达。')).toBeInTheDocument();
     expect(generateReportCompetitiveness).not.toHaveBeenCalled();
     await fireEvent.click(screen.getByRole('button', { name: 'AI 语义分析' }));
 
-    await waitFor(() => expect(generateReportCompetitiveness).toHaveBeenCalledWith(['data-analysis'], false));
+    await waitFor(() =>
+      expect(generateReportCompetitiveness).toHaveBeenCalledWith(['data-analysis'], false)
+    );
     expect(await screen.findByText('AI 语义复核确认了项目中的 Python 证据。')).toBeInTheDocument();
   });
 
@@ -296,13 +388,19 @@ describe('full job data report page', () => {
     });
     render(ReportPage);
 
-    expect(await screen.findByText('旧 AI 结果未用于当前矩阵，下面已自动回退为最新本地结果。')).toBeInTheDocument();
+    expect(
+      await screen.findByText('旧 AI 结果未用于当前矩阵，下面已自动回退为最新本地结果。')
+    ).toBeInTheDocument();
     expect(screen.getByText('主简历正文中已有明确表达。')).toBeInTheDocument();
     expect(screen.queryByText('AI 语义复核确认了项目中的 Python 证据。')).not.toBeInTheDocument();
   });
 
   it('keeps the local matrix when competitiveness AI generation fails', async () => {
-    getReportCompetitivenessState.mockResolvedValue({ ...localCompetitivenessState, hasProvider: true, reason: null });
+    getReportCompetitivenessState.mockResolvedValue({
+      ...localCompetitivenessState,
+      hasProvider: true,
+      reason: null
+    });
     generateReportCompetitiveness.mockRejectedValue(new Error('语义分析服务暂时不可用'));
     render(ReportPage);
 
@@ -320,8 +418,26 @@ describe('full job data report page', () => {
       local: {
         ...localCompetitivenessState.local!,
         items: [
-          { id: 'strength', label: 'RAG', jobCount: 3, percentage: 60, status: 'strengthenable', resumePaths: [], evidenceFactIds: ['fact-rag'], rationale: '已确认事实中有证据。' },
-          { id: 'gap', label: 'Kubernetes', jobCount: 2, percentage: 40, status: 'gap', resumePaths: [], evidenceFactIds: [], rationale: '尚无候选人证据。' }
+          {
+            id: 'strength',
+            label: 'RAG',
+            jobCount: 3,
+            percentage: 60,
+            status: 'strengthenable',
+            resumePaths: [],
+            evidenceFactIds: ['fact-rag'],
+            rationale: '已确认事实中有证据。'
+          },
+          {
+            id: 'gap',
+            label: 'Kubernetes',
+            jobCount: 2,
+            percentage: 40,
+            status: 'gap',
+            resumePaths: [],
+            evidenceFactIds: [],
+            rationale: '尚无候选人证据。'
+          }
         ]
       }
     });
@@ -336,14 +452,25 @@ describe('full job data report page', () => {
       expect(url.searchParams.get('market')).toBe('1');
       expect(url.searchParams.getAll('keyword')).toEqual(['data-analysis']);
     }
-    expect(new URL(strengthLink.getAttribute('href')!, 'http://localhost').searchParams.getAll('focusSkill')).toEqual(['RAG']);
-    expect(new URL(gapLink.getAttribute('href')!, 'http://localhost').searchParams.getAll('focusSkill')).toEqual(['Kubernetes']);
+    expect(
+      new URL(strengthLink.getAttribute('href')!, 'http://localhost').searchParams.getAll(
+        'focusSkill'
+      )
+    ).toEqual(['RAG']);
+    expect(
+      new URL(gapLink.getAttribute('href')!, 'http://localhost').searchParams.getAll('focusSkill')
+    ).toEqual(['Kubernetes']);
   });
 
   it('offers a resume entry when no master resume exists', async () => {
     getReportCompetitivenessState.mockResolvedValue({
-      status: 'missing', reason: 'no_resume', hasProvider: true, hasResume: false,
-      local: null, ai: null, effectiveSource: null
+      status: 'missing',
+      reason: 'no_resume',
+      hasProvider: true,
+      hasResume: false,
+      local: null,
+      ai: null,
+      effectiveSource: null
     });
     render(ReportPage);
 

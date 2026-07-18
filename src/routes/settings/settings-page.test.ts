@@ -62,24 +62,36 @@ describe('settings page', () => {
     render(SettingsPage);
 
     await fireEvent.click(screen.getByRole('button', { name: '测试连接' }));
-    expect(await screen.findByText('本次仅测试连接；点击“验证并保存”后配置才会生效。')).toBeInTheDocument();
+    expect(
+      await screen.findByText('本次仅测试连接；点击“验证并保存”后配置才会生效。')
+    ).toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole('button', { name: '验证并保存' }));
     expect(await screen.findByText('配置已保存并生效。')).toBeInTheDocument();
-    expect(screen.queryByText('本次仅测试连接；点击“验证并保存”后配置才会生效。')).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('本次仅测试连接；点击“验证并保存”后配置才会生效。')
+    ).not.toBeInTheDocument();
   });
 
   it('persists disabling automatic update checks while keeping manual checks available', async () => {
     snapshot.set(readySnapshot());
-    const saveSettings = vi.spyOn(backend, 'saveSettings').mockImplementation(async (settings) => structuredClone(settings));
+    const saveSettings = vi
+      .spyOn(backend, 'saveSettings')
+      .mockImplementation(async (settings) => structuredClone(settings));
     render(SettingsPage);
 
     const automaticChecks = screen.getByRole('checkbox', { name: '自动检查更新' });
     expect(automaticChecks).toBeChecked();
     await fireEvent.click(automaticChecks);
-    expect(screen.getByText('自动检查已关闭。你仍可在“关于与诊断”中手动检查更新。')).toBeInTheDocument();
+    expect(
+      screen.getByText('自动检查已关闭。你仍可在“关于与诊断”中手动检查更新。')
+    ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '检查更新' })).toBeEnabled();
-    await waitFor(() => expect(saveSettings).toHaveBeenCalledWith(expect.objectContaining({ automaticUpdateChecks: false })));
+    await waitFor(() =>
+      expect(saveSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ automaticUpdateChecks: false })
+      )
+    );
     expect(screen.queryByRole('button', { name: '保存设置' })).not.toBeInTheDocument();
   });
 
@@ -87,7 +99,8 @@ describe('settings page', () => {
     const ready = readySnapshot();
     ready.settings.advancedMode = false;
     snapshot.set(ready);
-    const saveSettings = vi.spyOn(backend, 'saveSettings')
+    const saveSettings = vi
+      .spyOn(backend, 'saveSettings')
       .mockRejectedValueOnce(new Error('写入失败'))
       .mockImplementation(async (settings) => structuredClone(settings));
     render(SettingsPage);
@@ -96,13 +109,17 @@ describe('settings page', () => {
     expect(advancedMode).not.toBeChecked();
     await fireEvent.click(advancedMode);
 
-    await waitFor(() => expect(saveSettings).toHaveBeenCalledWith(expect.objectContaining({ advancedMode: true })));
+    await waitFor(() =>
+      expect(saveSettings).toHaveBeenCalledWith(expect.objectContaining({ advancedMode: true }))
+    );
     await waitFor(() => expect(advancedMode).not.toBeChecked());
     expect(await screen.findByText('自动保存失败：写入失败')).toBeInTheDocument();
 
     await fireEvent.click(advancedMode);
     await waitFor(() => expect(advancedMode).toBeChecked());
-    await waitFor(() => expect(saveSettings).toHaveBeenLastCalledWith(expect.objectContaining({ advancedMode: true })));
+    await waitFor(() =>
+      expect(saveSettings).toHaveBeenLastCalledWith(expect.objectContaining({ advancedMode: true }))
+    );
   });
 
   it('uses in-app confirmation dialogs for all four data clearing actions', async () => {
@@ -135,10 +152,30 @@ describe('settings page', () => {
     expect(screen.queryByText('旧版遗留数据')).not.toBeInTheDocument();
 
     const actions = [
-      { button: '清除模型密钥', title: '确认清除模型密钥', confirm: '确认清除', scope: 'modelKeys' },
-      { button: '清除 BOSS 数据', title: '确认清除 BOSS 登录数据', confirm: '确认清除', scope: 'bossProfile' },
-      { button: '删除旧版遗留', title: '确认删除旧版遗留数据', confirm: '确认删除', scope: 'legacyData' },
-      { button: '清除全部数据', title: '确认清除全部应用数据', confirm: '确认全部清除', scope: 'all' }
+      {
+        button: '清除模型密钥',
+        title: '确认清除模型密钥',
+        confirm: '确认清除',
+        scope: 'modelKeys'
+      },
+      {
+        button: '清除 BOSS 数据',
+        title: '确认清除 BOSS 登录数据',
+        confirm: '确认清除',
+        scope: 'bossProfile'
+      },
+      {
+        button: '删除旧版遗留',
+        title: '确认删除旧版遗留数据',
+        confirm: '确认删除',
+        scope: 'legacyData'
+      },
+      {
+        button: '清除全部数据',
+        title: '确认清除全部应用数据',
+        confirm: '确认全部清除',
+        scope: 'all'
+      }
     ] as const;
 
     for (const [index, action] of actions.entries()) {
@@ -154,7 +191,9 @@ describe('settings page', () => {
       dialog = screen.getByRole('dialog', { name: action.title });
       await fireEvent.click(within(dialog).getByRole('button', { name: action.confirm }));
       await waitFor(() => expect(clearData).toHaveBeenNthCalledWith(index + 1, action.scope));
-      await waitFor(() => expect(screen.queryByRole('dialog', { name: action.title })).not.toBeInTheDocument());
+      await waitFor(() =>
+        expect(screen.queryByRole('dialog', { name: action.title })).not.toBeInTheDocument()
+      );
       await waitFor(() => expect(trigger).toBeEnabled());
     }
   });
@@ -174,7 +213,8 @@ describe('settings page', () => {
       dataDir: 'test-data',
       legacyDataDetected: false
     };
-    const getAppInfo = vi.spyOn(backend, 'getAppInfo')
+    const getAppInfo = vi
+      .spyOn(backend, 'getAppInfo')
       .mockResolvedValueOnce({ ...baseInfo, lastUpdateCheckAt: null })
       .mockResolvedValue({ ...baseInfo, lastUpdateCheckAt: checkedAt });
     vi.spyOn(backend, 'listAutomaticBackups').mockResolvedValue([]);

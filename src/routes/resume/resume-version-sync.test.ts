@@ -13,7 +13,9 @@ describe('resume version synchronization', () => {
 
     snapshot.update((state) => ({
       ...state,
-      resume: state.resume ? { ...state.resume, version: state.resume.version + 1, headline: '后台导入的新标题' } : null
+      resume: state.resume
+        ? { ...state.resume, version: state.resume.version + 1, headline: '后台导入的新标题' }
+        : null
     }));
 
     await waitFor(() => expect(screen.getByLabelText('职业标题')).toHaveValue('后台导入的新标题'));
@@ -28,7 +30,9 @@ describe('resume version synchronization', () => {
 
     snapshot.update((state) => ({
       ...state,
-      resume: state.resume ? { ...state.resume, version: state.resume.version + 1, headline: '后台导入的新标题' } : null
+      resume: state.resume
+        ? { ...state.resume, version: state.resume.version + 1, headline: '后台导入的新标题' }
+        : null
     }));
 
     expect(headline).toHaveValue('尚未保存的本地标题');

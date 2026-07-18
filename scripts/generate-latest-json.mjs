@@ -7,12 +7,14 @@ if (!directory || !repository || !tag) {
   throw new Error('Usage: node scripts/generate-latest-json.mjs <asset-dir> <owner/repo> <v-tag>');
 }
 const packageJson = JSON.parse(readFileSync('package.json', 'utf8'));
-if (tag !== `v${packageJson.version}`) throw new Error(`Tag ${tag} does not match v${packageJson.version}`);
+if (tag !== `v${packageJson.version}`)
+  throw new Error(`Tag ${tag} does not match v${packageJson.version}`);
 
 const files = readdirSync(directory);
 const requireOne = (pattern, label) => {
   const matches = files.filter((file) => pattern.test(file));
-  if (matches.length !== 1) throw new Error(`Expected exactly one ${label}; found ${matches.join(', ') || 'none'}`);
+  if (matches.length !== 1)
+    throw new Error(`Expected exactly one ${label}; found ${matches.join(', ') || 'none'}`);
   return matches[0];
 };
 const windows = requireOne(/windows-x86_64-unsigned-setup\.exe$/, 'Windows NSIS updater');

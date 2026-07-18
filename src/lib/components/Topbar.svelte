@@ -14,13 +14,20 @@
   $: current = titles[$page.url.pathname] ?? titles['/'];
 </script>
 
-<header class="sticky top-0 z-20 flex h-[74px] items-center justify-between border-b px-7 backdrop-blur-xl" style="border-color: var(--line); background: color-mix(in srgb, var(--canvas) 88%, transparent);">
+<header
+  class="sticky top-0 z-20 flex h-[74px] items-center justify-between border-b px-7 backdrop-blur-xl"
+  style="border-color: var(--line); background: color-mix(in srgb, var(--canvas) 88%, transparent);"
+>
   <div>
     <h1 class="text-[19px] font-semibold tracking-[-0.025em]">{current.title}</h1>
     <p class="mt-0.5 text-xs body-muted">{current.subtitle}</p>
   </div>
   <div class="flex items-center gap-2">
-    <button class="task-button flex h-10 items-center gap-2 rounded-xl border px-3 text-sm font-medium transition" on:click={onTasks} aria-label="打开任务中心">
+    <button
+      class="task-button flex h-10 items-center gap-2 rounded-xl border px-3 text-sm font-medium transition"
+      on:click={onTasks}
+      aria-label="打开任务中心"
+    >
       {#if $runningTasks.length > 0}
         <Activity size={17} class="animate-pulse" />
         <span>{$runningTasks.length} 个任务运行中</span>
@@ -34,6 +41,12 @@
 </header>
 
 <style>
-  .task-button { border-color: var(--line); background: var(--panel); }
-  .task-button:hover { border-color: var(--brand); color: var(--brand); }
+  .task-button {
+    border-color: var(--line);
+    background: var(--panel);
+  }
+  .task-button:hover {
+    border-color: var(--brand);
+    color: var(--brand);
+  }
 </style>

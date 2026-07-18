@@ -15,7 +15,9 @@ describe('resume fact page integration', () => {
     const state = structuredClone(mockSnapshot);
     snapshot.set(state);
     const saveResume = vi.spyOn(backend, 'saveResume').mockImplementation(async (resume) => ({
-      ...structuredClone(resume), version: resume.version + 1, updatedAt: new Date().toISOString()
+      ...structuredClone(resume),
+      version: resume.version + 1,
+      updatedAt: new Date().toISOString()
     }));
 
     render(ResumePage);

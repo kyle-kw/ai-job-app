@@ -9,8 +9,9 @@
 
   function syncLogs() {
     if (!terminal) return;
-    const prefixUnchanged = renderedLogs.length <= logs.length
-      && renderedLogs.every((line, index) => logs[index] === line);
+    const prefixUnchanged =
+      renderedLogs.length <= logs.length &&
+      renderedLogs.every((line, index) => logs[index] === line);
     if (!prefixUnchanged) {
       terminal.reset();
       logs.forEach((line) => terminal?.writeln(line));
@@ -21,9 +22,18 @@
   }
 
   onMount(async () => {
-    const [{ Terminal }, { FitAddon }] = await Promise.all([import('@xterm/xterm'), import('@xterm/addon-fit')]);
+    const [{ Terminal }, { FitAddon }] = await Promise.all([
+      import('@xterm/xterm'),
+      import('@xterm/addon-fit')
+    ]);
     await import('@xterm/xterm/css/xterm.css');
-    terminal = new Terminal({ rows: 8, fontSize: 11, fontFamily: 'JetBrains Mono, Consolas, monospace', theme: { background: '#18201d', foreground: '#dce9e4', cursor: '#65bda3' }, disableStdin: true });
+    terminal = new Terminal({
+      rows: 8,
+      fontSize: 11,
+      fontFamily: 'JetBrains Mono, Consolas, monospace',
+      theme: { background: '#18201d', foreground: '#dce9e4', cursor: '#65bda3' },
+      disableStdin: true
+    });
     fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
     terminal.open(host);
@@ -35,8 +45,11 @@
     }
   });
 
-  $: logs, syncLogs();
-  onDestroy(() => { resizeObserver?.disconnect(); terminal?.dispose(); });
+  $: (logs, syncLogs());
+  onDestroy(() => {
+    resizeObserver?.disconnect();
+    terminal?.dispose();
+  });
 </script>
 
 <div class="h-[150px] overflow-hidden rounded-xl bg-[#18201d] p-2">

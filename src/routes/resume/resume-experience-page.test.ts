@@ -14,7 +14,9 @@ describe('resume work experience editing', () => {
   it('adds an editable experience and includes it in the saved resume', async () => {
     snapshot.set(structuredClone(mockSnapshot));
     const saveResume = vi.spyOn(backend, 'saveResume').mockImplementation(async (resume) => ({
-      ...structuredClone(resume), version: resume.version + 1, updatedAt: new Date().toISOString()
+      ...structuredClone(resume),
+      version: resume.version + 1,
+      updatedAt: new Date().toISOString()
     }));
     render(ResumePage);
 

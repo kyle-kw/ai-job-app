@@ -25,7 +25,9 @@ def host_target() -> str:
 
 def main() -> int:
     if ".".join(str(value) for value in sys.version_info[:3]) != PYTHON_VERSION:
-        raise RuntimeError(f"Sidecar build requires Python {PYTHON_VERSION}; found {sys.version.split()[0]}")
+        raise RuntimeError(
+            f"Sidecar build requires Python {PYTHON_VERSION}; found {sys.version.split()[0]}"
+        )
     target = os.environ.get("TAURI_TARGET") or host_target()
     suffix = ".exe" if target.endswith("windows-msvc") else ""
     BINARIES.mkdir(parents=True, exist_ok=True)
@@ -35,15 +37,30 @@ def main() -> int:
         raise RuntimeError(f"uv {UV_VERSION} is required to build the sidecar")
     installed_uv = subprocess.check_output([uv, "--version"], text=True).split()[1]
     if installed_uv != UV_VERSION:
-        raise RuntimeError(f"Sidecar build requires uv {UV_VERSION}; found {installed_uv}")
+        raise RuntimeError(
+            f"Sidecar build requires uv {UV_VERSION}; found {installed_uv}"
+        )
     environment = dict(os.environ)
     environment.setdefault("UV_CACHE_DIR", str(ROOT / ".uv-cache"))
     environment["UV_PROJECT_ENVIRONMENT"] = str(build_venv)
-    subprocess.check_call([
-        uv, "sync", "--project", str(SIDECAR), "--locked", "--group", "build",
-        "--no-install-project", "--python", PYTHON_VERSION,
-    ], env=environment)
-    build_python = build_venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    subprocess.check_call(
+        [
+            uv,
+            "sync",
+            "--project",
+            str(SIDECAR),
+            "--locked",
+            "--group",
+            "build",
+            "--no-install-project",
+            "--python",
+            PYTHON_VERSION,
+        ],
+        env=environment,
+    )
+    build_python = build_venv / (
+        "Scripts/python.exe" if os.name == "nt" else "bin/python"
+    )
     name = "job-assistant-sidecar"
     work_path = SIDECAR / "build"
     dist_path = SIDECAR / "dist"
@@ -54,25 +71,44 @@ def main() -> int:
         shutil.rmtree(resolved, ignore_errors=True)
         resolved.mkdir(parents=True, exist_ok=True)
     pyinstaller_args = [
-        str(build_python), "-m", "PyInstaller", "--noconfirm", "--clean", "--onefile",
+        str(build_python),
+        "-m",
+        "PyInstaller",
+        "--noconfirm",
+        "--clean",
+        "--onefile",
     ]
     if os.name == "nt":
         pyinstaller_args.append("--noconsole")
-    pyinstaller_args.extend([
-        "--name", name,
-        "--paths", str(SIDECAR),
-        "--collect-all", "rendercv",
-        "--collect-all", "rendercv_fonts",
-        "--collect-all", "typst",
-        "--collect-all", "pypdfium2",
-        "--collect-all", "PIL",
-        "--hidden-import", "vendor.boss_cdp_raw",
-        "--add-data", f"{SIDECAR / 'vendor' / 'city_codes.json'}{os.pathsep}vendor",
-        "--distpath", str(dist_path),
-        "--workpath", str(work_path),
-        "--specpath", str(work_path),
-        str(SIDECAR / "worker.py"),
-    ])
+    pyinstaller_args.extend(
+        [
+            "--name",
+            name,
+            "--paths",
+            str(SIDECAR),
+            "--collect-all",
+            "rendercv",
+            "--collect-all",
+            "rendercv_fonts",
+            "--collect-all",
+            "typst",
+            "--collect-all",
+            "pypdfium2",
+            "--collect-all",
+            "PIL",
+            "--hidden-import",
+            "vendor.boss_cdp_raw",
+            "--add-data",
+            f"{SIDECAR / 'vendor' / 'city_codes.json'}{os.pathsep}vendor",
+            "--distpath",
+            str(dist_path),
+            "--workpath",
+            str(work_path),
+            "--specpath",
+            str(work_path),
+            str(SIDECAR / "worker.py"),
+        ]
+    )
     subprocess.check_call(pyinstaller_args)
     built = SIDECAR / "dist" / f"{name}{suffix}"
     destination = BINARIES / f"{name}-{target}{suffix}"

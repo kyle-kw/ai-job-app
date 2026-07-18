@@ -15,7 +15,9 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=18443)
     args = parser.parse_args()
 
-    def handler(*values: object, **kwargs: object) -> http.server.SimpleHTTPRequestHandler:
+    def handler(
+        *values: object, **kwargs: object
+    ) -> http.server.SimpleHTTPRequestHandler:
         return http.server.SimpleHTTPRequestHandler(
             *values, directory=str(args.directory), **kwargs
         )

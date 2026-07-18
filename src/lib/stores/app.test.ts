@@ -18,14 +18,24 @@ describe('app bootstrap refresh ordering', () => {
   it('only applies the newest response and clears a previous error', async () => {
     let resolveFirst!: (value: typeof mockSnapshot) => void;
     let resolveSecond!: (value: typeof mockSnapshot) => void;
-    const first = new Promise<typeof mockSnapshot>((resolve) => { resolveFirst = resolve; });
-    const second = new Promise<typeof mockSnapshot>((resolve) => { resolveSecond = resolve; });
+    const first = new Promise<typeof mockSnapshot>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const second = new Promise<typeof mockSnapshot>((resolve) => {
+      resolveSecond = resolve;
+    });
     mocks.bootstrap.mockReturnValueOnce(first).mockReturnValueOnce(second);
     const firstRefresh = refresh();
     const secondRefresh = refresh();
-    resolveSecond({ ...structuredClone(mockSnapshot), settings: { ...mockSnapshot.settings, advancedMode: true } });
+    resolveSecond({
+      ...structuredClone(mockSnapshot),
+      settings: { ...mockSnapshot.settings, advancedMode: true }
+    });
     await secondRefresh;
-    resolveFirst({ ...structuredClone(mockSnapshot), settings: { ...mockSnapshot.settings, advancedMode: false } });
+    resolveFirst({
+      ...structuredClone(mockSnapshot),
+      settings: { ...mockSnapshot.settings, advancedMode: false }
+    });
     await firstRefresh;
     expect(get(snapshot).settings.advancedMode).toBe(true);
     expect(get(appError)).toBeNull();

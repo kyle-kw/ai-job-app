@@ -18,15 +18,27 @@ const TEMPLATE_GUIDANCE: Record<ResumeTemplateId, { title: string; examples: str
   },
   'data-analysis': {
     title: '优先确认分析方法与业务结果之间的证据链',
-    examples: ['指标口径、数据规模与数据来源', 'SQL、Python、BI 工具及实际场景', '分析方法、业务动作与量化结果']
+    examples: [
+      '指标口径、数据规模与数据来源',
+      'SQL、Python、BI 工具及实际场景',
+      '分析方法、业务动作与量化结果'
+    ]
   },
   'finance-accounting': {
     title: '优先确认核算范围、合规责任与流程结果',
-    examples: ['核算主体、月结时效与对账范围', '税务申报、预算差异与审计配合', '金蝶、用友、Excel 等系统的实际使用']
+    examples: [
+      '核算主体、月结时效与对账范围',
+      '税务申报、预算差异与审计配合',
+      '金蝶、用友、Excel 等系统的实际使用'
+    ]
   },
   general: {
     title: '优先确认与目标岗位直接相关的事实',
-    examples: ['任职公司、岗位与时间', '真实使用过的工具和专业能力', '可以追溯的项目、证书与量化成果']
+    examples: [
+      '任职公司、岗位与时间',
+      '真实使用过的工具和专业能力',
+      '可以追溯的项目、证书与量化成果'
+    ]
   }
 };
 
@@ -58,42 +70,78 @@ function generatedFact(
 }
 
 export function factsFromResumeContent(
-  resume: Pick<ResumeProfile, 'professionalSkills' | 'experiences' | 'education' | 'projects' | 'certifications'>,
+  resume: Pick<
+    ResumeProfile,
+    'professionalSkills' | 'experiences' | 'education' | 'projects' | 'certifications'
+  >,
   idFactory: () => string = () => crypto.randomUUID()
 ): ResumeFact[] {
   const candidates: ResumeFact[] = [];
-  const add = (fact: ResumeFact | null) => { if (fact) candidates.push(fact); };
+  const add = (fact: ResumeFact | null) => {
+    if (fact) candidates.push(fact);
+  };
 
   for (const group of resume.professionalSkills) {
     for (const skill of group.items) {
-      add(generatedFact('skill', skill, `当前主简历 · 专业技能 · ${group.label || '未分组'}`, idFactory));
+      add(
+        generatedFact(
+          'skill',
+          skill,
+          `当前主简历 · 专业技能 · ${group.label || '未分组'}`,
+          idFactory
+        )
+      );
     }
   }
 
   for (const experience of resume.experiences) {
-    const role = [experience.company.trim(), experience.position.trim()].filter(Boolean).join(' · ');
+    const role = [experience.company.trim(), experience.position.trim()]
+      .filter(Boolean)
+      .join(' · ');
     const dates = formatDateRange(experience.startDate, experience.endDate);
     const employment = [role, dates ? `（${dates}）` : ''].join('');
     const source = `当前主简历 · 工作经历 · ${experience.company || experience.position || '未命名经历'}`;
     add(generatedFact('experience', employment, source, idFactory));
-    for (const highlight of experience.highlights) add(generatedFact('experience', highlight, source, idFactory));
+    for (const highlight of experience.highlights)
+      add(generatedFact('experience', highlight, source, idFactory));
   }
 
   for (const project of resume.projects) {
     const source = `当前主简历 · 项目经历 · ${project.name || '未命名项目'}`;
     add(generatedFact('project', project.summary || project.name, source, idFactory));
-    for (const highlight of project.highlights) add(generatedFact('project', highlight, source, idFactory));
+    for (const highlight of project.highlights)
+      add(generatedFact('project', highlight, source, idFactory));
   }
 
   for (const education of resume.education) {
     const dates = formatDateRange(education.startDate, education.endDate);
-    const value = [education.institution, education.area, displayDegree(education), dates].map((item) => item.trim()).filter(Boolean).join(' · ');
-    add(generatedFact('education', value, `当前主简历 · 教育经历 · ${education.institution || '未命名教育经历'}`, idFactory));
+    const value = [education.institution, education.area, displayDegree(education), dates]
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .join(' · ');
+    add(
+      generatedFact(
+        'education',
+        value,
+        `当前主简历 · 教育经历 · ${education.institution || '未命名教育经历'}`,
+        idFactory
+      )
+    );
   }
 
   for (const certification of resume.certifications) {
-    const value = [certification.name, certification.issuer, certification.date].map((item) => item.trim()).filter(Boolean).join(' · ');
-    add(generatedFact('certification', value, `当前主简历 · 证书资质 · ${certification.name || '未命名证书'}`, idFactory));
+    const value = [certification.name, certification.issuer, certification.date]
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .join(' · ');
+    add(
+      generatedFact(
+        'certification',
+        value,
+        `当前主简历 · 证书资质 · ${certification.name || '未命名证书'}`,
+        idFactory
+      )
+    );
   }
 
   const seen = new Set<string>();
@@ -105,7 +153,10 @@ export function factsFromResumeContent(
   });
 }
 
-export function mergeResumeFacts(existing: readonly ResumeFact[], candidates: readonly ResumeFact[]) {
+export function mergeResumeFacts(
+  existing: readonly ResumeFact[],
+  candidates: readonly ResumeFact[]
+) {
   const seen = new Set(existing.map(factKey));
   const additions = candidates.filter((fact) => {
     const key = factKey(fact);

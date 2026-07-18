@@ -1,6 +1,7 @@
 import type { ProfessionalSkillGroup, ResumeProfile, ResumeTemplateId } from '$lib/types';
 
-export type ResumeSectionKey = 'summary' | 'professionalSkills' | 'experiences' | 'projects' | 'certifications' | 'education';
+export type ResumeSectionKey =
+  'summary' | 'professionalSkills' | 'experiences' | 'projects' | 'certifications' | 'education';
 
 export interface ResumeTemplateSample {
   readonly name: string;
@@ -60,14 +61,28 @@ export const RESUME_TEMPLATES: ResumeTemplateDefinition[] = [
     id: 'ai-engineering',
     label: 'IT 技术类',
     description: '突出专业技能、工程项目与生产交付能力。',
-    sectionOrder: ['summary', 'professionalSkills', 'projects', 'experiences', 'certifications', 'education'],
+    sectionOrder: [
+      'summary',
+      'professionalSkills',
+      'projects',
+      'experiences',
+      'certifications',
+      'education'
+    ],
     suggestedSkillGroups: ['核心方向', '后端与数据', '模型与文档', '工程运维', '扩展实践']
   },
   {
     id: 'data-analysis',
     label: '数据分析',
     description: '突出数据工具、分析方法、报表与业务洞察。',
-    sectionOrder: ['summary', 'professionalSkills', 'experiences', 'projects', 'certifications', 'education'],
+    sectionOrder: [
+      'summary',
+      'professionalSkills',
+      'experiences',
+      'projects',
+      'certifications',
+      'education'
+    ],
     suggestedSkillGroups: ['数据工具', '数据处理', '分析方法', '可视化与报表', '业务分析'],
     sample: {
       name: '林晓（示例候选人）',
@@ -76,7 +91,8 @@ export const RESUME_TEMPLATES: ResumeTemplateDefinition[] = [
       phone: '138-0000-0000（示例）',
       location: '上海（示例）',
       website: 'https://example.invalid/data-portfolio',
-      summary: '4 年电商与零售数据分析经验，擅长从指标体系、用户漏斗和实验分析中定位业务机会。能够使用 SQL、Python 与 Tableau 完成从数据清洗、分析建模到可视化落地的完整流程，并推动分析结论转化为可衡量的业务动作。',
+      summary:
+        '4 年电商与零售数据分析经验，擅长从指标体系、用户漏斗和实验分析中定位业务机会。能够使用 SQL、Python 与 Tableau 完成从数据清洗、分析建模到可视化落地的完整流程，并推动分析结论转化为可衡量的业务动作。',
       templateId: 'data-analysis',
       professionalSkills: [
         { label: '数据工具', items: ['SQL', 'Python', 'Excel'] },
@@ -123,7 +139,11 @@ export const RESUME_TEMPLATES: ResumeTemplateDefinition[] = [
         }
       ],
       certifications: [
-        { name: 'Tableau Desktop Specialist（示例）', issuer: 'Tableau（示例信息）', date: '2023.05' }
+        {
+          name: 'Tableau Desktop Specialist（示例）',
+          issuer: 'Tableau（示例信息）',
+          date: '2023.05'
+        }
       ],
       education: [
         {
@@ -142,7 +162,14 @@ export const RESUME_TEMPLATES: ResumeTemplateDefinition[] = [
     id: 'finance-accounting',
     label: '财务会计',
     description: '优先展示财务经历、专业资质与合规能力。',
-    sectionOrder: ['summary', 'experiences', 'certifications', 'professionalSkills', 'education', 'projects'],
+    sectionOrder: [
+      'summary',
+      'experiences',
+      'certifications',
+      'professionalSkills',
+      'education',
+      'projects'
+    ],
     suggestedSkillGroups: ['会计核算', '税务与合规', '预算与财务分析', '财务系统与办公工具'],
     sample: {
       name: '周宁（示例候选人）',
@@ -151,7 +178,8 @@ export const RESUME_TEMPLATES: ResumeTemplateDefinition[] = [
       phone: '139-0000-0000（示例）',
       location: '苏州（示例）',
       website: 'https://example.invalid/finance-profile',
-      summary: '4 年制造与零售企业财务会计经验，熟悉总账核算、月末结账、纳税申报和预算执行分析。能够使用金蝶、用友和 Excel 建立标准化核对流程，重视凭证依据、数据准确性与合规边界，并持续推动财务流程提效。',
+      summary:
+        '4 年制造与零售企业财务会计经验，熟悉总账核算、月末结账、纳税申报和预算执行分析。能够使用金蝶、用友和 Excel 建立标准化核对流程，重视凭证依据、数据准确性与合规边界，并持续推动财务流程提效。',
       templateId: 'finance-accounting',
       professionalSkills: [
         { label: '会计核算', items: ['总账', '应收应付', '成本结转', '月末结账'] },
@@ -216,24 +244,39 @@ export const RESUME_TEMPLATES: ResumeTemplateDefinition[] = [
     id: 'general',
     label: '通用 / 空白',
     description: '适合尚未确定岗位方向时建立可信主简历。',
-    sectionOrder: ['summary', 'experiences', 'professionalSkills', 'projects', 'certifications', 'education'],
+    sectionOrder: [
+      'summary',
+      'experiences',
+      'professionalSkills',
+      'projects',
+      'certifications',
+      'education'
+    ],
     suggestedSkillGroups: ['专业能力', '工具与系统']
   }
 ];
 
-export const resumeTemplate = (id?: string) => RESUME_TEMPLATES.find((item) => item.id === id) ?? RESUME_TEMPLATES[0];
+export const resumeTemplate = (id?: string) =>
+  RESUME_TEMPLATES.find((item) => item.id === id) ?? RESUME_TEMPLATES[0];
 
-export function flattenProfessionalSkills(resume: Pick<ResumeProfile, 'professionalSkills'>): string[] {
+export function flattenProfessionalSkills(
+  resume: Pick<ResumeProfile, 'professionalSkills'>
+): string[] {
   const seen = new Set<string>();
-  return resume.professionalSkills.flatMap((group) => group.items).map((item) => item.trim()).filter((item) => {
-    const key = item.toLocaleLowerCase();
-    if (!key || seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  return resume.professionalSkills
+    .flatMap((group) => group.items)
+    .map((item) => item.trim())
+    .filter((item) => {
+      const key = item.toLocaleLowerCase();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 }
 
-export function suggestedProfessionalSkillGroups(templateId: ResumeTemplateId): ProfessionalSkillGroup[] {
+export function suggestedProfessionalSkillGroups(
+  templateId: ResumeTemplateId
+): ProfessionalSkillGroup[] {
   return resumeTemplate(templateId).suggestedSkillGroups.map((label) => ({
     id: crypto.randomUUID(),
     label,

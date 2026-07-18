@@ -3,11 +3,15 @@ import { MAX_RESUME_FILE_BYTES, readResumeAsBase64, validateResumeFile } from '.
 
 describe('resume import validation', () => {
   it('accepts supported files through the 25 MiB boundary', () => {
-    expect(() => validateResumeFile({ name: 'resume.PDF', size: MAX_RESUME_FILE_BYTES } as File)).not.toThrow();
+    expect(() =>
+      validateResumeFile({ name: 'resume.PDF', size: MAX_RESUME_FILE_BYTES } as File)
+    ).not.toThrow();
   });
 
   it('rejects oversized and unsupported files', () => {
-    expect(() => validateResumeFile({ name: 'resume.pdf', size: MAX_RESUME_FILE_BYTES + 1 } as File)).toThrow('25 MiB');
+    expect(() =>
+      validateResumeFile({ name: 'resume.pdf', size: MAX_RESUME_FILE_BYTES + 1 } as File)
+    ).toThrow('25 MiB');
     expect(() => validateResumeFile({ name: 'resume.txt', size: 10 } as File)).toThrow('仅支持');
   });
 

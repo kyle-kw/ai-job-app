@@ -13,15 +13,24 @@ const packageLock = readJson('package-lock.json');
 const tauri = readJson('src-tauri/tauri.conf.json');
 const tauriMacOS = readJson('src-tauri/tauri.macos.conf.json');
 const tauriWindows = readJson('src-tauri/tauri.windows.conf.json');
-const workerVersion = readFileSync('sidecar/worker.py', 'utf8').match(/^APP_VERSION\s*=\s*"([^"]+)"/m)?.[1];
-const uvProjectVersion = readFileSync('sidecar/uv.lock', 'utf8').match(/\[\[package\]\]\s*name\s*=\s*"ai-job-app-sidecar"\s*version\s*=\s*"([^"]+)"/m)?.[1];
+const workerVersion = readFileSync('sidecar/worker.py', 'utf8').match(
+  /^APP_VERSION\s*=\s*"([^"]+)"/m
+)?.[1];
+const uvProjectVersion = readFileSync('sidecar/uv.lock', 'utf8').match(
+  /\[\[package\]\]\s*name\s*=\s*"ai-job-app-sidecar"\s*version\s*=\s*"([^"]+)"/m
+)?.[1];
 const versions = new Map([
   ['package.json', packageJson.version],
   ['package-lock.json', packageLock.version],
   ['package-lock root', packageLock.packages[''].version],
   ['tauri.conf.json', tauri.version],
   ['Cargo.toml', matchVersion('src-tauri/Cargo.toml')],
-  ['Cargo.lock', readFileSync('src-tauri/Cargo.lock', 'utf8').match(/\[\[package\]\]\s*name\s*=\s*"ai-job-app"\s*version\s*=\s*"([^"]+)"/m)?.[1]],
+  [
+    'Cargo.lock',
+    readFileSync('src-tauri/Cargo.lock', 'utf8').match(
+      /\[\[package\]\]\s*name\s*=\s*"ai-job-app"\s*version\s*=\s*"([^"]+)"/m
+    )?.[1]
+  ],
   ['sidecar/pyproject.toml', matchVersion('sidecar/pyproject.toml')],
   ['sidecar/uv.lock', uvProjectVersion],
   ['sidecar/worker.py', workerVersion]
@@ -30,23 +39,33 @@ const versions = new Map([
 const expected = packageJson.version;
 const mismatches = [...versions].filter(([, value]) => value !== expected);
 if (mismatches.length) {
-  throw new Error(`Version mismatch: ${[...versions].map(([name, value]) => `${name}=${value}`).join(', ')}`);
+  throw new Error(
+    `Version mismatch: ${[...versions].map(([name, value]) => `${name}=${value}`).join(', ')}`
+  );
 }
 
 const githubRef = process.env.GITHUB_REF;
-const tag = process.argv[2]
-  || (githubRef?.startsWith('refs/tags/')
+const tag =
+  process.argv[2] ||
+  (githubRef?.startsWith('refs/tags/')
     ? process.env.GITHUB_REF_NAME || githubRef.slice('refs/tags/'.length)
     : undefined);
 if (tag && tag !== `v${expected}`) throw new Error(`Tag ${tag} does not match v${expected}`);
 readChangelogSection(expected);
 
 const updater = tauri.plugins?.updater;
-if (!Array.isArray(updater?.endpoints) || updater.endpoints.length === 0
-  || !updater.endpoints.every((value) => value.startsWith('https://'))) {
+if (
+  !Array.isArray(updater?.endpoints) ||
+  updater.endpoints.length === 0 ||
+  !updater.endpoints.every((value) => value.startsWith('https://'))
+) {
   throw new Error('Updater endpoints must use HTTPS');
 }
-if (updater.dangerousInsecureTransportProtocol || updater.dangerousAcceptInvalidCerts || updater.dangerousAcceptInvalidHostnames) {
+if (
+  updater.dangerousInsecureTransportProtocol ||
+  updater.dangerousAcceptInvalidCerts ||
+  updater.dangerousAcceptInvalidHostnames
+) {
   throw new Error('Production updater configuration enables an insecure option');
 }
 if (process.env.REQUIRE_UPDATER_KEY === '1') {
@@ -54,7 +73,8 @@ if (process.env.REQUIRE_UPDATER_KEY === '1') {
     throw new Error('Production updater public key is not configured');
   }
   const decoded = Buffer.from(updater.pubkey, 'base64').toString('utf8');
-  if (!decoded.includes('minisign public key')) throw new Error('Updater public key is not a valid minisign public key');
+  if (!decoded.includes('minisign public key'))
+    throw new Error('Updater public key is not a valid minisign public key');
 }
 
 if (tauri.bundle?.createUpdaterArtifacts !== true) {

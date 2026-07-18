@@ -19,7 +19,9 @@ describe('resume nested list controls', () => {
     const initialSkillInputs = screen.getAllByRole('textbox', { name: /^技能 \d+\.\d+$/ }).length;
 
     await fireEvent.click(addSkill);
-    expect(screen.getAllByRole('textbox', { name: /^技能 \d+\.\d+$/ })).toHaveLength(initialSkillInputs + 1);
+    expect(screen.getAllByRole('textbox', { name: /^技能 \d+\.\d+$/ })).toHaveLength(
+      initialSkillInputs + 1
+    );
 
     await fireEvent.click(screen.getByRole('button', { name: '删除技能：RAG' }));
     expect(screen.getByRole('dialog', { name: '确认删除简历内容' })).toBeInTheDocument();

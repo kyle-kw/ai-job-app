@@ -6,8 +6,31 @@ import { snapshot } from '$lib/stores/app';
 import JobPage from './+page.svelte';
 
 const cities = [
-  '北京', '上海', '广州', '深圳', '杭州', '天津', '西安', '苏州', '武汉', '厦门', '长沙', '成都', '郑州',
-  '重庆', '佛山', '合肥', '济南', '青岛', '南京', '东莞', '昆明', '南昌', '石家庄', '宁波', '福州'
+  '北京',
+  '上海',
+  '广州',
+  '深圳',
+  '杭州',
+  '天津',
+  '西安',
+  '苏州',
+  '武汉',
+  '厦门',
+  '长沙',
+  '成都',
+  '郑州',
+  '重庆',
+  '佛山',
+  '合肥',
+  '济南',
+  '青岛',
+  '南京',
+  '东莞',
+  '昆明',
+  '南昌',
+  '石家庄',
+  '宁波',
+  '福州'
 ];
 
 describe('job scraping controls', () => {
@@ -27,14 +50,25 @@ describe('job scraping controls', () => {
     await waitFor(() => expect(screen.getByLabelText('关键词')).toHaveValue('AI Agent'));
     expect(cityInput).toHaveValue('上海');
     await fireEvent.focus(cityInput);
-    expect(within(screen.getByRole('listbox', { name: '城市选项' })).getAllByRole('option').map((option) => option.textContent)).toEqual(cities);
+    expect(
+      within(screen.getByRole('listbox', { name: '城市选项' }))
+        .getAllByRole('option')
+        .map((option) => option.textContent)
+    ).toEqual(cities);
     expect(pageSelect).toHaveValue('1');
-    expect(within(pageSelect).getAllByRole('option').map((option) => option.textContent)).toEqual([
-      '1 页（推荐）', '2 页', '3 页', '4 页', '5 页'
-    ]);
+    expect(
+      within(pageSelect)
+        .getAllByRole('option')
+        .map((option) => option.textContent)
+    ).toEqual(['1 页（推荐）', '2 页', '3 页', '4 页', '5 页']);
     expect(screen.getByText('预计耗时：20 分钟')).toBeInTheDocument();
 
-    const estimates = [['2', '40 分钟'], ['3', '60 分钟（约 1 小时）'], ['4', '80 分钟'], ['5', '100 分钟']];
+    const estimates = [
+      ['2', '40 分钟'],
+      ['3', '60 分钟（约 1 小时）'],
+      ['4', '80 分钟'],
+      ['5', '100 分钟']
+    ];
     for (const [pages, duration] of estimates) {
       await fireEvent.change(pageSelect, { target: { value: pages } });
       await waitFor(() => expect(screen.getByText(`预计耗时：${duration}`)).toBeInTheDocument());
@@ -71,13 +105,21 @@ describe('job scraping controls', () => {
 
     await fireEvent.click(review);
     await fireEvent.click(screen.getByRole('button', { name: '检查登录并开始抓取' }));
-    await waitFor(() => expect(start).toHaveBeenCalledWith(expect.objectContaining({ city: '洛阳' })));
+    await waitFor(() =>
+      expect(start).toHaveBeenCalledWith(expect.objectContaining({ city: '洛阳' }))
+    );
   });
 
   it('restores the complete persisted search each time the dialog opens', async () => {
     const state = structuredClone(mockSnapshot);
     state.lastSearchSpec = {
-      keyword: '数据分析', city: '杭州', pages: 4, experience: '105', salary: '405', degree: '203', companyScale: '303'
+      keyword: '数据分析',
+      city: '杭州',
+      pages: 4,
+      experience: '105',
+      salary: '405',
+      degree: '203',
+      companyScale: '303'
     };
     snapshot.set(state);
     render(JobPage);
@@ -90,12 +132,20 @@ describe('job scraping controls', () => {
     expect(within(dialog).getByLabelText('经验要求')).toHaveValue('105');
     expect(within(dialog).getByLabelText('薪资范围')).toHaveValue('405');
     expect(within(dialog).getByLabelText('公司规模')).toHaveValue('303');
-    await fireEvent.input(within(dialog).getByLabelText('关键词'), { target: { value: '正在编辑' } });
+    await fireEvent.input(within(dialog).getByLabelText('关键词'), {
+      target: { value: '正在编辑' }
+    });
 
     snapshot.update((value) => ({
       ...value,
       lastSearchSpec: {
-        keyword: '商业分析', city: '北京', pages: 2, experience: '104', salary: '404', degree: '', companyScale: '302'
+        keyword: '商业分析',
+        city: '北京',
+        pages: 2,
+        experience: '104',
+        salary: '404',
+        degree: '',
+        companyScale: '302'
       }
     }));
     expect(within(dialog).getByLabelText('关键词')).toHaveValue('正在编辑');
@@ -128,24 +178,32 @@ describe('job scraping controls', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: '开始抓取' }));
     await fireEvent.click(screen.getByRole('button', { name: '检查登录并开始抓取' }));
-    await waitFor(() => expect(start).toHaveBeenCalledWith(expect.objectContaining({
-      keyword: 'AI Agent', city: '上海', pages: 1
-    })));
+    await waitFor(() =>
+      expect(start).toHaveBeenCalledWith(
+        expect.objectContaining({
+          keyword: 'AI Agent',
+          city: '上海',
+          pages: 1
+        })
+      )
+    );
   });
 
   it('prevents opening another scrape while one is queued or running', () => {
     const state = structuredClone(mockSnapshot);
-    state.tasks = [{
-      id: 'scrape-running',
-      kind: 'scrape',
-      title: '抓取 上海 · AI Agent',
-      state: 'running',
-      progress: 35,
-      message: '正在抓取岗位',
-      createdAt: '2026-07-11T08:00:00.000Z',
-      updatedAt: '2026-07-11T08:01:00.000Z',
-      logs: []
-    }];
+    state.tasks = [
+      {
+        id: 'scrape-running',
+        kind: 'scrape',
+        title: '抓取 上海 · AI Agent',
+        state: 'running',
+        progress: 35,
+        message: '正在抓取岗位',
+        createdAt: '2026-07-11T08:00:00.000Z',
+        updatedAt: '2026-07-11T08:01:00.000Z',
+        logs: []
+      }
+    ];
     snapshot.set(state);
 
     render(JobPage);
@@ -157,19 +215,29 @@ describe('job scraping controls', () => {
   it('passes the dynamic city and missing-description filters to the paged query', async () => {
     snapshot.set(structuredClone(mockSnapshot));
     const listJobsPage = vi.spyOn(backend, 'listJobsPage');
-    vi.spyOn(backend, 'listJobFilterOptions').mockResolvedValue({ cities: ['上海', '杭州'], experiences: ['3-5年'], skills: [] });
+    vi.spyOn(backend, 'listJobFilterOptions').mockResolvedValue({
+      cities: ['上海', '杭州'],
+      experiences: ['3-5年'],
+      skills: []
+    });
     render(JobPage);
 
     const city = screen.getByLabelText('城市');
-    await waitFor(() => expect(within(city).getByRole('option', { name: '杭州' })).toBeInTheDocument());
+    await waitFor(() =>
+      expect(within(city).getByRole('option', { name: '杭州' })).toBeInTheDocument()
+    );
     await fireEvent.change(city, { target: { value: '杭州' } });
     await fireEvent.click(screen.getByRole('checkbox', { name: '只看无原始详情' }));
 
-    await waitFor(() => expect(listJobsPage).toHaveBeenLastCalledWith(expect.objectContaining({
-      city: '杭州',
-      missingDescription: true,
-      cursor: null
-    })));
+    await waitFor(() =>
+      expect(listJobsPage).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          city: '杭州',
+          missingDescription: true,
+          cursor: null
+        })
+      )
+    );
   });
 
   it('offers working recommended, recent, and salary sorting', async () => {
@@ -179,12 +247,24 @@ describe('job scraping controls', () => {
 
     const sort = screen.getByLabelText('岗位排序') as HTMLSelectElement;
     expect(sort).toHaveValue('recommended');
-    expect(within(sort).getAllByRole('option').map((option) => option.textContent)).toEqual(['综合推荐', '最近发现', '薪资优先']);
+    expect(
+      within(sort)
+        .getAllByRole('option')
+        .map((option) => option.textContent)
+    ).toEqual(['综合推荐', '最近发现', '薪资优先']);
 
     await fireEvent.change(sort, { target: { value: 'recent' } });
-    await waitFor(() => expect(listJobsPage).toHaveBeenLastCalledWith(expect.objectContaining({ sort: 'recent', cursor: null })));
+    await waitFor(() =>
+      expect(listJobsPage).toHaveBeenLastCalledWith(
+        expect.objectContaining({ sort: 'recent', cursor: null })
+      )
+    );
     await fireEvent.change(sort, { target: { value: 'salary-desc' } });
-    await waitFor(() => expect(listJobsPage).toHaveBeenLastCalledWith(expect.objectContaining({ sort: 'salary-desc', cursor: null })));
+    await waitFor(() =>
+      expect(listJobsPage).toHaveBeenLastCalledWith(
+        expect.objectContaining({ sort: 'salary-desc', cursor: null })
+      )
+    );
   });
 
   it('omits the loaded count and dismisses the batch menu when clicking outside', async () => {
@@ -210,16 +290,25 @@ describe('job scraping controls', () => {
 
     expect(screen.getByText(/AI Agent · .* · 新增 38/)).toBeInTheDocument();
     await fireEvent.click(screen.getByRole('checkbox', { name: '最近一次抓取新增' }));
-    await waitFor(() => expect(listJobsPage).toHaveBeenLastCalledWith(expect.objectContaining({
-      onlyNew: true,
-      cursor: null
-    })));
+    await waitFor(() =>
+      expect(listJobsPage).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          onlyNew: true,
+          cursor: null
+        })
+      )
+    );
   });
 
   it('searches and selects multiple skills with AND query semantics', async () => {
     snapshot.set(structuredClone(mockSnapshot));
     vi.spyOn(backend, 'listJobFilterOptions').mockResolvedValue({
-      cities: ['上海'], experiences: ['3-5年'], skills: [{ label: 'Python', count: 4 }, { label: 'RAG', count: 3 }]
+      cities: ['上海'],
+      experiences: ['3-5年'],
+      skills: [
+        { label: 'Python', count: 4 },
+        { label: 'RAG', count: 3 }
+      ]
     });
     const listJobsPage = vi.spyOn(backend, 'listJobsPage');
     render(JobPage);
@@ -228,29 +317,43 @@ describe('job scraping controls', () => {
     const search = await screen.findByLabelText('搜索技能');
     await fireEvent.input(search, { target: { value: 'Python' } });
     await fireEvent.keyDown(search, { key: 'Enter' });
-    await waitFor(() => expect(listJobsPage).toHaveBeenLastCalledWith(expect.objectContaining({ skills: ['Python'] })));
+    await waitFor(() =>
+      expect(listJobsPage).toHaveBeenLastCalledWith(expect.objectContaining({ skills: ['Python'] }))
+    );
 
     await fireEvent.input(search, { target: { value: 'RAG' } });
     await fireEvent.keyDown(search, { key: 'Enter' });
-    await waitFor(() => expect(listJobsPage).toHaveBeenLastCalledWith(expect.objectContaining({ skills: ['Python', 'RAG'] })));
+    await waitFor(() =>
+      expect(listJobsPage).toHaveBeenLastCalledWith(
+        expect.objectContaining({ skills: ['Python', 'RAG'] })
+      )
+    );
 
     await fireEvent.click(screen.getByRole('button', { name: '移除技能 Python' }));
-    await waitFor(() => expect(listJobsPage).toHaveBeenLastCalledWith(expect.objectContaining({ skills: ['RAG'] })));
+    await waitFor(() =>
+      expect(listJobsPage).toHaveBeenLastCalledWith(expect.objectContaining({ skills: ['RAG'] }))
+    );
   });
 
   it('exports the current filtered result with a timestamped JSON path and deletes one job after confirmation', async () => {
     snapshot.set(structuredClone(mockSnapshot));
-    const exportJobsJson = vi.spyOn(backend, 'exportJobsJson').mockResolvedValue({ path: '岗位数据.json', fileName: '岗位数据.json' });
+    const exportJobsJson = vi
+      .spyOn(backend, 'exportJobsJson')
+      .mockResolvedValue({ path: '岗位数据.json', fileName: '岗位数据.json' });
     const deleteJob = vi.spyOn(backend, 'deleteJob').mockResolvedValue({ deletedCount: 1 });
     render(JobPage);
 
     await screen.findByRole('button', { name: `导出当前结果（${mockJobs.length}）` });
     await fireEvent.click(screen.getByRole('button', { name: '批量操作' }));
-    await fireEvent.click(screen.getByRole('button', { name: `导出当前结果（${mockJobs.length}）` }));
-    await waitFor(() => expect(exportJobsJson).toHaveBeenCalledWith(
-      expect.stringMatching(/^岗位筛选结果_\d{8}_\d{6}\.json$/),
-      expect.objectContaining({ onlyNew: false, cursor: null })
-    ));
+    await fireEvent.click(
+      screen.getByRole('button', { name: `导出当前结果（${mockJobs.length}）` })
+    );
+    await waitFor(() =>
+      expect(exportJobsJson).toHaveBeenCalledWith(
+        expect.stringMatching(/^岗位筛选结果_\d{8}_\d{6}\.json$/),
+        expect.objectContaining({ onlyNew: false, cursor: null })
+      )
+    );
 
     const deleteButton = await screen.findByRole('button', { name: '删除岗位' });
     await fireEvent.click(deleteButton);
@@ -269,14 +372,20 @@ describe('job scraping controls', () => {
   it('only offers bulk deletion for the filtered missing-description result set', async () => {
     snapshot.set(structuredClone(mockSnapshot));
     const missingJob = { ...mockJobs[0], description: '' };
-    vi.spyOn(backend, 'listJobFilterOptions').mockResolvedValue({ cities: ['上海'], experiences: [], skills: [] });
+    vi.spyOn(backend, 'listJobFilterOptions').mockResolvedValue({
+      cities: ['上海'],
+      experiences: [],
+      skills: []
+    });
     vi.spyOn(backend, 'listJobsPage').mockImplementation(async (query) => ({
       items: query.missingDescription ? [missingJob] : [missingJob, mockJobs[1]],
       total: query.missingDescription ? 1 : 2,
       pendingDetailCount: 0,
       nextCursor: null
     }));
-    const deleteMissing = vi.spyOn(backend, 'deleteMissingDescriptionJobs').mockResolvedValue({ deletedCount: 1 });
+    const deleteMissing = vi
+      .spyOn(backend, 'deleteMissingDescriptionJobs')
+      .mockResolvedValue({ deletedCount: 1 });
     render(JobPage);
 
     expect(screen.queryByRole('button', { name: /删除无详情岗位/ })).not.toBeInTheDocument();
@@ -287,24 +396,43 @@ describe('job scraping controls', () => {
     expect(deleteMissing).not.toHaveBeenCalled();
     await fireEvent.click(screen.getByRole('button', { name: '确认删除 1 个岗位' }));
 
-    await waitFor(() => expect(deleteMissing).toHaveBeenCalledWith(expect.objectContaining({ missingDescription: true })));
+    await waitFor(() =>
+      expect(deleteMissing).toHaveBeenCalledWith(
+        expect.objectContaining({ missingDescription: true })
+      )
+    );
   });
 
   it('restores report drilldown filters while dropping the obsolete window state', async () => {
-    window.history.replaceState({}, '', '/jobs?from=report&window=30&keyword=ai-agent&keyword=data-analysis&skill=Python&skill=RAG&experience=3-5%E5%B9%B4&salaryBand=25-35');
+    window.history.replaceState(
+      {},
+      '',
+      '/jobs?from=report&window=30&keyword=ai-agent&keyword=data-analysis&skill=Python&skill=RAG&experience=3-5%E5%B9%B4&salaryBand=25-35'
+    );
     snapshot.set(structuredClone(mockSnapshot));
-    vi.spyOn(backend, 'listJobFilterOptions').mockResolvedValue({ cities: ['上海', '杭州'], experiences: ['3-5年'], skills: [{ label: 'Python', count: 4 }, { label: 'RAG', count: 3 }] });
+    vi.spyOn(backend, 'listJobFilterOptions').mockResolvedValue({
+      cities: ['上海', '杭州'],
+      experiences: ['3-5年'],
+      skills: [
+        { label: 'Python', count: 4 },
+        { label: 'RAG', count: 3 }
+      ]
+    });
     const listJobsPage = vi.spyOn(backend, 'listJobsPage');
     render(JobPage);
 
     expect(await screen.findByText('来自数据报告')).toBeInTheDocument();
-    await waitFor(() => expect(listJobsPage).toHaveBeenLastCalledWith(expect.objectContaining({
-      keywordKeys: ['ai-agent', 'data-analysis'],
-      skills: ['Python', 'RAG'],
-      experience: '3-5年',
-      salaryBand: '25-35',
-      salary: ''
-    })));
+    await waitFor(() =>
+      expect(listJobsPage).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          keywordKeys: ['ai-agent', 'data-analysis'],
+          skills: ['Python', 'RAG'],
+          experience: '3-5年',
+          salaryBand: '25-35',
+          salary: ''
+        })
+      )
+    );
     expect(screen.getByLabelText('经验要求')).toHaveValue('3-5年');
     expect(screen.getByLabelText('薪资范围')).toHaveValue('25-35');
     const returnLink = screen.getByRole('link', { name: '返回报告' });
@@ -313,7 +441,9 @@ describe('job scraping controls', () => {
     expect(returnUrl.searchParams.getAll('keyword')).toEqual(['ai-agent', 'data-analysis']);
 
     await fireEvent.click(screen.getByRole('button', { name: '移除技能 Python' }));
-    await waitFor(() => expect(listJobsPage).toHaveBeenLastCalledWith(expect.objectContaining({ skills: ['RAG'] })));
+    await waitFor(() =>
+      expect(listJobsPage).toHaveBeenLastCalledWith(expect.objectContaining({ skills: ['RAG'] }))
+    );
     expect(new URL(window.location.href).searchParams.getAll('skill')).toEqual(['RAG']);
 
     await fireEvent.click(screen.getByRole('button', { name: '清除筛选' }));

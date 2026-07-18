@@ -11,7 +11,10 @@ export function displayDegree(education: Pick<ResumeEducation, 'degree' | 'degre
   return education.degree === '其他' ? education.degreeDetail?.trim() || '其他' : education.degree;
 }
 
-export function normalizeDegree(value: string, detail = ''): { degree: ResumeDegree; degreeDetail: string } {
+export function normalizeDegree(
+  value: string,
+  detail = ''
+): { degree: ResumeDegree; degreeDetail: string } {
   const raw = value.trim();
   if (!raw) return { degree: '', degreeDetail: detail.trim() };
   if (raw.includes('博士')) return { degree: '博士', degreeDetail: '' };

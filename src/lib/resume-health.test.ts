@@ -14,15 +14,23 @@ describe('resume health', () => {
     resume.experiences[0].highlights.push('');
 
     const report = analyzeResumeHealth(resume);
-    expect(report.issues.map((item) => item.code)).toEqual(expect.arrayContaining([
-      'missing-name', 'invalid-email', 'duplicate-skill', 'invalid-date', 'empty-highlight', 'empty-record'
-    ]));
+    expect(report.issues.map((item) => item.code)).toEqual(
+      expect.arrayContaining([
+        'missing-name',
+        'invalid-email',
+        'duplicate-skill',
+        'invalid-date',
+        'empty-highlight',
+        'empty-record'
+      ])
+    );
     expect(report.errorCount).toBeGreaterThan(0);
   });
 
   it('accepts supported dates and confirmed numeric claims', () => {
     const resume = structuredClone(mockResume);
-    resume.summary = '具备多年人工智能应用研发与后端工程经验，专注于可信的生产交付、跨团队协作和持续优化。';
+    resume.summary =
+      '具备多年人工智能应用研发与后端工程经验，专注于可信的生产交付、跨团队协作和持续优化。';
     const report = analyzeResumeHealth(resume);
     expect(report.issues.find((item) => item.path === '/experiences/0/startDate')).toBeUndefined();
     expect(report.issues.find((item) => item.message.includes('23%'))).toBeUndefined();

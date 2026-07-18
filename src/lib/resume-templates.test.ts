@@ -1,13 +1,33 @@
 import { describe, expect, it } from 'vitest';
-import { flattenProfessionalSkills, resumeTemplate, suggestedProfessionalSkillGroups } from './resume-templates';
+import {
+  flattenProfessionalSkills,
+  resumeTemplate,
+  suggestedProfessionalSkillGroups
+} from './resume-templates';
 import { mockResume } from './mock-data';
 
 describe('resume templates', () => {
   it('keeps role-specific section ordering deterministic', () => {
-    expect(resumeTemplate('ai-engineering').sectionOrder.slice(0, 3)).toEqual(['summary', 'professionalSkills', 'projects']);
-    expect(resumeTemplate('data-analysis').sectionOrder.slice(0, 3)).toEqual(['summary', 'professionalSkills', 'experiences']);
-    expect(resumeTemplate('finance-accounting').sectionOrder.slice(0, 3)).toEqual(['summary', 'experiences', 'certifications']);
-    expect(resumeTemplate('general').sectionOrder.slice(0, 3)).toEqual(['summary', 'experiences', 'professionalSkills']);
+    expect(resumeTemplate('ai-engineering').sectionOrder.slice(0, 3)).toEqual([
+      'summary',
+      'professionalSkills',
+      'projects'
+    ]);
+    expect(resumeTemplate('data-analysis').sectionOrder.slice(0, 3)).toEqual([
+      'summary',
+      'professionalSkills',
+      'experiences'
+    ]);
+    expect(resumeTemplate('finance-accounting').sectionOrder.slice(0, 3)).toEqual([
+      'summary',
+      'experiences',
+      'certifications'
+    ]);
+    expect(resumeTemplate('general').sectionOrder.slice(0, 3)).toEqual([
+      'summary',
+      'experiences',
+      'professionalSkills'
+    ]);
   });
 
   it('provides complete read-only examples only for the two role templates', () => {
@@ -32,13 +52,32 @@ describe('resume templates', () => {
   });
 
   it('keeps blank template skill groups free of sample facts', () => {
-    expect(suggestedProfessionalSkillGroups('data-analysis').every((group) => group.items.length === 0)).toBe(true);
-    expect(suggestedProfessionalSkillGroups('finance-accounting').every((group) => group.items.length === 0)).toBe(true);
+    expect(
+      suggestedProfessionalSkillGroups('data-analysis').every((group) => group.items.length === 0)
+    ).toBe(true);
+    expect(
+      suggestedProfessionalSkillGroups('finance-accounting').every(
+        (group) => group.items.length === 0
+      )
+    ).toBe(true);
   });
 
   it('flattens grouped professional skills without duplicate facts', () => {
     const resume = structuredClone(mockResume);
-    resume.professionalSkills.push({ id: 'duplicate', label: '重复', items: ['python', '  Docker  '] });
-    expect(flattenProfessionalSkills(resume)).toEqual(['LangChain', 'RAG', 'Python', 'FastAPI', 'PostgreSQL', 'Redis', 'TypeScript', 'Docker']);
+    resume.professionalSkills.push({
+      id: 'duplicate',
+      label: '重复',
+      items: ['python', '  Docker  ']
+    });
+    expect(flattenProfessionalSkills(resume)).toEqual([
+      'LangChain',
+      'RAG',
+      'Python',
+      'FastAPI',
+      'PostgreSQL',
+      'Redis',
+      'TypeScript',
+      'Docker'
+    ]);
   });
 });

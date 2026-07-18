@@ -32,16 +32,25 @@ describe('resume education and PDF export', () => {
   it('exports the preview layout with a temporary color theme without changing the structure template', async () => {
     snapshot.set(structuredClone(mockSnapshot));
     const saveResume = vi.spyOn(backend, 'saveResume').mockImplementation(async (resume) => ({
-      ...structuredClone(resume), version: resume.version + 1, updatedAt: new Date().toISOString()
+      ...structuredClone(resume),
+      version: resume.version + 1,
+      updatedAt: new Date().toISOString()
     }));
-    const renderResume = vi.spyOn(backend, 'renderResume').mockResolvedValue({ path: 'demo.pdf', fileName: 'demo.pdf' });
+    const renderResume = vi
+      .spyOn(backend, 'renderResume')
+      .mockResolvedValue({ path: 'demo.pdf', fileName: 'demo.pdf' });
     render(ResumePage);
 
-    await fireEvent.input(screen.getByLabelText('职业标题'), { target: { value: 'AI 平台工程师' } });
+    await fireEvent.input(screen.getByLabelText('职业标题'), {
+      target: { value: 'AI 平台工程师' }
+    });
     await fireEvent.click(screen.getByRole('button', { name: '导出 PDF' }));
     const dialog = screen.getByRole('dialog', { name: '选择颜色主题' });
     expect(dialog).toBeInTheDocument();
-    expect(within(dialog).getByRole('button', { name: /经典蓝/ })).toHaveAttribute('aria-pressed', 'true');
+    expect(within(dialog).getByRole('button', { name: /经典蓝/ })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
     await fireEvent.click(within(dialog).getByRole('button', { name: /松柏绿/ }));
     await fireEvent.click(screen.getByRole('button', { name: '选择保存位置' }));
 

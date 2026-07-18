@@ -12,7 +12,13 @@ const settings: AppSettings = {
 describe('automatic update policy', () => {
   it('only starts after privacy acknowledgement while enabled', () => {
     expect(shouldStartAutomaticUpdateCheck(settings, '2026-07-14', '2026-07-14')).toBe(true);
-    expect(shouldStartAutomaticUpdateCheck({ ...settings, automaticUpdateChecks: false }, '2026-07-14', '2026-07-14')).toBe(false);
+    expect(
+      shouldStartAutomaticUpdateCheck(
+        { ...settings, automaticUpdateChecks: false },
+        '2026-07-14',
+        '2026-07-14'
+      )
+    ).toBe(false);
     expect(shouldStartAutomaticUpdateCheck(settings, '', '2026-07-14')).toBe(false);
   });
 });

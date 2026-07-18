@@ -5,7 +5,11 @@ describe('provider test and save semantics', () => {
   it('keeps a connection test read-only even when it fails', async () => {
     const before = await backend.bootstrap();
     const provider = structuredClone(before.providers[0]);
-    const result = await backend.testProvider({ ...provider, apiKey: undefined, apiKeyRef: undefined });
+    const result = await backend.testProvider({
+      ...provider,
+      apiKey: undefined,
+      apiKeyRef: undefined
+    });
     const after = await backend.bootstrap();
 
     expect(result.ok).toBe(false);
@@ -16,7 +20,9 @@ describe('provider test and save semantics', () => {
   it('does not replace the saved provider when validation before save fails', async () => {
     const before = await backend.bootstrap();
     const provider = structuredClone(before.providers[0]);
-    await expect(backend.saveProvider({ ...provider, baseUrl: '', apiKey: undefined, apiKeyRef: undefined })).rejects.toThrow();
+    await expect(
+      backend.saveProvider({ ...provider, baseUrl: '', apiKey: undefined, apiKeyRef: undefined })
+    ).rejects.toThrow();
     const after = await backend.bootstrap();
     expect(after.providers).toEqual(before.providers);
   });

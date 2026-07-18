@@ -18,14 +18,8 @@ const changelog = `# Changelog
 `;
 
 test('extracts only the requested changelog version body', () => {
-  assert.equal(
-    extractChangelogSection(changelog, '0.2.1'),
-    '### Changed\n\n- current change'
-  );
-  assert.equal(
-    extractChangelogSection(changelog, '0.2.0'),
-    '### Added\n\n- older change'
-  );
+  assert.equal(extractChangelogSection(changelog, '0.2.1'), '### Changed\n\n- current change');
+  assert.equal(extractChangelogSection(changelog, '0.2.0'), '### Added\n\n- older change');
 });
 
 test('rejects missing and empty changelog sections', () => {

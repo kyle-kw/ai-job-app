@@ -2,7 +2,12 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/sv
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mockJobs, mockResume } from '$lib/mock-data';
 import { backend } from '$lib/services/backend';
-import type { ResumeChatProposal, ResumeCommitResult, ResumeVersionDetail, ResumeVersionSummary } from '$lib/types';
+import type {
+  ResumeChatProposal,
+  ResumeCommitResult,
+  ResumeVersionDetail,
+  ResumeVersionSummary
+} from '$lib/types';
 import ResumeChatDialog from './ResumeChatDialog.svelte';
 import ResumeVersionDrawer from './ResumeVersionDrawer.svelte';
 
@@ -26,81 +31,129 @@ describe('ResumeChatDialog', () => {
       baseVersion: mockResume.version,
       job: { id: mockJobs[0].id, title: mockJobs[0].title, company: mockJobs[0].company },
       assistantMessage: '我整理了一版更精简的个人简介。',
-      edits: [{
-        id: 'edit-summary',
-        path: '/summary',
-        label: '个人简介',
-        operation: 'replace',
-        before: mockResume.summary,
-        after: '专注 RAG 与 Agent 工程落地的 AI 应用研发工程师。',
-        rationale: '压缩重复信息。',
-        evidenceFactIds: ['fact-rag'],
-        requiredFactCandidateIds: []
-      }],
+      edits: [
+        {
+          id: 'edit-summary',
+          path: '/summary',
+          label: '个人简介',
+          operation: 'replace',
+          before: mockResume.summary,
+          after: '专注 RAG 与 Agent 工程落地的 AI 应用研发工程师。',
+          rationale: '压缩重复信息。',
+          evidenceFactIds: ['fact-rag'],
+          requiredFactCandidateIds: []
+        }
+      ],
       factCandidates: [],
       warnings: []
     };
     const commit: ResumeCommitResult = {
-      resume: { ...structuredClone(mockResume), summary: String(proposal.edits[0].after), version: mockResume.version + 1 },
+      resume: {
+        ...structuredClone(mockResume),
+        summary: String(proposal.edits[0].after),
+        version: mockResume.version + 1
+      },
       version: {
-        id: 'version-4', resumeId: mockResume.id, version: mockResume.version + 1,
-        parentVersion: mockResume.version, createdAt: new Date().toISOString(), source: 'ai-chat', summary: 'AI 修改'
+        id: 'version-4',
+        resumeId: mockResume.id,
+        version: mockResume.version + 1,
+        parentVersion: mockResume.version,
+        createdAt: new Date().toISOString(),
+        source: 'ai-chat',
+        summary: 'AI 修改'
       }
     };
     const propose = vi.spyOn(backend, 'proposeResumeChatEdits').mockResolvedValue(proposal);
     const apply = vi.spyOn(backend, 'applyResumeChatEdits').mockResolvedValue(commit);
 
-    render(ResumeChatDialog, { open: true, resume: mockResume, aiReady: true, initialJobId: mockJobs[0].id });
-    await fireEvent.input(screen.getByRole('textbox', { name: '发送给简历 AI 的消息' }), { target: { value: '帮我精简个人简介' } });
+    render(ResumeChatDialog, {
+      open: true,
+      resume: mockResume,
+      aiReady: true,
+      initialJobId: mockJobs[0].id
+    });
+    await fireEvent.input(screen.getByRole('textbox', { name: '发送给简历 AI 的消息' }), {
+      target: { value: '帮我精简个人简介' }
+    });
     await fireEvent.click(screen.getByRole('button', { name: '发送' }));
 
-    await waitFor(() => expect(propose).toHaveBeenCalledWith(expect.objectContaining({
-      target: { kind: 'master', id: mockResume.id },
-      expectedVersion: mockResume.version,
-      jobId: mockJobs[0].id
-    })));
+    await waitFor(() =>
+      expect(propose).toHaveBeenCalledWith(
+        expect.objectContaining({
+          target: { kind: 'master', id: mockResume.id },
+          expectedVersion: mockResume.version,
+          jobId: mockJobs[0].id
+        })
+      )
+    );
     expect(await screen.findByText('修改前')).toBeInTheDocument();
     expect(screen.getByText('修改后')).toBeInTheDocument();
     expect(screen.getByText(String(proposal.edits[0].after))).toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole('button', { name: '应用所选修改' }));
-    await waitFor(() => expect(apply).toHaveBeenCalledWith({
-      proposal,
-      selectedEditIds: ['edit-summary'],
-      confirmedFactCandidateIds: [],
-      expectedVersion: mockResume.version
-    }));
+    await waitFor(() =>
+      expect(apply).toHaveBeenCalledWith({
+        proposal,
+        selectedEditIds: ['edit-summary'],
+        confirmedFactCandidateIds: [],
+        expectedVersion: mockResume.version
+      })
+    );
   });
 
   it('shows a server-resolved market context, hides job selection, and waits for explicit send', async () => {
     const marketRequest = { keywordKeys: ['ai-agent'], focusSkills: ['RAG'] };
     const proposal: ResumeChatProposal = {
-      proposalId: 'proposal-market', target: { kind: 'master', id: mockResume.id }, baseVersion: mockResume.version,
+      proposalId: 'proposal-market',
+      target: { kind: 'master', id: mockResume.id },
+      baseVersion: mockResume.version,
       job: null,
       marketContext: {
-        keywordKeys: ['ai-agent'], keywordLabels: ['AI Agent'], totalJobs: 18,
-        skills: [{ label: 'RAG', jobCount: 9, percentage: 50, status: 'gap', rationale: '尚无候选人事实证据。' }]
+        keywordKeys: ['ai-agent'],
+        keywordLabels: ['AI Agent'],
+        totalJobs: 18,
+        skills: [
+          {
+            label: 'RAG',
+            jobCount: 9,
+            percentage: 50,
+            status: 'gap',
+            rationale: '尚无候选人事实证据。'
+          }
+        ]
       },
-      assistantMessage: '请先说明你是否有 RAG 项目经历。', edits: [], factCandidates: [], warnings: []
+      assistantMessage: '请先说明你是否有 RAG 项目经历。',
+      edits: [],
+      factCandidates: [],
+      warnings: []
     };
     const propose = vi.spyOn(backend, 'proposeResumeChatEdits').mockResolvedValue(proposal);
     const listOptions = vi.spyOn(backend, 'listJobOptions');
     render(ResumeChatDialog, {
-      open: true, resume: mockResume, aiReady: true,
-      initialPrompt: '请先核对 RAG 相关经历。', initialMarketContext: marketRequest
+      open: true,
+      resume: mockResume,
+      aiReady: true,
+      initialPrompt: '请先核对 RAG 相关经历。',
+      initialMarketContext: marketRequest
     });
 
     expect(screen.getByText('市场样本上下文 · 主简历')).toBeInTheDocument();
     expect(screen.queryByLabelText('关联岗位')).not.toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: '发送给简历 AI 的消息' })).toHaveValue('请先核对 RAG 相关经历。');
+    expect(screen.getByRole('textbox', { name: '发送给简历 AI 的消息' })).toHaveValue(
+      '请先核对 RAG 相关经历。'
+    );
     expect(propose).not.toHaveBeenCalled();
     expect(listOptions).not.toHaveBeenCalled();
 
     await fireEvent.click(screen.getByRole('button', { name: '发送' }));
-    await waitFor(() => expect(propose).toHaveBeenCalledWith(expect.objectContaining({
-      jobId: null,
-      marketContext: marketRequest
-    })));
+    await waitFor(() =>
+      expect(propose).toHaveBeenCalledWith(
+        expect.objectContaining({
+          jobId: null,
+          marketContext: marketRequest
+        })
+      )
+    );
     expect(await screen.findByText(/后端确认的市场样本：AI Agent/)).toBeInTheDocument();
     expect(screen.getByText('请先说明你是否有 RAG 项目经历。')).toBeInTheDocument();
   });
@@ -109,26 +162,47 @@ describe('ResumeChatDialog', () => {
 describe('ResumeVersionDrawer', () => {
   it('loads an immutable version and restores it as a new version', async () => {
     const current: ResumeVersionSummary = {
-      id: 'version-3', resumeId: mockResume.id, version: 3, parentVersion: 2,
-      createdAt: '2026-07-11T08:00:00.000Z', source: 'manual', summary: '当前版本'
+      id: 'version-3',
+      resumeId: mockResume.id,
+      version: 3,
+      parentVersion: 2,
+      createdAt: '2026-07-11T08:00:00.000Z',
+      source: 'manual',
+      summary: '当前版本'
     };
     const older: ResumeVersionSummary = {
-      id: 'version-2', resumeId: mockResume.id, version: 2, parentVersion: 1,
-      createdAt: '2026-07-10T08:00:00.000Z', source: 'import', summary: '首次导入'
+      id: 'version-2',
+      resumeId: mockResume.id,
+      version: 2,
+      parentVersion: 1,
+      createdAt: '2026-07-10T08:00:00.000Z',
+      source: 'import',
+      summary: '首次导入'
     };
     const details = new Map<string, ResumeVersionDetail>([
       [current.id, { ...current, profile: structuredClone(mockResume) }],
-      [older.id, { ...older, profile: { ...structuredClone(mockResume), version: 2, summary: '旧版简介' } }]
+      [
+        older.id,
+        { ...older, profile: { ...structuredClone(mockResume), version: 2, summary: '旧版简介' } }
+      ]
     ]);
     const restored: ResumeCommitResult = {
       resume: { ...structuredClone(mockResume), version: 4, summary: '旧版简介' },
       version: {
-        id: 'version-4', resumeId: mockResume.id, version: 4, parentVersion: 3,
-        createdAt: '2026-07-11T09:00:00.000Z', source: 'rollback', summary: '恢复到 v2', restoredFromVersion: 2
+        id: 'version-4',
+        resumeId: mockResume.id,
+        version: 4,
+        parentVersion: 3,
+        createdAt: '2026-07-11T09:00:00.000Z',
+        source: 'rollback',
+        summary: '恢复到 v2',
+        restoredFromVersion: 2
       }
     };
     vi.spyOn(backend, 'listResumeVersions').mockResolvedValue([current, older]);
-    vi.spyOn(backend, 'getResumeVersion').mockImplementation(async (id) => details.get(id) ?? { ...restored.version, profile: restored.resume });
+    vi.spyOn(backend, 'getResumeVersion').mockImplementation(
+      async (id) => details.get(id) ?? { ...restored.version, profile: restored.resume }
+    );
     const restore = vi.spyOn(backend, 'restoreResumeVersion').mockResolvedValue(restored);
     vi.spyOn(window, 'confirm').mockReturnValue(true);
 

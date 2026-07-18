@@ -25,8 +25,15 @@ function add(type, name, version, purl, ecosystem) {
 
 for (const [path, metadata] of Object.entries(packageLock.packages || {})) {
   if (!path || !metadata.version || !path.includes('node_modules/')) continue;
-  const name = metadata.name || path.slice(path.lastIndexOf('node_modules/') + 13) || basename(path);
-  add('library', name, metadata.version, `pkg:npm/${encodeURIComponent(name)}@${metadata.version}`, 'npm');
+  const name =
+    metadata.name || path.slice(path.lastIndexOf('node_modules/') + 13) || basename(path);
+  add(
+    'library',
+    name,
+    metadata.version,
+    `pkg:npm/${encodeURIComponent(name)}@${metadata.version}`,
+    'npm'
+  );
 }
 
 function lockedPackages(path, ecosystem) {
@@ -37,7 +44,13 @@ function lockedPackages(path, ecosystem) {
     const version = block.match(/^\s*version\s*=\s*"([^"]+)"/m)?.[1];
     if (!name || !version) continue;
     const purlType = ecosystem === 'cargo' ? 'cargo' : 'pypi';
-    add('library', name, version, `pkg:${purlType}/${encodeURIComponent(name)}@${version}`, ecosystem);
+    add(
+      'library',
+      name,
+      version,
+      `pkg:${purlType}/${encodeURIComponent(name)}@${version}`,
+      ecosystem
+    );
   }
 }
 

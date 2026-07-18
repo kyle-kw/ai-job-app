@@ -18,3 +18,17 @@ ai-job-sidecar = "worker:main"
 
 [dependency-groups]
 build = ["pyinstaller==6.21.0"]
+dev = [
+    "ruff>=0.15.22",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+extend-exclude = ["vendor"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "BLE"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*.py" = ["E402"]

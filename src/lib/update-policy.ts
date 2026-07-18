@@ -5,6 +5,5 @@ export function shouldStartAutomaticUpdateCheck(
   acknowledgedPrivacyVersion: string,
   requiredPrivacyVersion: string
 ): boolean {
-  return settings.automaticUpdateChecks
-    && acknowledgedPrivacyVersion === requiredPrivacyVersion;
+  return settings.automaticUpdateChecks && acknowledgedPrivacyVersion === requiredPrivacyVersion;
 }

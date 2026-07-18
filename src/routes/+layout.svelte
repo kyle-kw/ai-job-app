@@ -17,8 +17,17 @@
   const privacyVersion = '2026-07-14';
 
   $: acknowledgedVersion = $snapshot.settings.privacyAcknowledgedVersion ?? '';
-  $: shouldAutoCheck = shouldStartAutomaticUpdateCheck($snapshot.settings, acknowledgedVersion, privacyVersion);
-  $: if (!$loading && !$appError && shouldAutoCheck && autoCheckStartedFor !== acknowledgedVersion) {
+  $: shouldAutoCheck = shouldStartAutomaticUpdateCheck(
+    $snapshot.settings,
+    acknowledgedVersion,
+    privacyVersion
+  );
+  $: if (
+    !$loading &&
+    !$appError &&
+    shouldAutoCheck &&
+    autoCheckStartedFor !== acknowledgedVersion
+  ) {
     autoCheckStartedFor = acknowledgedVersion;
     void checkForUpdate(false);
   }
@@ -53,23 +62,33 @@
 </svelte:head>
 
 {#if $loading}
-  <div class="fixed inset-0 grid place-items-center bg-[var(--app-bg)]"><p class="text-sm body-muted">正在安全加载本地数据…</p></div>
+  <div class="fixed inset-0 grid place-items-center bg-[var(--app-bg)]">
+    <p class="text-sm body-muted">正在安全加载本地数据…</p>
+  </div>
 {:else if $appError}
   <div class="fixed inset-0 grid place-items-center bg-[var(--app-bg)] p-6">
     <div class="panel max-w-xl p-6 text-sm">
       <h1 class="text-lg font-semibold">应用无法安全启动</h1>
       <p class="mt-3 leading-6 text-danger">{$appError}</p>
-      <p class="mt-3 text-xs body-muted">为避免创建空数据库掩盖迁移问题，应用已停止继续加载。原数据不会被删除。</p>
-      <div class="mt-5 flex justify-end"><button class="btn-primary" type="button" on:click={() => void refresh()}>重试</button></div>
+      <p class="mt-3 text-xs body-muted">
+        为避免创建空数据库掩盖迁移问题，应用已停止继续加载。原数据不会被删除。
+      </p>
+      <div class="mt-5 flex justify-end">
+        <button class="btn-primary" type="button" on:click={() => void refresh()}>重试</button>
+      </div>
     </div>
   </div>
 {:else if acknowledgedVersion !== privacyVersion}
-  <PrivacyGate accepting={acceptingPrivacy} onAccept={() => void acceptPrivacy()} onExit={() => void backend.exitApp()} />
+  <PrivacyGate
+    accepting={acceptingPrivacy}
+    onAccept={() => void acceptPrivacy()}
+    onExit={() => void backend.exitApp()}
+  />
 {:else}
   <div class="app-shell">
     <Sidebar />
     <div class="flex min-w-0 flex-1 flex-col">
-      <Topbar onTasks={() => taskDrawerOpen = true} />
+      <Topbar onTasks={() => (taskDrawerOpen = true)} />
       <main class="page-shell scrollbar-thin"><slot /></main>
     </div>
     <TaskDrawer bind:open={taskDrawerOpen} />

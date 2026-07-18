@@ -12,6 +12,8 @@ describe('TaskDrawer accessibility', () => {
     render(TaskDrawer, { open: true });
     expect(screen.getByRole('dialog', { name: '任务中心' })).toHaveAttribute('aria-modal', 'true');
     await fireEvent.keyDown(document, { key: 'Escape' });
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: '任务中心' })).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: '任务中心' })).not.toBeInTheDocument()
+    );
   });
 });

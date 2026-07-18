@@ -4,14 +4,13 @@ import json
 import os
 import pathlib
 import subprocess
+import sys
 import tempfile
 import types
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
 from unittest.mock import Mock, patch
-
-import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -38,9 +37,11 @@ class WorkerTests(unittest.TestCase):
             (application / "137.0.1.9").mkdir()
             (application / "138.0.3351.95").mkdir()
             fake = types.SimpleNamespace(DEFAULT_CHROME_PATH=str(executable))
-            with patch.object(worker.os, "name", "nt"), \
-                    patch.object(worker.subprocess, "run") as run, \
-                    patch.object(worker, "load_boss_module", return_value=fake):
+            with (
+                patch.object(worker.os, "name", "nt"),
+                patch.object(worker.subprocess, "run") as run,
+                patch.object(worker, "load_boss_module", return_value=fake),
+            ):
                 status = worker.environment_status({})
         self.assertTrue(status["chrome"]["installed"])
         self.assertEqual(status["chrome"]["version"], "138.0.3351.95")
@@ -58,9 +59,11 @@ class WorkerTests(unittest.TestCase):
                 stdout="Google Chrome 138.0.7204.168\n",
                 stderr="",
             )
-            with patch.object(worker.os, "name", "posix"), \
-                    patch.object(worker.subprocess, "run", return_value=completed) as run, \
-                    patch.object(worker, "load_boss_module", return_value=fake):
+            with (
+                patch.object(worker.os, "name", "posix"),
+                patch.object(worker.subprocess, "run", return_value=completed) as run,
+                patch.object(worker, "load_boss_module", return_value=fake),
+            ):
                 status = worker.environment_status({})
         self.assertTrue(status["chrome"]["installed"])
         self.assertEqual(status["chrome"]["version"], "Google Chrome 138.0.7204.168")
@@ -79,13 +82,15 @@ class WorkerTests(unittest.TestCase):
             executable = pathlib.Path(temporary) / "Google Chrome"
             executable.touch()
             fake = types.SimpleNamespace(DEFAULT_CHROME_PATH=str(executable))
-            with patch.object(worker.os, "name", "posix"), \
-                    patch.object(
-                        worker.subprocess,
-                        "run",
-                        side_effect=subprocess.TimeoutExpired([str(executable), "--version"], 5),
-                    ), \
-                    patch.object(worker, "load_boss_module", return_value=fake):
+            with (
+                patch.object(worker.os, "name", "posix"),
+                patch.object(
+                    worker.subprocess,
+                    "run",
+                    side_effect=subprocess.TimeoutExpired([str(executable), "--version"], 5),
+                ),
+                patch.object(worker, "load_boss_module", return_value=fake),
+            ):
                 status = worker.environment_status({})
         self.assertTrue(status["chrome"]["installed"])
         self.assertIsNone(status["chrome"]["version"])
@@ -101,8 +106,10 @@ class WorkerTests(unittest.TestCase):
                 DEFAULT_RESULT_DIR=str(result),
                 chrome_pids_for_user_data_dir=Mock(return_value=[]),
             )
-            with patch.object(worker, "load_boss_module", return_value=fake), \
-                    patch.object(worker, "close_boss_session", return_value={"cleanupSucceeded": True}):
+            with (
+                patch.object(worker, "load_boss_module", return_value=fake),
+                patch.object(worker, "close_boss_session", return_value={"cleanupSucceeded": True}),
+            ):
                 outcome = worker.clear_boss_data({})
             self.assertEqual(outcome["remainingPids"], [])
             self.assertFalse(profile.exists())
@@ -129,13 +136,17 @@ class WorkerTests(unittest.TestCase):
             session.eval_js("missing", "session")
 
     def test_cdp_websocket_suppresses_origin_header(self):
-        response = types.SimpleNamespace(json=lambda: {"webSocketDebuggerUrl": "ws://127.0.0.1/devtools/browser/test"})
+        response = types.SimpleNamespace(
+            json=lambda: {"webSocketDebuggerUrl": "ws://127.0.0.1/devtools/browser/test"}
+        )
         requests_module = types.SimpleNamespace(get=Mock(return_value=response))
         connect = Mock(return_value=types.SimpleNamespace())
         websocket_module = types.SimpleNamespace(create_connection=connect)
-        with patch.object(boss_vendor, "require_runtime_dependencies", return_value=True), \
-                patch.object(boss_vendor, "requests", requests_module), \
-                patch.object(boss_vendor, "websocket", websocket_module):
+        with (
+            patch.object(boss_vendor, "require_runtime_dependencies", return_value=True),
+            patch.object(boss_vendor, "requests", requests_module),
+            patch.object(boss_vendor, "websocket", websocket_module),
+        ):
             boss_vendor.CDPSession(9222)
         self.assertTrue(connect.call_args.kwargs["suppress_origin"])
 
@@ -170,7 +181,10 @@ class WorkerTests(unittest.TestCase):
                 return Page("page")
 
         fake_pdfium = types.SimpleNamespace(PdfDocument=lambda _path: Document("document"))
-        with patch.dict(sys.modules, {"pypdfium2": fake_pdfium}), tempfile.TemporaryDirectory() as temporary:
+        with (
+            patch.dict(sys.modules, {"pypdfium2": fake_pdfium}),
+            tempfile.TemporaryDirectory() as temporary,
+        ):
             with self.assertRaisesRegex(RuntimeError, "save failed"):
                 worker.render_pdf_page(pathlib.Path("resume.pdf"), 0, pathlib.Path(temporary))
         self.assertEqual(closed, ["image", "bitmap", "page", "document"])
@@ -195,29 +209,68 @@ class WorkerTests(unittest.TestCase):
 
     def test_rendercv_yaml_is_structured(self):
         profile = worker.base_profile(
-            "resume.yaml", "林知远", "lin@example.com", "", "上海", "", "AI 工程师", "简介", ["Python"], [], []
+            "resume.yaml",
+            "林知远",
+            "lin@example.com",
+            "",
+            "上海",
+            "",
+            "AI 工程师",
+            "简介",
+            ["Python"],
+            [],
+            [],
         )
         data = worker.profile_to_rendercv(profile)
         self.assertEqual(data["cv"]["name"], "林知远")
-        self.assertEqual(data["cv"]["sections"]["专业技能"], [{"label": "核心技能", "details": "Python"}])
+        self.assertEqual(
+            data["cv"]["sections"]["专业技能"], [{"label": "核心技能", "details": "Python"}]
+        )
 
     def test_role_templates_keep_rendercv_section_order(self):
         profile = worker.base_profile(
-            "resume.yaml", "示例候选人", "sample@example.invalid", "", "上海", "", "候选人", "简介", ["SQL"], [], []
+            "resume.yaml",
+            "示例候选人",
+            "sample@example.invalid",
+            "",
+            "上海",
+            "",
+            "候选人",
+            "简介",
+            ["SQL"],
+            [],
+            [],
         )
-        profile["experiences"] = [{
-            "company": "示例公司", "position": "示例岗位", "location": "上海",
-            "startDate": "2022.01", "endDate": "至今", "highlights": ["示例成果"],
-        }]
-        profile["projects"] = [{
-            "name": "示例项目", "summary": "示例简介", "startDate": "2024.01", "endDate": "2024.06",
-            "highlights": ["示例成果"],
-        }]
+        profile["experiences"] = [
+            {
+                "company": "示例公司",
+                "position": "示例岗位",
+                "location": "上海",
+                "startDate": "2022.01",
+                "endDate": "至今",
+                "highlights": ["示例成果"],
+            }
+        ]
+        profile["projects"] = [
+            {
+                "name": "示例项目",
+                "summary": "示例简介",
+                "startDate": "2024.01",
+                "endDate": "2024.06",
+                "highlights": ["示例成果"],
+            }
+        ]
         profile["certifications"] = [{"name": "示例证书", "issuer": "示例机构", "date": "2023.01"}]
-        profile["education"] = [{
-            "institution": "示例大学", "area": "示例专业", "degree": "本科",
-            "startDate": "2018.09", "endDate": "2022.06", "highlights": [],
-        }]
+        profile["education"] = [
+            {
+                "institution": "示例大学",
+                "area": "示例专业",
+                "degree": "本科",
+                "startDate": "2018.09",
+                "endDate": "2022.06",
+                "highlights": [],
+            }
+        ]
 
         profile["templateId"] = "data-analysis"
         data_sections = list(worker.profile_to_rendercv(profile)["cv"]["sections"])
@@ -225,7 +278,9 @@ class WorkerTests(unittest.TestCase):
 
         profile["templateId"] = "finance-accounting"
         finance_sections = list(worker.profile_to_rendercv(profile)["cv"]["sections"])
-        self.assertEqual(finance_sections[:4], ["个人简介", "工作经历", "证书 / 专业资质", "专业技能"])
+        self.assertEqual(
+            finance_sections[:4], ["个人简介", "工作经历", "证书 / 专业资质", "专业技能"]
+        )
 
     def test_scrape_rejects_blank_keyword_without_loading_boss(self):
         with patch.object(worker, "load_boss_module") as load_boss:
@@ -237,7 +292,9 @@ class WorkerTests(unittest.TestCase):
         import yaml
 
         path = ROOT / "tests" / "fixtures" / "sample_resume.yaml"
-        profile = worker.profile_from_yaml(yaml.safe_load(path.read_text(encoding="utf-8")), path.name)
+        profile = worker.profile_from_yaml(
+            yaml.safe_load(path.read_text(encoding="utf-8")), path.name
+        )
         self.assertEqual(len(profile["experiences"]), 1)
         self.assertEqual(len(profile["education"]), 1)
         self.assertEqual(profile["education"][0]["institution"], "浙江工业大学")
@@ -245,7 +302,9 @@ class WorkerTests(unittest.TestCase):
     def test_date_ranges_are_normalized_and_single_dates_have_no_prefix(self):
         self.assertEqual(worker.normalize_date_pair("", "2024.12 - 至今"), ("2024.12", "至今"))
         self.assertEqual(worker.normalize_date_pair("2019.09–2023.06", ""), ("2019.09", "2023.06"))
-        self.assertEqual(worker.render_date_fields({"startDate": "", "endDate": "2024.12"}), ("2024-12", None))
+        self.assertEqual(
+            worker.render_date_fields({"startDate": "", "endDate": "2024.12"}), ("2024-12", None)
+        )
         self.assertEqual(worker.rendercv_date("2024.12"), "2024-12")
         self.assertEqual(worker.rendercv_date("至今", end_date=True), "present")
 
@@ -285,7 +344,9 @@ class WorkerTests(unittest.TestCase):
         self.assertFalse(design["header"]["connections"]["show_icons"])
         self.assertEqual(design["header"]["connections"]["separator"], "|")
         self.assertEqual(design["entries"]["date_and_location_width"], "4.6cm")
-        self.assertEqual(design["templates"]["experience_entry"]["date_and_location_column"], "LOCATION · DATE")
+        self.assertEqual(
+            design["templates"]["experience_entry"]["date_and_location_column"], "LOCATION · DATE"
+        )
         self.assertIn("Dify", data["settings"]["bold_keywords"])
 
     def test_all_color_themes_generate_pdf_files(self):
@@ -294,22 +355,54 @@ class WorkerTests(unittest.TestCase):
         bundled_library = pathlib.Path(pdf_png.__file__).parent / "rendercv_typst" / "lib.typ"
         bundled_before = bundled_library.read_bytes()
         profile = worker.base_profile(
-            "resume.pdf", "Candidate", "candidate@example.com", "", "Shanghai", "", "Engineer", "Summary",
+            "resume.pdf",
+            "Candidate",
+            "candidate@example.com",
+            "",
+            "Shanghai",
+            "",
+            "Engineer",
+            "Summary",
             [{"id": "skills", "label": "Core", "items": ["Python"]}],
-            [{"id": "experience", "company": "Example", "position": "Engineer", "location": "Shanghai", "startDate": "", "endDate": "2024.12 - present", "highlights": ["Delivered project"]}],
-            [{"id": "education", "institution": "Example University", "area": "Computer Science", "degree": "Bachelor", "degreeDetail": "", "startDate": "2018.09", "endDate": "2022.06", "highlights": []}],
+            [
+                {
+                    "id": "experience",
+                    "company": "Example",
+                    "position": "Engineer",
+                    "location": "Shanghai",
+                    "startDate": "",
+                    "endDate": "2024.12 - present",
+                    "highlights": ["Delivered project"],
+                }
+            ],
+            [
+                {
+                    "id": "education",
+                    "institution": "Example University",
+                    "area": "Computer Science",
+                    "degree": "Bachelor",
+                    "degreeDetail": "",
+                    "startDate": "2018.09",
+                    "endDate": "2022.06",
+                    "highlights": [],
+                }
+            ],
         )
         with tempfile.TemporaryDirectory() as temporary:
             for color_theme in worker.RESUME_COLOR_THEMES:
-                result = worker.render_resume({
-                    "profile": profile,
-                    "colorTheme": color_theme,
-                    "outputPath": str(pathlib.Path(temporary) / f"{color_theme}.pdf"),
-                })
+                result = worker.render_resume(
+                    {
+                        "profile": profile,
+                        "colorTheme": color_theme,
+                        "outputPath": str(pathlib.Path(temporary) / f"{color_theme}.pdf"),
+                    }
+                )
                 output = pathlib.Path(result["path"])
                 self.assertTrue(output.exists())
                 self.assertGreater(output.stat().st_size, 1_000)
-            self.assertTrue(all(path.suffix == ".pdf" for path in pathlib.Path(temporary).iterdir()))
+            self.assertTrue(
+                all(path.suffix == ".pdf" for path in pathlib.Path(temporary).iterdir())
+            )
         self.assertEqual(bundled_library.read_bytes(), bundled_before)
 
     def test_docx_extraction_includes_body_tables_headers_and_footers(self):
@@ -349,15 +442,28 @@ class WorkerTests(unittest.TestCase):
             self.assertTrue(pathlib.Path(pages[0]["imagePath"]).exists())
 
     def test_yaml_preserves_grouped_skills_positioning_projects_and_dates(self):
-        profile = worker.profile_from_yaml({"cv": {
-            "name": "林知远",
-            "sections": {
-                "个人定位": ["面向 AI 工程岗位。"],
-                "专业技能": [{"label": "后端与数据", "details": "Python, PostgreSQL"}],
-                "工作经历": [{"company": "示例公司", "position": "工程师", "date": "2024.01 - 至今"}],
-                "项目经历": [{"name": "RAG 平台", "summary": "本地知识库", "highlights": ["完成上线"]}],
+        profile = worker.profile_from_yaml(
+            {
+                "cv": {
+                    "name": "林知远",
+                    "sections": {
+                        "个人定位": ["面向 AI 工程岗位。"],
+                        "专业技能": [{"label": "后端与数据", "details": "Python, PostgreSQL"}],
+                        "工作经历": [
+                            {"company": "示例公司", "position": "工程师", "date": "2024.01 - 至今"}
+                        ],
+                        "项目经历": [
+                            {
+                                "name": "RAG 平台",
+                                "summary": "本地知识库",
+                                "highlights": ["完成上线"],
+                            }
+                        ],
+                    },
+                }
             },
-        }}, "resume.yaml")
+            "resume.yaml",
+        )
         self.assertEqual(profile["summary"], "面向 AI 工程岗位。")
         self.assertEqual(profile["professionalSkills"][0]["label"], "后端与数据")
         self.assertEqual(profile["professionalSkills"][0]["items"], ["Python", "PostgreSQL"])
@@ -366,7 +472,9 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(profile["projects"][0]["name"], "RAG 平台")
 
     def test_market_report_stays_scoped(self):
-        report = worker.market_report([{"skills": ["Python"], "experience": "3-5年", "degree": "本科"}], "AI Agent", "上海")
+        report = worker.market_report(
+            [{"skills": ["Python"], "experience": "3-5年", "degree": "本科"}], "AI Agent", "上海"
+        )
         self.assertIn("本次岗位样本观察", report)
         self.assertIn("有限页样本", report)
         self.assertIn("不能作为候选人经历证据", report)
@@ -396,19 +504,24 @@ class WorkerTests(unittest.TestCase):
             def chrome_pids_for_user_data_dir(_data_dir):
                 return []
 
-        with patch.object(worker, "load_boss_module", return_value=FakeBoss()), \
-                patch.object(worker, "emit"):
+        with (
+            patch.object(worker, "load_boss_module", return_value=FakeBoss()),
+            patch.object(worker, "emit"),
+        ):
             result = worker.setup_boss({"resetProfile": True, "loginTimeout": 10})
 
         self.assertEqual(FakeBoss.reset_values, [True])
         self.assertEqual(FakeBoss.stop_calls, 2)
-        self.assertEqual(result, {
-            "loginSucceeded": True,
-            "resetRequested": True,
-            "cleanupSucceeded": True,
-            "closedProcesses": 2,
-            "error": None,
-        })
+        self.assertEqual(
+            result,
+            {
+                "loginSucceeded": True,
+                "resetRequested": True,
+                "cleanupSucceeded": True,
+                "closedProcesses": 2,
+                "error": None,
+            },
+        )
 
     def test_setup_boss_failure_still_closes_dedicated_chrome(self):
         class FakeBoss:
@@ -429,8 +542,10 @@ class WorkerTests(unittest.TestCase):
             def chrome_pids_for_user_data_dir(_data_dir):
                 return []
 
-        with patch.object(worker, "load_boss_module", return_value=FakeBoss()), \
-                patch.object(worker, "emit"):
+        with (
+            patch.object(worker, "load_boss_module", return_value=FakeBoss()),
+            patch.object(worker, "emit"),
+        ):
             result = worker.setup_boss({"loginTimeout": 1})
 
         self.assertFalse(result["loginSucceeded"])
@@ -458,8 +573,10 @@ class WorkerTests(unittest.TestCase):
             def chrome_pids_for_user_data_dir(_data_dir):
                 return [91]
 
-        with patch.object(worker, "load_boss_module", return_value=FakeBoss()), \
-                patch.object(worker, "emit"):
+        with (
+            patch.object(worker, "load_boss_module", return_value=FakeBoss()),
+            patch.object(worker, "emit"),
+        ):
             result = worker.setup_boss({"resetProfile": True})
 
         self.assertFalse(FakeBoss.setup_called)
@@ -479,15 +596,20 @@ class WorkerTests(unittest.TestCase):
             def chrome_pids_for_user_data_dir(_data_dir):
                 return []
 
-        with patch.object(worker, "load_boss_module", return_value=FakeBoss()), \
-                patch.object(worker, "emit"):
+        with (
+            patch.object(worker, "load_boss_module", return_value=FakeBoss()),
+            patch.object(worker, "emit"),
+        ):
             result = worker.OPERATIONS["close_boss"]({})
 
-        self.assertEqual(result, {
-            "cleanupSucceeded": True,
-            "closedProcesses": 2,
-            "error": None,
-        })
+        self.assertEqual(
+            result,
+            {
+                "cleanupSucceeded": True,
+                "closedProcesses": 2,
+                "error": None,
+            },
+        )
 
     def test_profile_scoped_stop_never_terminates_normal_chrome(self):
         dedicated = r"C:\tmp\boss-profile"
@@ -501,9 +623,13 @@ class WorkerTests(unittest.TestCase):
             self.assertFalse(force)
             running[:] = [item for item in running if item[0] != pid]
 
-        with patch.object(boss_vendor, "iter_chrome_process_commands", side_effect=lambda: list(running)), \
-                patch.object(boss_vendor, "terminate_process", side_effect=terminate) as terminate_mock, \
-                patch.object(boss_vendor.time, "sleep"):
+        with (
+            patch.object(
+                boss_vendor, "iter_chrome_process_commands", side_effect=lambda: list(running)
+            ),
+            patch.object(boss_vendor, "terminate_process", side_effect=terminate) as terminate_mock,
+            patch.object(boss_vendor.time, "sleep"),
+        ):
             stopped = boss_vendor.stop_cdp_chrome(dedicated)
 
         self.assertEqual(stopped, 1)
@@ -513,8 +639,10 @@ class WorkerTests(unittest.TestCase):
 
     def test_windows_chrome_process_lookup_hides_powershell_window(self):
         completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="[]", stderr="")
-        with patch.object(boss_vendor.platform, "system", return_value="Windows"), \
-                patch.object(boss_vendor.subprocess, "run", return_value=completed) as run:
+        with (
+            patch.object(boss_vendor.platform, "system", return_value="Windows"),
+            patch.object(boss_vendor.subprocess, "run", return_value=completed) as run,
+        ):
             self.assertEqual(boss_vendor.iter_chrome_process_commands(), [])
 
         self.assertEqual(
@@ -523,8 +651,10 @@ class WorkerTests(unittest.TestCase):
         )
 
     def test_windows_chrome_termination_hides_taskkill_window(self):
-        with patch.object(boss_vendor.platform, "system", return_value="Windows"), \
-                patch.object(boss_vendor.subprocess, "run") as run:
+        with (
+            patch.object(boss_vendor.platform, "system", return_value="Windows"),
+            patch.object(boss_vendor.subprocess, "run") as run,
+        ):
             boss_vendor.terminate_process(22, force=True)
 
         self.assertEqual(run.call_args.args[0], ["taskkill", "/PID", "22", "/T", "/F"])
@@ -534,10 +664,12 @@ class WorkerTests(unittest.TestCase):
         )
 
     def test_profile_reset_refuses_to_delete_while_pid_remains(self):
-        with patch.object(boss_vendor, "stop_cdp_chrome", return_value=0), \
-                patch.object(boss_vendor, "chrome_pids_for_user_data_dir", return_value=[22]), \
-                patch.object(boss_vendor.os.path, "exists", return_value=True), \
-                patch.object(boss_vendor.shutil, "rmtree") as rmtree:
+        with (
+            patch.object(boss_vendor, "stop_cdp_chrome", return_value=0),
+            patch.object(boss_vendor, "chrome_pids_for_user_data_dir", return_value=[22]),
+            patch.object(boss_vendor.os.path, "exists", return_value=True),
+            patch.object(boss_vendor.shutil, "rmtree") as rmtree,
+        ):
             with self.assertRaisesRegex(RuntimeError, "remaining PIDs"):
                 boss_vendor.prepare_cdp_profile(reset=True)
 
@@ -574,13 +706,15 @@ class WorkerTests(unittest.TestCase):
                 cls.received_city = city
                 cls.received_pages = pages
                 result = {
-                    "jobs": [{
-                        "job_id": "job-1",
-                        "title": "AI 工程师",
-                        "boss_name": "示例公司",
-                        "location": "上海·浦东新区",
-                        "salary": "20-30K",
-                    }]
+                    "jobs": [
+                        {
+                            "job_id": "job-1",
+                            "title": "AI 工程师",
+                            "boss_name": "示例公司",
+                            "location": "上海·浦东新区",
+                            "salary": "20-30K",
+                        }
+                    ]
                 }
                 _kwargs["on_job"](result["jobs"][0])
                 return result
@@ -590,8 +724,14 @@ class WorkerTests(unittest.TestCase):
                 detail = {"job_id": "job-1", "jd": "负责 AI 应用研发", "skill_tags": ["Python"]}
                 _kwargs["on_detail"](listing["jobs"][0], detail)
                 _kwargs["on_progress"](
-                    status="success", processed=1, total=1, succeeded=1,
-                    skipped=0, failed=0, title="AI 工程师", message="详情抓取成功",
+                    status="success",
+                    processed=1,
+                    total=1,
+                    succeeded=1,
+                    skipped=0,
+                    failed=0,
+                    title="AI 工程师",
+                    message="详情抓取成功",
                 )
                 return [detail]
 
@@ -607,9 +747,13 @@ class WorkerTests(unittest.TestCase):
 
         fake = FakeBoss()
         events = []
-        with patch.object(worker, "load_boss_module", return_value=fake), \
-                patch.object(worker, "emit", side_effect=lambda kind, **payload: events.append((kind, payload))), \
-                redirect_stdout(StringIO()):
+        with (
+            patch.object(worker, "load_boss_module", return_value=fake),
+            patch.object(
+                worker, "emit", side_effect=lambda kind, **payload: events.append((kind, payload))
+            ),
+            redirect_stdout(StringIO()),
+        ):
             result = worker.scrape_jobs({"keyword": "AI Agent", "city": " 上海 "})
 
         self.assertTrue(fake.setup_called)
@@ -661,8 +805,14 @@ class WorkerTests(unittest.TestCase):
                 detail = {"job_id": raw["job_id"], "jd": "有效 JD", "skill_tags": []}
                 kwargs["on_detail"](raw, detail)
                 kwargs["on_progress"](
-                    status="success", processed=1, total=1, succeeded=1,
-                    skipped=0, failed=0, title=raw["title"], message="详情抓取成功",
+                    status="success",
+                    processed=1,
+                    total=1,
+                    succeeded=1,
+                    skipped=0,
+                    failed=0,
+                    title=raw["title"],
+                    message="详情抓取成功",
                 )
                 return [detail]
 
@@ -675,24 +825,44 @@ class WorkerTests(unittest.TestCase):
                 return []
 
         events = []
-        with patch.object(worker, "load_boss_module", return_value=FakeBoss()), \
-                patch.object(worker, "emit", side_effect=lambda kind, **payload: events.append((kind, payload))):
-            result = worker.scrape_jobs({
-                "keyword": "AI",
-                "city": "上海",
-                "pages": 99,
-                "completedDetailExternalIds": ["job-done"],
-            })
+        with (
+            patch.object(worker, "load_boss_module", return_value=FakeBoss()),
+            patch.object(
+                worker, "emit", side_effect=lambda kind, **payload: events.append((kind, payload))
+            ),
+        ):
+            result = worker.scrape_jobs(
+                {
+                    "keyword": "AI",
+                    "city": "上海",
+                    "pages": 99,
+                    "completedDetailExternalIds": ["job-done"],
+                }
+            )
 
         self.assertEqual(FakeBoss.received_pages, 5)
         self.assertEqual(FakeBoss.detail_job_ids, ["job-new"])
-        self.assertEqual([payload["phase"] for kind, payload in events if kind == "job"], [
-            "list", "list", "detail",
-        ])
-        self.assertEqual(result["detailSummary"], {
-            "total": 2, "succeeded": 1, "skipped": 1, "failed": 0, "processed": 2,
-        })
-        final_progress = [payload for kind, payload in events if kind == "progress" and payload["progress"] == 78]
+        self.assertEqual(
+            [payload["phase"] for kind, payload in events if kind == "job"],
+            [
+                "list",
+                "list",
+                "detail",
+            ],
+        )
+        self.assertEqual(
+            result["detailSummary"],
+            {
+                "total": 2,
+                "succeeded": 1,
+                "skipped": 1,
+                "failed": 0,
+                "processed": 2,
+            },
+        )
+        final_progress = [
+            payload for kind, payload in events if kind == "progress" and payload["progress"] == 78
+        ]
         self.assertEqual(final_progress[-1]["detailSkipped"], 1)
         self.assertEqual(final_progress[-1]["detailFailed"], 0)
 
@@ -737,8 +907,7 @@ class WorkerTests(unittest.TestCase):
 
         self.assertEqual(
             jd,
-            description.strip()
-            + "\n\n公司介绍\n示例公司专注于企业级人工智能产品。\n"
+            description.strip() + "\n\n公司介绍\n示例公司专注于企业级人工智能产品。\n"
             "拥有成熟的研发团队和多个落地案例。",
         )
         self.assertNotIn("点击查看地图", jd)
@@ -766,10 +935,12 @@ class WorkerTests(unittest.TestCase):
 
     def test_detail_extractor_rejects_navigation_and_short_pages(self):
         with self.assertRaisesRegex(boss_vendor.DetailExtractionError, "navigation chrome"):
-            boss_vendor.extract_job_description({
-                "jd": "",
-                "page_text": "首页\n职位\n公司\n校园\n无障碍专区\n热门职位",
-            })
+            boss_vendor.extract_job_description(
+                {
+                    "jd": "",
+                    "page_text": "首页\n职位\n公司\n校园\n无障碍专区\n热门职位",
+                }
+            )
         with self.assertRaisesRegex(boss_vendor.DetailExtractionError, "too short"):
             boss_vendor.extract_job_description({"jd": "职位描述\n只有一句话"})
 
@@ -801,10 +972,12 @@ class WorkerTests(unittest.TestCase):
                     return None
                 if self.index == 1:
                     return json.dumps({"jd": "   ", "tags": []})
-                return json.dumps({
-                    "jd": "职位描述\n" + "负责 AI 平台研发、模型部署和业务场景落地。\n" * 8,
-                    "tags": ["Python"],
-                })
+                return json.dumps(
+                    {
+                        "jd": "职位描述\n" + "负责 AI 平台研发、模型部署和业务场景落地。\n" * 8,
+                        "tags": ["Python"],
+                    }
+                )
 
             def close(self):
                 self.closed = True
@@ -820,13 +993,15 @@ class WorkerTests(unittest.TestCase):
         ]
         details = []
         progress = []
-        with tempfile.TemporaryDirectory() as temporary, \
-                patch.object(boss_vendor, "CDPSession", FakeSession), \
-                patch.object(boss_vendor, "incr_request"), \
-                patch.object(boss_vendor.time, "sleep"), \
-                patch.object(boss_vendor.random, "uniform", return_value=0), \
-                patch.object(boss_vendor.random, "randint", return_value=0), \
-                patch.object(boss_vendor.random, "random", return_value=1):
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            patch.object(boss_vendor, "CDPSession", FakeSession),
+            patch.object(boss_vendor, "incr_request"),
+            patch.object(boss_vendor.time, "sleep"),
+            patch.object(boss_vendor.random, "uniform", return_value=0),
+            patch.object(boss_vendor.random, "randint", return_value=0),
+            patch.object(boss_vendor.random, "random", return_value=1),
+        ):
             result = boss_vendor.scrape_details(
                 {"jobs": jobs},
                 output_path=str(pathlib.Path(temporary) / "details.json"),
@@ -836,7 +1011,9 @@ class WorkerTests(unittest.TestCase):
 
         self.assertEqual([detail["job_id"] for detail in result], ["job-2"])
         self.assertEqual(len(details), 1)
-        self.assertEqual([payload["status"] for payload in progress], ["failed", "failed", "success"])
+        self.assertEqual(
+            [payload["status"] for payload in progress], ["failed", "failed", "success"]
+        )
         self.assertEqual(progress[-1]["succeeded"], 1)
         self.assertEqual(progress[-1]["failed"], 2)
         self.assertTrue(all(session.closed for session in FakeSession.instances))
@@ -844,11 +1021,17 @@ class WorkerTests(unittest.TestCase):
         self.assertTrue(FakeSession.instances[1].closed_target)
         self.assertTrue(FakeSession.instances[2].closed_target)
         calls = FakeSession.instances[2].calls
-        self.assertIn(("Target.createTarget", {"url": "about:blank", "background": True}, None), calls)
-        injection_index = next(index for index, call in enumerate(calls)
-                               if call[0] == "Page.addScriptToEvaluateOnNewDocument")
-        navigation_index = next(index for index, call in enumerate(calls)
-                                if call[0] == "Page.navigate")
+        self.assertIn(
+            ("Target.createTarget", {"url": "about:blank", "background": True}, None), calls
+        )
+        injection_index = next(
+            index
+            for index, call in enumerate(calls)
+            if call[0] == "Page.addScriptToEvaluateOnNewDocument"
+        )
+        navigation_index = next(
+            index for index, call in enumerate(calls) if call[0] == "Page.navigate"
+        )
         self.assertLess(injection_index, navigation_index)
         self.assertIn("visibilityState", calls[injection_index][1]["source"])
 
@@ -872,11 +1055,13 @@ class WorkerTests(unittest.TestCase):
 
             def eval_js(self, script, _session_id=None):
                 if script == boss_vendor.EXTRACT_DETAIL_JS:
-                    return json.dumps({
-                        "jd": "",
-                        "page_text": "职位描述\n负责产品规划\n登录查看完整内容",
-                        "tags": [],
-                    })
+                    return json.dumps(
+                        {
+                            "jd": "",
+                            "page_text": "职位描述\n负责产品规划\n登录查看完整内容",
+                            "tags": [],
+                        }
+                    )
                 return None
 
             def close(self):
@@ -889,13 +1074,15 @@ class WorkerTests(unittest.TestCase):
             "job_link": "https://www.zhipin.com/job_detail/blocked.html",
         }
         progress = []
-        with tempfile.TemporaryDirectory() as temporary, \
-                patch.object(boss_vendor, "CDPSession", FakeSession), \
-                patch.object(boss_vendor, "incr_request"), \
-                patch.object(boss_vendor.time, "sleep"), \
-                patch.object(boss_vendor.random, "uniform", return_value=0), \
-                patch.object(boss_vendor.random, "randint", return_value=0), \
-                patch.object(boss_vendor.random, "random", return_value=1):
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            patch.object(boss_vendor, "CDPSession", FakeSession),
+            patch.object(boss_vendor, "incr_request"),
+            patch.object(boss_vendor.time, "sleep"),
+            patch.object(boss_vendor.random, "uniform", return_value=0),
+            patch.object(boss_vendor.random, "randint", return_value=0),
+            patch.object(boss_vendor.random, "random", return_value=1),
+        ):
             output = pathlib.Path(temporary) / "details.json"
             with self.assertRaisesRegex(RuntimeError, "登录状态已失效"):
                 boss_vendor.scrape_details(
@@ -936,8 +1123,10 @@ class WorkerTests(unittest.TestCase):
             def chrome_pids_for_user_data_dir(_data_dir):
                 return []
 
-        with patch.object(worker, "load_boss_module", return_value=FakeBoss()), \
-                patch.object(worker, "emit"):
+        with (
+            patch.object(worker, "load_boss_module", return_value=FakeBoss()),
+            patch.object(worker, "emit"),
+        ):
             with self.assertRaisesRegex(RuntimeError, "验证码拦截"):
                 worker.scrape_jobs({"keyword": "AI", "city": "上海", "pages": 1})
 
@@ -959,8 +1148,10 @@ class WorkerTests(unittest.TestCase):
             def chrome_pids_for_user_data_dir(_data_dir):
                 return []
 
-        with patch.object(worker, "load_boss_module", return_value=FakeBoss()), \
-                patch.object(worker, "emit"):
+        with (
+            patch.object(worker, "load_boss_module", return_value=FakeBoss()),
+            patch.object(worker, "emit"),
+        ):
             with self.assertRaisesRegex(RuntimeError, "无法识别城市"):
                 worker.scrape_jobs({"keyword": "AI", "city": "乱码城市", "pages": 1})
 
@@ -976,8 +1167,7 @@ class WorkerTests(unittest.TestCase):
         process = subprocess.run(
             [sys.executable, str(ROOT / "worker.py")],
             input=(json.dumps(request, ensure_ascii=False) + "\n").encode("utf-8"),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             env=env,
             timeout=15,
             check=False,

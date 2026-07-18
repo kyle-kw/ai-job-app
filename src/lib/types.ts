@@ -1,4 +1,12 @@
-export type TaskKind = 'scrape' | 'job-detail-extraction' | 'resume-import' | 'fit' | 'tailor' | 'render' | 'provider-test' | 'boss-login';
+export type TaskKind =
+  | 'scrape'
+  | 'job-detail-extraction'
+  | 'resume-import'
+  | 'fit'
+  | 'tailor'
+  | 'render'
+  | 'provider-test'
+  | 'boss-login';
 export type TaskState = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
 
 export interface TaskRun {
@@ -14,7 +22,7 @@ export interface TaskRun {
   logs: string[];
 }
 
-export interface TaskEvent extends TaskRun {}
+export type TaskEvent = TaskRun;
 
 export interface SearchSpec {
   keyword: string;
@@ -109,7 +117,8 @@ export interface FitReport {
   cacheStatus?: 'fresh' | 'stale' | 'legacy';
 }
 
-export type ResumeFactCategory = 'identity' | 'experience' | 'education' | 'skill' | 'project' | 'certification' | 'other';
+export type ResumeFactCategory =
+  'identity' | 'experience' | 'education' | 'skill' | 'project' | 'certification' | 'other';
 
 export interface ResumeFact {
   id: string;
@@ -143,7 +152,8 @@ export interface ResumeEducation {
   highlights: string[];
 }
 
-export type ResumeTemplateId = 'general' | 'ai-engineering' | 'data-analysis' | 'finance-accounting';
+export type ResumeTemplateId =
+  'general' | 'ai-engineering' | 'data-analysis' | 'finance-accounting';
 
 export interface ProfessionalSkillGroup {
   id: string;
@@ -468,7 +478,10 @@ export interface SalaryByExperience {
 
 export type ReportSalaryBand = '' | 'under-15' | '15-25' | '25-35' | '35-50' | '50-plus';
 
-export interface ReportSampleMetric { count: number; coverage: number; }
+export interface ReportSampleMetric {
+  count: number;
+  coverage: number;
+}
 
 export interface ReportSampleQuality {
   detail: ReportSampleMetric;
@@ -756,8 +769,19 @@ export interface ApplyResumeEditsRequest {
 
 export type ResumeEditCommitResult = ResumeCommitResult | ResumeVariantCommitResult;
 
-export type ResumeVersionSource = 'legacy' | 'import' | 'template' | 'manual' | 'ai-chat' | 'market-ai-chat' | 'rollback'
-  | 'variant-create' | 'variant-manual' | 'variant-ai' | 'variant-rebase' | 'variant-rollback';
+export type ResumeVersionSource =
+  | 'legacy'
+  | 'import'
+  | 'template'
+  | 'manual'
+  | 'ai-chat'
+  | 'market-ai-chat'
+  | 'rollback'
+  | 'variant-create'
+  | 'variant-manual'
+  | 'variant-ai'
+  | 'variant-rebase'
+  | 'variant-rollback';
 
 export interface ResumeVersionSummary {
   id: string;

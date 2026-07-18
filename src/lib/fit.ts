@@ -8,11 +8,17 @@ export const FIT_WEIGHTS = {
   career: 30
 } as const;
 
-export function normalizedOverall(dimensions: FitDimension[]): { score: number; confidence: number } {
+export function normalizedOverall(dimensions: FitDimension[]): {
+  score: number;
+  confidence: number;
+} {
   const known = dimensions.filter((dimension) => dimension.score !== null);
   const knownWeight = known.reduce((sum, dimension) => sum + dimension.weight, 0);
   if (knownWeight === 0) return { score: 0, confidence: 0 };
-  const weighted = known.reduce((sum, dimension) => sum + (dimension.score ?? 0) * dimension.weight, 0);
+  const weighted = known.reduce(
+    (sum, dimension) => sum + (dimension.score ?? 0) * dimension.weight,
+    0
+  );
   return {
     score: Math.round(weighted / knownWeight),
     confidence: Math.round(knownWeight)
@@ -28,11 +34,16 @@ export function verdictFor(score: number): FitReport['verdict'] {
 }
 
 export function deterministicFit(job: Job, resume: ResumeProfile): FitReport {
-  const resumeSkills = new Set(flattenProfessionalSkills(resume).map((skill) => skill.toLocaleLowerCase()));
+  const resumeSkills = new Set(
+    flattenProfessionalSkills(resume).map((skill) => skill.toLocaleLowerCase())
+  );
   const matched = job.skills.filter((skill) => resumeSkills.has(skill.toLocaleLowerCase()));
-  const technical = job.skills.length === 0 ? 60 : Math.round((matched.length / job.skills.length) * 70 + 25);
+  const technical =
+    job.skills.length === 0 ? 60 : Math.round((matched.length / job.skills.length) * 70 + 25);
   const hasRelatedRole = resume.experiences.some((experience) =>
-    `${experience.position} ${experience.highlights.join(' ')}`.toLocaleLowerCase().includes(job.title.split(/[（(]/)[0].toLocaleLowerCase())
+    `${experience.position} ${experience.highlights.join(' ')}`
+      .toLocaleLowerCase()
+      .includes(job.title.split(/[（(]/)[0].toLocaleLowerCase())
   );
   const experienceScore = hasRelatedRole ? 82 : Math.min(76, 48 + matched.length * 6);
   const targetText = resume.preferences.targetRoles.join(' ').toLocaleLowerCase();
@@ -78,13 +89,18 @@ export function deterministicFit(job: Job, resume: ResumeProfile): FitReport {
   ];
   const normalized = normalizedOverall(dimensions);
   const cityKnown = resume.preferences.cities.length > 0;
-  const cityMatched = !cityKnown || resume.preferences.cities.some((city) => job.location.includes(city));
-  const overallScore = cityKnown && !cityMatched ? Math.min(normalized.score, 44) : normalized.score;
+  const cityMatched =
+    !cityKnown || resume.preferences.cities.some((city) => job.location.includes(city));
+  const overallScore =
+    cityKnown && !cityMatched ? Math.min(normalized.score, 44) : normalized.score;
   return {
     overallScore,
     confidence: normalized.confidence,
     verdict: verdictFor(overallScore),
-    recommendation: overallScore >= 60 ? '建议申请，并围绕已命中的技能定制简历。' : '建议先核对关键缺口，再决定是否投入申请。',
+    recommendation:
+      overallScore >= 60
+        ? '建议申请，并围绕已命中的技能定制简历。'
+        : '建议先核对关键缺口，再决定是否投入申请。',
     summary: matched.length
       ? `你的 ${matched.slice(0, 3).join('、')} 与岗位要求直接对应。`
       : '当前更依赖可迁移经验，需要用项目成果证明匹配度。',
