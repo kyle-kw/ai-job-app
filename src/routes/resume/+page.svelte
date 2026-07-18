@@ -30,6 +30,11 @@
   import ResumePaper from '$lib/components/ResumePaper.svelte';
   import ResumeRebaseDialog from '$lib/components/ResumeRebaseDialog.svelte';
   import ResumeVersionDrawer from '$lib/components/ResumeVersionDrawer.svelte';
+  import ResumeEducationSection from '$lib/components/resume/ResumeEducationSection.svelte';
+  import ResumeExperienceSection from '$lib/components/resume/ResumeExperienceSection.svelte';
+  import ResumeExportPanel from '$lib/components/resume/ResumeExportPanel.svelte';
+  import ResumeIdentitySection from '$lib/components/resume/ResumeIdentitySection.svelte';
+  import ResumeSkillsSection from '$lib/components/resume/ResumeSkillsSection.svelte';
   import { backend } from '$lib/services/backend';
   import {
     RESUME_TEMPLATES,
@@ -1241,712 +1246,722 @@
         <div class="scrollbar-thin min-h-0 flex-1 overflow-y-auto p-6">
           {#if activeSection === 'content'}
             <div class="space-y-7 animate-lift">
-              <div>
-                <div class="mb-3 flex items-center gap-2">
-                  <UserRound size={17} class="text-brand" />
-                  <h3 class="section-title">基本信息</h3>
-                </div>
-                <div class="grid grid-cols-2 gap-4">
-                  <label
-                    ><span class="label">姓名</span><input
-                      class="input"
-                      data-resume-path="/name"
-                      aria-label="姓名"
-                      bind:value={draft.name}
-                    /></label
-                  >
-                  <label
-                    ><span class="label">职业标题</span><input
-                      class="input"
-                      data-resume-path="/headline"
-                      aria-label="职业标题"
-                      bind:value={draft.headline}
-                    /></label
-                  >
-                  <label
-                    ><span class="label">邮箱</span><input
-                      class="input"
-                      data-resume-path="/email"
-                      aria-label="邮箱"
-                      bind:value={draft.email}
-                    /></label
-                  >
-                  <label
-                    ><span class="label">电话</span><input
-                      class="input"
-                      data-resume-path="/phone"
-                      aria-label="电话"
-                      bind:value={draft.phone}
-                    /></label
-                  >
-                  <label
-                    ><span class="label">所在城市</span><input
-                      class="input"
-                      data-resume-path="/location"
-                      aria-label="所在城市"
-                      bind:value={draft.location}
-                    /></label
-                  >
-                  <label
-                    ><span class="label">个人主页</span><input
-                      class="input"
-                      data-resume-path="/website"
-                      aria-label="个人主页"
-                      bind:value={draft.website}
-                    /></label
-                  >
-                  <label class="col-span-2"
-                    ><span class="label">简历结构模板</span>
-                    <div class="flex items-center gap-2">
-                      <select
-                        class="select"
-                        data-resume-path="/templateId"
-                        bind:value={draft.templateId}
-                        >{#each RESUME_TEMPLATES as template}<option value={template.id}
-                            >{template.label} · {template.description}</option
-                          >{/each}</select
-                      >{#if resumeTemplate(draft.templateId).sample}<button
-                          class="btn shrink-0"
-                          type="button"
-                          on:click={() => openTemplatePreview(draft!.templateId)}>查看示例</button
-                        >{/if}
-                    </div>
-                    <span class="mt-1 block text-[11px] body-muted"
-                      >切换模板只调整章节顺序，不会改写已有内容。</span
-                    ></label
-                  >
-                </div>
-              </div>
-              <div class="divider"></div>
-              <div>
-                <div class="mb-3 flex items-center justify-between">
-                  <div class="flex items-center gap-2">
-                    <Sparkles size={17} class="text-brand" />
-                    <h3 class="section-title">个人简介</h3>
+              <ResumeIdentitySection>
+                <div>
+                  <div class="mb-3 flex items-center gap-2">
+                    <UserRound size={17} class="text-brand" />
+                    <h3 class="section-title">基本信息</h3>
                   </div>
-                  <button
-                    class="btn-ghost h-8 text-xs text-brand"
-                    on:click={() => openAssistant(null)}><WandSparkles size={14} />AI 优化</button
-                  >
-                </div>
-                <textarea
-                  class="textarea min-h-[120px] leading-6"
-                  data-resume-path="/summary"
-                  aria-label="个人简介"
-                  bind:value={draft.summary}></textarea>
-                <p class="mt-2 text-[11px] body-muted">
-                  建议保持 3–4 行；AI 只会提出待审核修改，不会直接覆盖。
-                </p>
-              </div>
-              <div class="divider"></div>
-              <div data-resume-path="/professionalSkills">
-                <div class="mb-3 flex items-center justify-between">
-                  <div>
-                    <h3 class="section-title">专业技能</h3>
-                    <p class="mt-1 text-[11px] body-muted">
-                      按岗位相关能力分组；分组标题不是个人事实。
-                    </p>
-                  </div>
-                  <div class="flex gap-2">
-                    <button class="btn-ghost h-8 text-xs" on:click={applySuggestedGroups}
-                      >使用模板分组</button
-                    ><button class="btn-ghost h-8 text-xs" on:click={addSkillGroup}
-                      ><Plus size={14} />添加分组</button
+                  <div class="grid grid-cols-2 gap-4">
+                    <label
+                      ><span class="label">姓名</span><input
+                        class="input"
+                        data-resume-path="/name"
+                        aria-label="姓名"
+                        bind:value={draft.name}
+                      /></label
                     >
-                  </div>
-                </div>
-                <div class="space-y-3">
-                  {#each draft.professionalSkills as group, groupIndex (group.id)}
-                    <article
-                      class="rounded-xl border p-4"
-                      data-resume-path={`/professionalSkills/${groupIndex}`}
-                      style="border-color: var(--line);"
-                      on:dragover|preventDefault
-                      on:drop={(event) => dropItem(event, 'professionalSkills', groupIndex)}
+                    <label
+                      ><span class="label">职业标题</span><input
+                        class="input"
+                        data-resume-path="/headline"
+                        aria-label="职业标题"
+                        bind:value={draft.headline}
+                      /></label
                     >
+                    <label
+                      ><span class="label">邮箱</span><input
+                        class="input"
+                        data-resume-path="/email"
+                        aria-label="邮箱"
+                        bind:value={draft.email}
+                      /></label
+                    >
+                    <label
+                      ><span class="label">电话</span><input
+                        class="input"
+                        data-resume-path="/phone"
+                        aria-label="电话"
+                        bind:value={draft.phone}
+                      /></label
+                    >
+                    <label
+                      ><span class="label">所在城市</span><input
+                        class="input"
+                        data-resume-path="/location"
+                        aria-label="所在城市"
+                        bind:value={draft.location}
+                      /></label
+                    >
+                    <label
+                      ><span class="label">个人主页</span><input
+                        class="input"
+                        data-resume-path="/website"
+                        aria-label="个人主页"
+                        bind:value={draft.website}
+                      /></label
+                    >
+                    <label class="col-span-2"
+                      ><span class="label">简历结构模板</span>
                       <div class="flex items-center gap-2">
+                        <select
+                          class="select"
+                          data-resume-path="/templateId"
+                          bind:value={draft.templateId}
+                          >{#each RESUME_TEMPLATES as template}<option value={template.id}
+                              >{template.label} · {template.description}</option
+                            >{/each}</select
+                        >{#if resumeTemplate(draft.templateId).sample}<button
+                            class="btn shrink-0"
+                            type="button"
+                            on:click={() => openTemplatePreview(draft!.templateId)}>查看示例</button
+                          >{/if}
+                      </div>
+                      <span class="mt-1 block text-[11px] body-muted"
+                        >切换模板只调整章节顺序，不会改写已有内容。</span
+                      ></label
+                    >
+                  </div>
+                </div>
+                <div class="divider"></div>
+                <div>
+                  <div class="mb-3 flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                      <Sparkles size={17} class="text-brand" />
+                      <h3 class="section-title">个人简介</h3>
+                    </div>
+                    <button
+                      class="btn-ghost h-8 text-xs text-brand"
+                      on:click={() => openAssistant(null)}><WandSparkles size={14} />AI 优化</button
+                    >
+                  </div>
+                  <textarea
+                    class="textarea min-h-[120px] leading-6"
+                    data-resume-path="/summary"
+                    aria-label="个人简介"
+                    bind:value={draft.summary}></textarea>
+                  <p class="mt-2 text-[11px] body-muted">
+                    建议保持 3–4 行；AI 只会提出待审核修改，不会直接覆盖。
+                  </p>
+                </div>
+              </ResumeIdentitySection>
+              <div class="divider"></div>
+              <ResumeSkillsSection>
+                <div data-resume-path="/professionalSkills">
+                  <div class="mb-3 flex items-center justify-between">
+                    <div>
+                      <h3 class="section-title">专业技能</h3>
+                      <p class="mt-1 text-[11px] body-muted">
+                        按岗位相关能力分组；分组标题不是个人事实。
+                      </p>
+                    </div>
+                    <div class="flex gap-2">
+                      <button class="btn-ghost h-8 text-xs" on:click={applySuggestedGroups}
+                        >使用模板分组</button
+                      ><button class="btn-ghost h-8 text-xs" on:click={addSkillGroup}
+                        ><Plus size={14} />添加分组</button
+                      >
+                    </div>
+                  </div>
+                  <div class="space-y-3">
+                    {#each draft.professionalSkills as group, groupIndex (group.id)}
+                      <article
+                        class="rounded-xl border p-4"
+                        data-resume-path={`/professionalSkills/${groupIndex}`}
+                        style="border-color: var(--line);"
+                        on:dragover|preventDefault
+                        on:drop={(event) => dropItem(event, 'professionalSkills', groupIndex)}
+                      >
+                        <div class="flex items-center gap-2">
+                          <span
+                            class="cursor-grab body-muted"
+                            role="presentation"
+                            draggable="true"
+                            aria-label={`拖动技能分组 ${groupIndex + 1}`}
+                            on:dragstart={(event) =>
+                              beginDrag(event, 'professionalSkills', groupIndex)}
+                            ><GripVertical size={15} /></span
+                          >
+                          <input
+                            class="input h-9 font-semibold"
+                            data-resume-path={`/professionalSkills/${groupIndex}/label`}
+                            aria-label={`技能分组 ${groupIndex + 1}`}
+                            bind:value={group.label}
+                          />
+                          <button
+                            class="btn-icon h-8 w-8"
+                            disabled={groupIndex === 0}
+                            aria-label={`上移技能分组 ${groupIndex + 1}`}
+                            on:click={() =>
+                              moveResumeItem('professionalSkills', groupIndex, groupIndex - 1)}
+                            ><ArrowUp size={13} /></button
+                          >
+                          <button
+                            class="btn-icon h-8 w-8"
+                            disabled={groupIndex === draft.professionalSkills.length - 1}
+                            aria-label={`下移技能分组 ${groupIndex + 1}`}
+                            on:click={() =>
+                              moveResumeItem('professionalSkills', groupIndex, groupIndex + 1)}
+                            ><ArrowDown size={13} /></button
+                          >
+                          <button
+                            type="button"
+                            class="btn-icon h-8 w-8"
+                            aria-label={`添加技能到${group.label || `分组 ${groupIndex + 1}`}`}
+                            title="添加技能"
+                            on:click={() => addSkill(groupIndex)}><Plus size={14} /></button
+                          >
+                          <button
+                            class="btn-ghost h-8 text-xs"
+                            aria-label={`删除专业技能分组 ${groupIndex + 1}`}
+                            on:click={() => removeSkillGroup(groupIndex)}>×</button
+                          >
+                        </div>
+                        <div class="mt-3 flex flex-wrap gap-2">
+                          {#each group.items as skill, skillIndex}<label
+                              class="chip-brand group cursor-text"
+                              data-resume-path={`/professionalSkills/${groupIndex}/items/${skillIndex}`}
+                              ><input
+                                class="w-[96px] bg-transparent outline-none"
+                                aria-label={`技能 ${groupIndex + 1}.${skillIndex + 1}`}
+                                bind:value={group.items[skillIndex]}
+                              /><button
+                                type="button"
+                                class="ml-1 opacity-60 transition hover:opacity-100 focus:opacity-100"
+                                aria-label={`删除技能：${skill || skillIndex + 1}`}
+                                title="删除技能"
+                                on:click|preventDefault|stopPropagation={() =>
+                                  removeSkill(groupIndex, skillIndex)}>×</button
+                              ></label
+                            >{/each}
+                        </div>
+                      </article>
+                    {/each}
+                  </div>
+                </div>
+              </ResumeSkillsSection>
+              <div class="divider"></div>
+              <ResumeExperienceSection>
+                <div>
+                  <div class="mb-4 flex items-center justify-between">
+                    <h3 class="section-title">工作经历</h3>
+                    <button class="btn-ghost h-8 text-xs" on:click={addExperience}
+                      ><Plus size={14} />添加经历</button
+                    >
+                  </div>
+                  <div class="space-y-4" data-resume-path="/experiences">
+                    {#each draft.experiences as experience, experienceIndex (experience.id)}
+                      <article
+                        class="rounded-xl border p-4"
+                        data-resume-path={`/experiences/${experienceIndex}`}
+                        style="border-color: var(--line);"
+                        on:dragover|preventDefault
+                        on:drop={(event) => dropItem(event, 'experiences', experienceIndex)}
+                      >
+                        <div class="mb-3 flex items-center justify-between gap-3">
+                          <span
+                            class="flex cursor-grab items-center gap-1 text-xs body-muted"
+                            role="presentation"
+                            draggable="true"
+                            aria-label={`拖动工作经历 ${experienceIndex + 1}`}
+                            on:dragstart={(event) =>
+                              beginDrag(event, 'experiences', experienceIndex)}
+                            ><GripVertical size={15} />经历 {experienceIndex + 1}</span
+                          >
+                          <div class="flex items-center gap-1">
+                            <button
+                              class="btn-icon h-8 w-8"
+                              disabled={experienceIndex === 0}
+                              aria-label={`上移工作经历 ${experienceIndex + 1}`}
+                              on:click={() =>
+                                moveResumeItem('experiences', experienceIndex, experienceIndex - 1)}
+                              ><ArrowUp size={13} /></button
+                            ><button
+                              class="btn-icon h-8 w-8"
+                              disabled={experienceIndex === draft.experiences.length - 1}
+                              aria-label={`下移工作经历 ${experienceIndex + 1}`}
+                              on:click={() =>
+                                moveResumeItem('experiences', experienceIndex, experienceIndex + 1)}
+                              ><ArrowDown size={13} /></button
+                            ><button
+                              class="btn-ghost h-8"
+                              aria-label={`删除工作经历：${experience.company || experience.position || experienceIndex + 1}`}
+                              on:click={() => removeExperience(experienceIndex)}>×</button
+                            >
+                          </div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                          <input
+                            class="input font-semibold"
+                            data-resume-path={`/experiences/${experienceIndex}/company`}
+                            aria-label="公司名称"
+                            placeholder="公司名称"
+                            bind:value={experience.company}
+                          />
+                          <input
+                            class="input"
+                            data-resume-path={`/experiences/${experienceIndex}/position`}
+                            aria-label="职位名称"
+                            placeholder="职位名称"
+                            bind:value={experience.position}
+                          />
+                          <input
+                            class="input"
+                            data-resume-path={`/experiences/${experienceIndex}/location`}
+                            aria-label={`工作地点 ${experienceIndex + 1}`}
+                            placeholder="工作地点"
+                            bind:value={experience.location}
+                          />
+                          <div class="grid grid-cols-2 gap-2">
+                            <input
+                              class="input"
+                              data-resume-path={`/experiences/${experienceIndex}/startDate`}
+                              aria-label={`工作开始时间 ${experienceIndex + 1}`}
+                              placeholder="开始时间"
+                              bind:value={experience.startDate}
+                            /><input
+                              class="input"
+                              data-resume-path={`/experiences/${experienceIndex}/endDate`}
+                              aria-label={`工作结束时间 ${experienceIndex + 1}`}
+                              placeholder="结束时间 / 至今"
+                              bind:value={experience.endDate}
+                            />
+                          </div>
+                        </div>
+                        <div class="mt-3 space-y-2">
+                          {#each experience.highlights as _highlight, index}
+                            <div
+                              class="flex gap-2"
+                              role="group"
+                              data-resume-path={`/experiences/${experienceIndex}/highlights/${index}`}
+                              on:dragover|preventDefault
+                              on:drop={(event) =>
+                                dropItem(event, 'highlight:experiences', index, experienceIndex)}
+                            >
+                              <span
+                                class="mt-3 cursor-grab body-muted"
+                                role="presentation"
+                                draggable="true"
+                                aria-label={`拖动经历成果 ${index + 1}`}
+                                on:dragstart={(event) =>
+                                  beginDrag(event, 'highlight:experiences', index, experienceIndex)}
+                                ><GripVertical size={14} /></span
+                              >
+                              <textarea
+                                class="textarea min-h-[66px]"
+                                aria-label={`经历成果 ${index + 1}`}
+                                placeholder="经历成果"
+                                bind:value={experience.highlights[index]}></textarea>
+                              <div class="flex flex-col">
+                                <button
+                                  class="btn-icon h-7 w-7"
+                                  disabled={index === 0}
+                                  aria-label={`上移经历成果 ${index + 1}`}
+                                  on:click={() =>
+                                    moveHighlight('experiences', experienceIndex, index, index - 1)}
+                                  ><ArrowUp size={12} /></button
+                                ><button
+                                  class="btn-icon h-7 w-7"
+                                  disabled={index === experience.highlights.length - 1}
+                                  aria-label={`下移经历成果 ${index + 1}`}
+                                  on:click={() =>
+                                    moveHighlight('experiences', experienceIndex, index, index + 1)}
+                                  ><ArrowDown size={12} /></button
+                                ><button
+                                  class="btn-icon h-7 w-7"
+                                  aria-label={`删除经历成果 ${index + 1}`}
+                                  on:click={() =>
+                                    removeHighlight('experiences', experienceIndex, index)}
+                                  >×</button
+                                >
+                              </div>
+                            </div>
+                          {/each}
+                        </div>
+                        <button
+                          type="button"
+                          class="btn-icon mt-3 h-8 w-8"
+                          aria-label={`添加经历成果 ${experienceIndex + 1}`}
+                          title="添加成果"
+                          on:click={() => addHighlight('experiences', experienceIndex)}
+                          ><Plus size={14} /></button
+                        >
+                      </article>
+                    {/each}
+                  </div>
+                </div>
+                <div class="divider"></div>
+                <div data-resume-path="/projects">
+                  <div class="mb-4 flex items-center justify-between">
+                    <h3 class="section-title">项目经历</h3>
+                    <button class="btn-ghost h-8 text-xs" on:click={addProject}
+                      ><Plus size={14} />添加项目</button
+                    >
+                  </div>
+                  <div class="space-y-4">
+                    {#each draft.projects as project, projectIndex (project.id)}
+                      <article
+                        class="rounded-xl border p-4"
+                        data-resume-path={`/projects/${projectIndex}`}
+                        style="border-color: var(--line);"
+                        on:dragover|preventDefault
+                        on:drop={(event) => dropItem(event, 'projects', projectIndex)}
+                      >
+                        <div class="mb-3 flex items-center justify-between">
+                          <span
+                            class="flex cursor-grab items-center gap-1 text-xs body-muted"
+                            role="presentation"
+                            draggable="true"
+                            aria-label={`拖动项目 ${projectIndex + 1}`}
+                            on:dragstart={(event) => beginDrag(event, 'projects', projectIndex)}
+                            ><GripVertical size={15} />项目 {projectIndex + 1}</span
+                          >
+                          <div class="flex gap-1">
+                            <button
+                              class="btn-icon h-8 w-8"
+                              disabled={projectIndex === 0}
+                              aria-label={`上移项目 ${projectIndex + 1}`}
+                              on:click={() =>
+                                moveResumeItem('projects', projectIndex, projectIndex - 1)}
+                              ><ArrowUp size={13} /></button
+                            ><button
+                              class="btn-icon h-8 w-8"
+                              disabled={projectIndex === draft.projects.length - 1}
+                              aria-label={`下移项目 ${projectIndex + 1}`}
+                              on:click={() =>
+                                moveResumeItem('projects', projectIndex, projectIndex + 1)}
+                              ><ArrowDown size={13} /></button
+                            ><button
+                              class="btn-ghost h-8"
+                              aria-label={`删除项目：${project.name || projectIndex + 1}`}
+                              on:click={() => removeProject(projectIndex)}>×</button
+                            >
+                          </div>
+                        </div>
+                        <input
+                          class="input font-semibold"
+                          data-resume-path={`/projects/${projectIndex}/name`}
+                          aria-label={`项目名称 ${projectIndex + 1}`}
+                          bind:value={project.name}
+                          placeholder="项目名称"
+                        />
+                        <textarea
+                          class="textarea mt-3"
+                          data-resume-path={`/projects/${projectIndex}/summary`}
+                          aria-label={`项目简介 ${projectIndex + 1}`}
+                          bind:value={project.summary}
+                          placeholder="项目简介"></textarea>
+                        <div class="mt-3 grid grid-cols-2 gap-3">
+                          <input
+                            class="input"
+                            data-resume-path={`/projects/${projectIndex}/startDate`}
+                            aria-label={`项目开始时间 ${projectIndex + 1}`}
+                            bind:value={project.startDate}
+                            placeholder="开始时间"
+                          /><input
+                            class="input"
+                            data-resume-path={`/projects/${projectIndex}/endDate`}
+                            aria-label={`项目结束时间 ${projectIndex + 1}`}
+                            bind:value={project.endDate}
+                            placeholder="结束时间"
+                          />
+                        </div>
+                        <div class="mt-3 space-y-2">
+                          {#each project.highlights as _highlight, index}<div
+                              class="flex gap-2"
+                              role="group"
+                              data-resume-path={`/projects/${projectIndex}/highlights/${index}`}
+                              on:dragover|preventDefault
+                              on:drop={(event) =>
+                                dropItem(event, 'highlight:projects', index, projectIndex)}
+                            >
+                              <span
+                                class="mt-3 cursor-grab body-muted"
+                                role="presentation"
+                                draggable="true"
+                                aria-label={`拖动项目成果 ${index + 1}`}
+                                on:dragstart={(event) =>
+                                  beginDrag(event, 'highlight:projects', index, projectIndex)}
+                                ><GripVertical size={14} /></span
+                              ><textarea
+                                class="textarea min-h-[60px]"
+                                aria-label={`项目成果 ${index + 1}`}
+                                bind:value={project.highlights[index]}
+                                placeholder="项目成果"></textarea>
+                              <div class="flex flex-col">
+                                <button
+                                  class="btn-icon h-7 w-7"
+                                  disabled={index === 0}
+                                  aria-label={`上移项目成果 ${index + 1}`}
+                                  on:click={() =>
+                                    moveHighlight('projects', projectIndex, index, index - 1)}
+                                  ><ArrowUp size={12} /></button
+                                ><button
+                                  class="btn-icon h-7 w-7"
+                                  disabled={index === project.highlights.length - 1}
+                                  aria-label={`下移项目成果 ${index + 1}`}
+                                  on:click={() =>
+                                    moveHighlight('projects', projectIndex, index, index + 1)}
+                                  ><ArrowDown size={12} /></button
+                                ><button
+                                  class="btn-icon h-7 w-7"
+                                  aria-label={`删除项目成果 ${index + 1}`}
+                                  on:click={() => removeHighlight('projects', projectIndex, index)}
+                                  >×</button
+                                >
+                              </div>
+                            </div>{/each}
+                        </div>
+                        <button
+                          type="button"
+                          class="btn-icon mt-3 h-8 w-8"
+                          aria-label={`添加项目成果 ${projectIndex + 1}`}
+                          title="添加成果"
+                          on:click={() => addHighlight('projects', projectIndex)}
+                          ><Plus size={14} /></button
+                        >
+                      </article>
+                    {/each}
+                  </div>
+                </div>
+              </ResumeExperienceSection>
+              <div class="divider"></div>
+              <ResumeEducationSection>
+                <div data-resume-path="/certifications">
+                  <div class="mb-4 flex items-center justify-between">
+                    <h3 class="section-title">证书 / 专业资质</h3>
+                    <button class="btn-ghost h-8 text-xs" on:click={addCertification}
+                      ><Plus size={14} />添加证书</button
+                    >
+                  </div>
+                  <div class="space-y-3">
+                    {#each draft.certifications as certification, certificationIndex (certification.id)}<article
+                        class="flex items-center gap-2 rounded-xl border p-4"
+                        data-resume-path={`/certifications/${certificationIndex}`}
+                        style="border-color: var(--line);"
+                        on:dragover|preventDefault
+                        on:drop={(event) => dropItem(event, 'certifications', certificationIndex)}
+                      >
                         <span
                           class="cursor-grab body-muted"
                           role="presentation"
                           draggable="true"
-                          aria-label={`拖动技能分组 ${groupIndex + 1}`}
+                          aria-label={`拖动证书 ${certificationIndex + 1}`}
                           on:dragstart={(event) =>
-                            beginDrag(event, 'professionalSkills', groupIndex)}
+                            beginDrag(event, 'certifications', certificationIndex)}
                           ><GripVertical size={15} /></span
-                        >
-                        <input
-                          class="input h-9 font-semibold"
-                          data-resume-path={`/professionalSkills/${groupIndex}/label`}
-                          aria-label={`技能分组 ${groupIndex + 1}`}
-                          bind:value={group.label}
-                        />
-                        <button
+                        ><input
+                          class="input min-w-0 flex-1 font-semibold"
+                          data-resume-path={`/certifications/${certificationIndex}/name`}
+                          aria-label={`证书名称 ${certificationIndex + 1}`}
+                          bind:value={certification.name}
+                          placeholder="证书名称"
+                        /><input
+                          class="input min-w-0 flex-1"
+                          aria-label={`证书颁发机构 ${certificationIndex + 1}`}
+                          bind:value={certification.issuer}
+                          placeholder="颁发机构"
+                        /><input
+                          class="input w-[130px]"
+                          aria-label={`证书日期 ${certificationIndex + 1}`}
+                          bind:value={certification.date}
+                          placeholder="取得日期"
+                        /><button
                           class="btn-icon h-8 w-8"
-                          disabled={groupIndex === 0}
-                          aria-label={`上移技能分组 ${groupIndex + 1}`}
+                          disabled={certificationIndex === 0}
+                          aria-label={`上移证书 ${certificationIndex + 1}`}
                           on:click={() =>
-                            moveResumeItem('professionalSkills', groupIndex, groupIndex - 1)}
-                          ><ArrowUp size={13} /></button
-                        >
-                        <button
+                            moveResumeItem(
+                              'certifications',
+                              certificationIndex,
+                              certificationIndex - 1
+                            )}><ArrowUp size={13} /></button
+                        ><button
                           class="btn-icon h-8 w-8"
-                          disabled={groupIndex === draft.professionalSkills.length - 1}
-                          aria-label={`下移技能分组 ${groupIndex + 1}`}
+                          disabled={certificationIndex === draft.certifications.length - 1}
+                          aria-label={`下移证书 ${certificationIndex + 1}`}
                           on:click={() =>
-                            moveResumeItem('professionalSkills', groupIndex, groupIndex + 1)}
-                          ><ArrowDown size={13} /></button
+                            moveResumeItem(
+                              'certifications',
+                              certificationIndex,
+                              certificationIndex + 1
+                            )}><ArrowDown size={13} /></button
+                        ><button
+                          class="btn-ghost h-8"
+                          aria-label={`删除证书：${certification.name || certificationIndex + 1}`}
+                          on:click={() => removeCertification(certificationIndex)}>×</button
                         >
+                      </article>{/each}
+                  </div>
+                </div>
+                <div class="divider"></div>
+                <div data-resume-path="/education">
+                  <div class="mb-4 flex items-center justify-between">
+                    <h3 class="section-title">教育经历</h3>
+                    <button class="btn-ghost h-8 text-xs" on:click={addEducation}
+                      ><Plus size={14} />添加教育经历</button
+                    >
+                  </div>
+                  <div class="space-y-4">
+                    {#each draft.education as education, educationIndex (education.id)}
+                      <article
+                        class="rounded-xl border p-4"
+                        data-resume-path={`/education/${educationIndex}`}
+                        style="border-color: var(--line);"
+                        on:dragover|preventDefault
+                        on:drop={(event) => dropItem(event, 'education', educationIndex)}
+                      >
+                        <div class="mb-3 flex items-center justify-between">
+                          <span
+                            class="flex cursor-grab items-center gap-1 text-xs body-muted"
+                            role="presentation"
+                            draggable="true"
+                            aria-label={`拖动教育经历 ${educationIndex + 1}`}
+                            on:dragstart={(event) => beginDrag(event, 'education', educationIndex)}
+                            ><GripVertical size={15} />教育 {educationIndex + 1}</span
+                          >
+                          <div class="flex gap-1">
+                            <button
+                              class="btn-icon h-8 w-8"
+                              disabled={educationIndex === 0}
+                              aria-label={`上移教育经历 ${educationIndex + 1}`}
+                              on:click={() =>
+                                moveResumeItem('education', educationIndex, educationIndex - 1)}
+                              ><ArrowUp size={13} /></button
+                            ><button
+                              class="btn-icon h-8 w-8"
+                              disabled={educationIndex === draft.education.length - 1}
+                              aria-label={`下移教育经历 ${educationIndex + 1}`}
+                              on:click={() =>
+                                moveResumeItem('education', educationIndex, educationIndex + 1)}
+                              ><ArrowDown size={13} /></button
+                            ><button
+                              class="btn-ghost h-8"
+                              aria-label={`删除教育经历：${education.institution || educationIndex + 1}`}
+                              on:click={() => removeEducation(educationIndex)}>×</button
+                            >
+                          </div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                          <input
+                            class="input font-semibold"
+                            data-resume-path={`/education/${educationIndex}/institution`}
+                            aria-label={`学校 ${educationIndex + 1}`}
+                            bind:value={education.institution}
+                            placeholder="学校"
+                          /><input
+                            class="input"
+                            aria-label={`专业 ${educationIndex + 1}`}
+                            bind:value={education.area}
+                            placeholder="专业"
+                          />
+                        </div>
+                        <div class="mt-3 grid grid-cols-2 gap-3">
+                          <label
+                            ><span class="label">学历</span><select
+                              class="select"
+                              aria-label="学历"
+                              bind:value={education.degree}
+                              ><option value="">请选择</option><option value="本科">本科</option
+                              ><option value="硕士">硕士</option><option value="博士">博士</option
+                              ><option value="其他">其他</option></select
+                            ></label
+                          >{#if education.degree === '其他'}<label
+                              ><span class="label">学历原文</span><input
+                                class="input"
+                                bind:value={education.degreeDetail}
+                                placeholder="例如：大专、Bachelor of Science"
+                              /></label
+                            >{:else}<div class="grid grid-cols-2 gap-2">
+                              <label
+                                ><span class="label">开始时间</span><input
+                                  class="input"
+                                  data-resume-path={`/education/${educationIndex}/startDate`}
+                                  bind:value={education.startDate}
+                                  placeholder="2019.09"
+                                /></label
+                              ><label
+                                ><span class="label">结束时间</span><input
+                                  class="input"
+                                  data-resume-path={`/education/${educationIndex}/endDate`}
+                                  bind:value={education.endDate}
+                                  placeholder="2023.06"
+                                /></label
+                              >
+                            </div>{/if}
+                        </div>
+                        {#if education.degree === '其他'}<div class="mt-3 grid grid-cols-2 gap-3">
+                            <input
+                              class="input"
+                              data-resume-path={`/education/${educationIndex}/startDate`}
+                              bind:value={education.startDate}
+                              placeholder="开始时间"
+                            /><input
+                              class="input"
+                              data-resume-path={`/education/${educationIndex}/endDate`}
+                              bind:value={education.endDate}
+                              placeholder="结束时间"
+                            />
+                          </div>{/if}
+                        <div class="mt-3 space-y-2">
+                          {#each education.highlights as _highlight, index}<div
+                              class="flex gap-2"
+                              role="group"
+                              data-resume-path={`/education/${educationIndex}/highlights/${index}`}
+                              on:dragover|preventDefault
+                              on:drop={(event) =>
+                                dropItem(event, 'highlight:education', index, educationIndex)}
+                            >
+                              <span
+                                class="mt-3 cursor-grab body-muted"
+                                role="presentation"
+                                draggable="true"
+                                aria-label={`拖动教育成果 ${index + 1}`}
+                                on:dragstart={(event) =>
+                                  beginDrag(event, 'highlight:education', index, educationIndex)}
+                                ><GripVertical size={14} /></span
+                              ><textarea
+                                class="textarea min-h-[60px]"
+                                aria-label={`教育成果 ${index + 1}`}
+                                bind:value={education.highlights[index]}
+                                placeholder="课程、荣誉或研究成果"></textarea>
+                              <div class="flex flex-col">
+                                <button
+                                  class="btn-icon h-7 w-7"
+                                  disabled={index === 0}
+                                  aria-label={`上移教育成果 ${index + 1}`}
+                                  on:click={() =>
+                                    moveHighlight('education', educationIndex, index, index - 1)}
+                                  ><ArrowUp size={12} /></button
+                                ><button
+                                  class="btn-icon h-7 w-7"
+                                  disabled={index === education.highlights.length - 1}
+                                  aria-label={`下移教育成果 ${index + 1}`}
+                                  on:click={() =>
+                                    moveHighlight('education', educationIndex, index, index + 1)}
+                                  ><ArrowDown size={12} /></button
+                                ><button
+                                  class="btn-icon h-7 w-7"
+                                  aria-label={`删除教育成果 ${index + 1}`}
+                                  on:click={() =>
+                                    removeHighlight('education', educationIndex, index)}>×</button
+                                >
+                              </div>
+                            </div>{/each}
+                        </div>
                         <button
                           type="button"
-                          class="btn-icon h-8 w-8"
-                          aria-label={`添加技能到${group.label || `分组 ${groupIndex + 1}`}`}
-                          title="添加技能"
-                          on:click={() => addSkill(groupIndex)}><Plus size={14} /></button
+                          class="btn-icon mt-3 h-8 w-8"
+                          aria-label={`添加教育成果 ${educationIndex + 1}`}
+                          title="添加教育成果"
+                          on:click={() => addHighlight('education', educationIndex)}
+                          ><Plus size={14} /></button
                         >
-                        <button
-                          class="btn-ghost h-8 text-xs"
-                          aria-label={`删除专业技能分组 ${groupIndex + 1}`}
-                          on:click={() => removeSkillGroup(groupIndex)}>×</button
-                        >
-                      </div>
-                      <div class="mt-3 flex flex-wrap gap-2">
-                        {#each group.items as skill, skillIndex}<label
-                            class="chip-brand group cursor-text"
-                            data-resume-path={`/professionalSkills/${groupIndex}/items/${skillIndex}`}
-                            ><input
-                              class="w-[96px] bg-transparent outline-none"
-                              aria-label={`技能 ${groupIndex + 1}.${skillIndex + 1}`}
-                              bind:value={group.items[skillIndex]}
-                            /><button
-                              type="button"
-                              class="ml-1 opacity-60 transition hover:opacity-100 focus:opacity-100"
-                              aria-label={`删除技能：${skill || skillIndex + 1}`}
-                              title="删除技能"
-                              on:click|preventDefault|stopPropagation={() =>
-                                removeSkill(groupIndex, skillIndex)}>×</button
-                            ></label
-                          >{/each}
-                      </div>
-                    </article>
-                  {/each}
+                      </article>
+                    {/each}
+                  </div>
                 </div>
-              </div>
-              <div class="divider"></div>
-              <div>
-                <div class="mb-4 flex items-center justify-between">
-                  <h3 class="section-title">工作经历</h3>
-                  <button class="btn-ghost h-8 text-xs" on:click={addExperience}
-                    ><Plus size={14} />添加经历</button
-                  >
-                </div>
-                <div class="space-y-4" data-resume-path="/experiences">
-                  {#each draft.experiences as experience, experienceIndex (experience.id)}
-                    <article
-                      class="rounded-xl border p-4"
-                      data-resume-path={`/experiences/${experienceIndex}`}
-                      style="border-color: var(--line);"
-                      on:dragover|preventDefault
-                      on:drop={(event) => dropItem(event, 'experiences', experienceIndex)}
-                    >
-                      <div class="mb-3 flex items-center justify-between gap-3">
-                        <span
-                          class="flex cursor-grab items-center gap-1 text-xs body-muted"
-                          role="presentation"
-                          draggable="true"
-                          aria-label={`拖动工作经历 ${experienceIndex + 1}`}
-                          on:dragstart={(event) => beginDrag(event, 'experiences', experienceIndex)}
-                          ><GripVertical size={15} />经历 {experienceIndex + 1}</span
-                        >
-                        <div class="flex items-center gap-1">
-                          <button
-                            class="btn-icon h-8 w-8"
-                            disabled={experienceIndex === 0}
-                            aria-label={`上移工作经历 ${experienceIndex + 1}`}
-                            on:click={() =>
-                              moveResumeItem('experiences', experienceIndex, experienceIndex - 1)}
-                            ><ArrowUp size={13} /></button
-                          ><button
-                            class="btn-icon h-8 w-8"
-                            disabled={experienceIndex === draft.experiences.length - 1}
-                            aria-label={`下移工作经历 ${experienceIndex + 1}`}
-                            on:click={() =>
-                              moveResumeItem('experiences', experienceIndex, experienceIndex + 1)}
-                            ><ArrowDown size={13} /></button
-                          ><button
-                            class="btn-ghost h-8"
-                            aria-label={`删除工作经历：${experience.company || experience.position || experienceIndex + 1}`}
-                            on:click={() => removeExperience(experienceIndex)}>×</button
-                          >
-                        </div>
-                      </div>
-                      <div class="grid grid-cols-2 gap-3">
-                        <input
-                          class="input font-semibold"
-                          data-resume-path={`/experiences/${experienceIndex}/company`}
-                          aria-label="公司名称"
-                          placeholder="公司名称"
-                          bind:value={experience.company}
-                        />
-                        <input
-                          class="input"
-                          data-resume-path={`/experiences/${experienceIndex}/position`}
-                          aria-label="职位名称"
-                          placeholder="职位名称"
-                          bind:value={experience.position}
-                        />
-                        <input
-                          class="input"
-                          data-resume-path={`/experiences/${experienceIndex}/location`}
-                          aria-label={`工作地点 ${experienceIndex + 1}`}
-                          placeholder="工作地点"
-                          bind:value={experience.location}
-                        />
-                        <div class="grid grid-cols-2 gap-2">
-                          <input
-                            class="input"
-                            data-resume-path={`/experiences/${experienceIndex}/startDate`}
-                            aria-label={`工作开始时间 ${experienceIndex + 1}`}
-                            placeholder="开始时间"
-                            bind:value={experience.startDate}
-                          /><input
-                            class="input"
-                            data-resume-path={`/experiences/${experienceIndex}/endDate`}
-                            aria-label={`工作结束时间 ${experienceIndex + 1}`}
-                            placeholder="结束时间 / 至今"
-                            bind:value={experience.endDate}
-                          />
-                        </div>
-                      </div>
-                      <div class="mt-3 space-y-2">
-                        {#each experience.highlights as _highlight, index}
-                          <div
-                            class="flex gap-2"
-                            role="group"
-                            data-resume-path={`/experiences/${experienceIndex}/highlights/${index}`}
-                            on:dragover|preventDefault
-                            on:drop={(event) =>
-                              dropItem(event, 'highlight:experiences', index, experienceIndex)}
-                          >
-                            <span
-                              class="mt-3 cursor-grab body-muted"
-                              role="presentation"
-                              draggable="true"
-                              aria-label={`拖动经历成果 ${index + 1}`}
-                              on:dragstart={(event) =>
-                                beginDrag(event, 'highlight:experiences', index, experienceIndex)}
-                              ><GripVertical size={14} /></span
-                            >
-                            <textarea
-                              class="textarea min-h-[66px]"
-                              aria-label={`经历成果 ${index + 1}`}
-                              placeholder="经历成果"
-                              bind:value={experience.highlights[index]}></textarea>
-                            <div class="flex flex-col">
-                              <button
-                                class="btn-icon h-7 w-7"
-                                disabled={index === 0}
-                                aria-label={`上移经历成果 ${index + 1}`}
-                                on:click={() =>
-                                  moveHighlight('experiences', experienceIndex, index, index - 1)}
-                                ><ArrowUp size={12} /></button
-                              ><button
-                                class="btn-icon h-7 w-7"
-                                disabled={index === experience.highlights.length - 1}
-                                aria-label={`下移经历成果 ${index + 1}`}
-                                on:click={() =>
-                                  moveHighlight('experiences', experienceIndex, index, index + 1)}
-                                ><ArrowDown size={12} /></button
-                              ><button
-                                class="btn-icon h-7 w-7"
-                                aria-label={`删除经历成果 ${index + 1}`}
-                                on:click={() =>
-                                  removeHighlight('experiences', experienceIndex, index)}>×</button
-                              >
-                            </div>
-                          </div>
-                        {/each}
-                      </div>
-                      <button
-                        type="button"
-                        class="btn-icon mt-3 h-8 w-8"
-                        aria-label={`添加经历成果 ${experienceIndex + 1}`}
-                        title="添加成果"
-                        on:click={() => addHighlight('experiences', experienceIndex)}
-                        ><Plus size={14} /></button
-                      >
-                    </article>
-                  {/each}
-                </div>
-              </div>
-              <div class="divider"></div>
-              <div data-resume-path="/projects">
-                <div class="mb-4 flex items-center justify-between">
-                  <h3 class="section-title">项目经历</h3>
-                  <button class="btn-ghost h-8 text-xs" on:click={addProject}
-                    ><Plus size={14} />添加项目</button
-                  >
-                </div>
-                <div class="space-y-4">
-                  {#each draft.projects as project, projectIndex (project.id)}
-                    <article
-                      class="rounded-xl border p-4"
-                      data-resume-path={`/projects/${projectIndex}`}
-                      style="border-color: var(--line);"
-                      on:dragover|preventDefault
-                      on:drop={(event) => dropItem(event, 'projects', projectIndex)}
-                    >
-                      <div class="mb-3 flex items-center justify-between">
-                        <span
-                          class="flex cursor-grab items-center gap-1 text-xs body-muted"
-                          role="presentation"
-                          draggable="true"
-                          aria-label={`拖动项目 ${projectIndex + 1}`}
-                          on:dragstart={(event) => beginDrag(event, 'projects', projectIndex)}
-                          ><GripVertical size={15} />项目 {projectIndex + 1}</span
-                        >
-                        <div class="flex gap-1">
-                          <button
-                            class="btn-icon h-8 w-8"
-                            disabled={projectIndex === 0}
-                            aria-label={`上移项目 ${projectIndex + 1}`}
-                            on:click={() =>
-                              moveResumeItem('projects', projectIndex, projectIndex - 1)}
-                            ><ArrowUp size={13} /></button
-                          ><button
-                            class="btn-icon h-8 w-8"
-                            disabled={projectIndex === draft.projects.length - 1}
-                            aria-label={`下移项目 ${projectIndex + 1}`}
-                            on:click={() =>
-                              moveResumeItem('projects', projectIndex, projectIndex + 1)}
-                            ><ArrowDown size={13} /></button
-                          ><button
-                            class="btn-ghost h-8"
-                            aria-label={`删除项目：${project.name || projectIndex + 1}`}
-                            on:click={() => removeProject(projectIndex)}>×</button
-                          >
-                        </div>
-                      </div>
-                      <input
-                        class="input font-semibold"
-                        data-resume-path={`/projects/${projectIndex}/name`}
-                        aria-label={`项目名称 ${projectIndex + 1}`}
-                        bind:value={project.name}
-                        placeholder="项目名称"
-                      />
-                      <textarea
-                        class="textarea mt-3"
-                        data-resume-path={`/projects/${projectIndex}/summary`}
-                        aria-label={`项目简介 ${projectIndex + 1}`}
-                        bind:value={project.summary}
-                        placeholder="项目简介"></textarea>
-                      <div class="mt-3 grid grid-cols-2 gap-3">
-                        <input
-                          class="input"
-                          data-resume-path={`/projects/${projectIndex}/startDate`}
-                          aria-label={`项目开始时间 ${projectIndex + 1}`}
-                          bind:value={project.startDate}
-                          placeholder="开始时间"
-                        /><input
-                          class="input"
-                          data-resume-path={`/projects/${projectIndex}/endDate`}
-                          aria-label={`项目结束时间 ${projectIndex + 1}`}
-                          bind:value={project.endDate}
-                          placeholder="结束时间"
-                        />
-                      </div>
-                      <div class="mt-3 space-y-2">
-                        {#each project.highlights as _highlight, index}<div
-                            class="flex gap-2"
-                            role="group"
-                            data-resume-path={`/projects/${projectIndex}/highlights/${index}`}
-                            on:dragover|preventDefault
-                            on:drop={(event) =>
-                              dropItem(event, 'highlight:projects', index, projectIndex)}
-                          >
-                            <span
-                              class="mt-3 cursor-grab body-muted"
-                              role="presentation"
-                              draggable="true"
-                              aria-label={`拖动项目成果 ${index + 1}`}
-                              on:dragstart={(event) =>
-                                beginDrag(event, 'highlight:projects', index, projectIndex)}
-                              ><GripVertical size={14} /></span
-                            ><textarea
-                              class="textarea min-h-[60px]"
-                              aria-label={`项目成果 ${index + 1}`}
-                              bind:value={project.highlights[index]}
-                              placeholder="项目成果"></textarea>
-                            <div class="flex flex-col">
-                              <button
-                                class="btn-icon h-7 w-7"
-                                disabled={index === 0}
-                                aria-label={`上移项目成果 ${index + 1}`}
-                                on:click={() =>
-                                  moveHighlight('projects', projectIndex, index, index - 1)}
-                                ><ArrowUp size={12} /></button
-                              ><button
-                                class="btn-icon h-7 w-7"
-                                disabled={index === project.highlights.length - 1}
-                                aria-label={`下移项目成果 ${index + 1}`}
-                                on:click={() =>
-                                  moveHighlight('projects', projectIndex, index, index + 1)}
-                                ><ArrowDown size={12} /></button
-                              ><button
-                                class="btn-icon h-7 w-7"
-                                aria-label={`删除项目成果 ${index + 1}`}
-                                on:click={() => removeHighlight('projects', projectIndex, index)}
-                                >×</button
-                              >
-                            </div>
-                          </div>{/each}
-                      </div>
-                      <button
-                        type="button"
-                        class="btn-icon mt-3 h-8 w-8"
-                        aria-label={`添加项目成果 ${projectIndex + 1}`}
-                        title="添加成果"
-                        on:click={() => addHighlight('projects', projectIndex)}
-                        ><Plus size={14} /></button
-                      >
-                    </article>
-                  {/each}
-                </div>
-              </div>
-              <div class="divider"></div>
-              <div data-resume-path="/certifications">
-                <div class="mb-4 flex items-center justify-between">
-                  <h3 class="section-title">证书 / 专业资质</h3>
-                  <button class="btn-ghost h-8 text-xs" on:click={addCertification}
-                    ><Plus size={14} />添加证书</button
-                  >
-                </div>
-                <div class="space-y-3">
-                  {#each draft.certifications as certification, certificationIndex (certification.id)}<article
-                      class="flex items-center gap-2 rounded-xl border p-4"
-                      data-resume-path={`/certifications/${certificationIndex}`}
-                      style="border-color: var(--line);"
-                      on:dragover|preventDefault
-                      on:drop={(event) => dropItem(event, 'certifications', certificationIndex)}
-                    >
-                      <span
-                        class="cursor-grab body-muted"
-                        role="presentation"
-                        draggable="true"
-                        aria-label={`拖动证书 ${certificationIndex + 1}`}
-                        on:dragstart={(event) =>
-                          beginDrag(event, 'certifications', certificationIndex)}
-                        ><GripVertical size={15} /></span
-                      ><input
-                        class="input min-w-0 flex-1 font-semibold"
-                        data-resume-path={`/certifications/${certificationIndex}/name`}
-                        aria-label={`证书名称 ${certificationIndex + 1}`}
-                        bind:value={certification.name}
-                        placeholder="证书名称"
-                      /><input
-                        class="input min-w-0 flex-1"
-                        aria-label={`证书颁发机构 ${certificationIndex + 1}`}
-                        bind:value={certification.issuer}
-                        placeholder="颁发机构"
-                      /><input
-                        class="input w-[130px]"
-                        aria-label={`证书日期 ${certificationIndex + 1}`}
-                        bind:value={certification.date}
-                        placeholder="取得日期"
-                      /><button
-                        class="btn-icon h-8 w-8"
-                        disabled={certificationIndex === 0}
-                        aria-label={`上移证书 ${certificationIndex + 1}`}
-                        on:click={() =>
-                          moveResumeItem(
-                            'certifications',
-                            certificationIndex,
-                            certificationIndex - 1
-                          )}><ArrowUp size={13} /></button
-                      ><button
-                        class="btn-icon h-8 w-8"
-                        disabled={certificationIndex === draft.certifications.length - 1}
-                        aria-label={`下移证书 ${certificationIndex + 1}`}
-                        on:click={() =>
-                          moveResumeItem(
-                            'certifications',
-                            certificationIndex,
-                            certificationIndex + 1
-                          )}><ArrowDown size={13} /></button
-                      ><button
-                        class="btn-ghost h-8"
-                        aria-label={`删除证书：${certification.name || certificationIndex + 1}`}
-                        on:click={() => removeCertification(certificationIndex)}>×</button
-                      >
-                    </article>{/each}
-                </div>
-              </div>
-              <div class="divider"></div>
-              <div data-resume-path="/education">
-                <div class="mb-4 flex items-center justify-between">
-                  <h3 class="section-title">教育经历</h3>
-                  <button class="btn-ghost h-8 text-xs" on:click={addEducation}
-                    ><Plus size={14} />添加教育经历</button
-                  >
-                </div>
-                <div class="space-y-4">
-                  {#each draft.education as education, educationIndex (education.id)}
-                    <article
-                      class="rounded-xl border p-4"
-                      data-resume-path={`/education/${educationIndex}`}
-                      style="border-color: var(--line);"
-                      on:dragover|preventDefault
-                      on:drop={(event) => dropItem(event, 'education', educationIndex)}
-                    >
-                      <div class="mb-3 flex items-center justify-between">
-                        <span
-                          class="flex cursor-grab items-center gap-1 text-xs body-muted"
-                          role="presentation"
-                          draggable="true"
-                          aria-label={`拖动教育经历 ${educationIndex + 1}`}
-                          on:dragstart={(event) => beginDrag(event, 'education', educationIndex)}
-                          ><GripVertical size={15} />教育 {educationIndex + 1}</span
-                        >
-                        <div class="flex gap-1">
-                          <button
-                            class="btn-icon h-8 w-8"
-                            disabled={educationIndex === 0}
-                            aria-label={`上移教育经历 ${educationIndex + 1}`}
-                            on:click={() =>
-                              moveResumeItem('education', educationIndex, educationIndex - 1)}
-                            ><ArrowUp size={13} /></button
-                          ><button
-                            class="btn-icon h-8 w-8"
-                            disabled={educationIndex === draft.education.length - 1}
-                            aria-label={`下移教育经历 ${educationIndex + 1}`}
-                            on:click={() =>
-                              moveResumeItem('education', educationIndex, educationIndex + 1)}
-                            ><ArrowDown size={13} /></button
-                          ><button
-                            class="btn-ghost h-8"
-                            aria-label={`删除教育经历：${education.institution || educationIndex + 1}`}
-                            on:click={() => removeEducation(educationIndex)}>×</button
-                          >
-                        </div>
-                      </div>
-                      <div class="grid grid-cols-2 gap-3">
-                        <input
-                          class="input font-semibold"
-                          data-resume-path={`/education/${educationIndex}/institution`}
-                          aria-label={`学校 ${educationIndex + 1}`}
-                          bind:value={education.institution}
-                          placeholder="学校"
-                        /><input
-                          class="input"
-                          aria-label={`专业 ${educationIndex + 1}`}
-                          bind:value={education.area}
-                          placeholder="专业"
-                        />
-                      </div>
-                      <div class="mt-3 grid grid-cols-2 gap-3">
-                        <label
-                          ><span class="label">学历</span><select
-                            class="select"
-                            aria-label="学历"
-                            bind:value={education.degree}
-                            ><option value="">请选择</option><option value="本科">本科</option
-                            ><option value="硕士">硕士</option><option value="博士">博士</option
-                            ><option value="其他">其他</option></select
-                          ></label
-                        >{#if education.degree === '其他'}<label
-                            ><span class="label">学历原文</span><input
-                              class="input"
-                              bind:value={education.degreeDetail}
-                              placeholder="例如：大专、Bachelor of Science"
-                            /></label
-                          >{:else}<div class="grid grid-cols-2 gap-2">
-                            <label
-                              ><span class="label">开始时间</span><input
-                                class="input"
-                                data-resume-path={`/education/${educationIndex}/startDate`}
-                                bind:value={education.startDate}
-                                placeholder="2019.09"
-                              /></label
-                            ><label
-                              ><span class="label">结束时间</span><input
-                                class="input"
-                                data-resume-path={`/education/${educationIndex}/endDate`}
-                                bind:value={education.endDate}
-                                placeholder="2023.06"
-                              /></label
-                            >
-                          </div>{/if}
-                      </div>
-                      {#if education.degree === '其他'}<div class="mt-3 grid grid-cols-2 gap-3">
-                          <input
-                            class="input"
-                            data-resume-path={`/education/${educationIndex}/startDate`}
-                            bind:value={education.startDate}
-                            placeholder="开始时间"
-                          /><input
-                            class="input"
-                            data-resume-path={`/education/${educationIndex}/endDate`}
-                            bind:value={education.endDate}
-                            placeholder="结束时间"
-                          />
-                        </div>{/if}
-                      <div class="mt-3 space-y-2">
-                        {#each education.highlights as _highlight, index}<div
-                            class="flex gap-2"
-                            role="group"
-                            data-resume-path={`/education/${educationIndex}/highlights/${index}`}
-                            on:dragover|preventDefault
-                            on:drop={(event) =>
-                              dropItem(event, 'highlight:education', index, educationIndex)}
-                          >
-                            <span
-                              class="mt-3 cursor-grab body-muted"
-                              role="presentation"
-                              draggable="true"
-                              aria-label={`拖动教育成果 ${index + 1}`}
-                              on:dragstart={(event) =>
-                                beginDrag(event, 'highlight:education', index, educationIndex)}
-                              ><GripVertical size={14} /></span
-                            ><textarea
-                              class="textarea min-h-[60px]"
-                              aria-label={`教育成果 ${index + 1}`}
-                              bind:value={education.highlights[index]}
-                              placeholder="课程、荣誉或研究成果"></textarea>
-                            <div class="flex flex-col">
-                              <button
-                                class="btn-icon h-7 w-7"
-                                disabled={index === 0}
-                                aria-label={`上移教育成果 ${index + 1}`}
-                                on:click={() =>
-                                  moveHighlight('education', educationIndex, index, index - 1)}
-                                ><ArrowUp size={12} /></button
-                              ><button
-                                class="btn-icon h-7 w-7"
-                                disabled={index === education.highlights.length - 1}
-                                aria-label={`下移教育成果 ${index + 1}`}
-                                on:click={() =>
-                                  moveHighlight('education', educationIndex, index, index + 1)}
-                                ><ArrowDown size={12} /></button
-                              ><button
-                                class="btn-icon h-7 w-7"
-                                aria-label={`删除教育成果 ${index + 1}`}
-                                on:click={() => removeHighlight('education', educationIndex, index)}
-                                >×</button
-                              >
-                            </div>
-                          </div>{/each}
-                      </div>
-                      <button
-                        type="button"
-                        class="btn-icon mt-3 h-8 w-8"
-                        aria-label={`添加教育成果 ${educationIndex + 1}`}
-                        title="添加教育成果"
-                        on:click={() => addHighlight('education', educationIndex)}
-                        ><Plus size={14} /></button
-                      >
-                    </article>
-                  {/each}
-                </div>
-              </div>
+              </ResumeEducationSection>
             </div>
           {:else if activeSection === 'preferences'}
             {#if resumeMode === 'variant'}
@@ -2150,59 +2165,61 @@
 </div>
 
 {#if exportDialogOpen}
-  <button
-    class="fixed inset-0 z-[75] bg-black/35 backdrop-blur-sm"
-    tabindex="-1"
-    on:click={() => (exportDialogOpen = false)}
-    aria-label="关闭导出颜色选择"
-  ></button>
-  <div
-    class="fixed left-1/2 top-1/2 z-[76] w-[760px] max-w-[calc(100vw-32px)] -translate-x-1/2 -translate-y-1/2 panel p-6"
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="export-color-title"
-    tabindex="-1"
-    use:modalFocus={{ close: () => (exportDialogOpen = false), canClose: !rendering }}
-  >
-    <div class="flex items-start justify-between gap-4">
-      <div>
-        <p class="eyebrow">PDF 导出</p>
-        <h3 id="export-color-title" class="mt-1 text-xl font-semibold">选择颜色主题</h3>
-        <p class="mt-1 text-xs body-muted">
-          PDF 将沿用右侧预览版式；颜色只影响本次导出，不会修改主简历或章节顺序。
-        </p>
-      </div>
-      <button class="btn-icon" on:click={() => (exportDialogOpen = false)} aria-label="关闭"
-        >×</button
-      >
-    </div>
-    <div class="mt-6 grid grid-cols-3 gap-4">
-      {#each exportColorThemes as theme}
-        <button
-          type="button"
-          aria-pressed={exportColorTheme === theme.id}
-          class:selected-export={exportColorTheme === theme.id}
-          class="export-theme-card rounded-2xl border p-4 text-left transition"
-          style={`--swatch-accent: ${theme.accent};`}
-          on:click={() => (exportColorTheme = theme.id)}
+  <ResumeExportPanel>
+    <button
+      class="fixed inset-0 z-[75] bg-black/35 backdrop-blur-sm"
+      tabindex="-1"
+      on:click={() => (exportDialogOpen = false)}
+      aria-label="关闭导出颜色选择"
+    ></button>
+    <div
+      class="fixed left-1/2 top-1/2 z-[76] w-[760px] max-w-[calc(100vw-32px)] -translate-x-1/2 -translate-y-1/2 panel p-6"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="export-color-title"
+      tabindex="-1"
+      use:modalFocus={{ close: () => (exportDialogOpen = false), canClose: !rendering }}
+    >
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <p class="eyebrow">PDF 导出</p>
+          <h3 id="export-color-title" class="mt-1 text-xl font-semibold">选择颜色主题</h3>
+          <p class="mt-1 text-xs body-muted">
+            PDF 将沿用右侧预览版式；颜色只影响本次导出，不会修改主简历或章节顺序。
+          </p>
+        </div>
+        <button class="btn-icon" on:click={() => (exportDialogOpen = false)} aria-label="关闭"
+          >×</button
         >
-          <span class="export-swatch"><span></span><span></span><span></span></span>
-          <span class="mt-4 flex items-center gap-2 text-sm font-semibold"
-            ><span class="h-3 w-3 rounded-full" style={`background: ${theme.accent};`}
-            ></span>{theme.label}</span
+      </div>
+      <div class="mt-6 grid grid-cols-3 gap-4">
+        {#each exportColorThemes as theme}
+          <button
+            type="button"
+            aria-pressed={exportColorTheme === theme.id}
+            class:selected-export={exportColorTheme === theme.id}
+            class="export-theme-card rounded-2xl border p-4 text-left transition"
+            style={`--swatch-accent: ${theme.accent};`}
+            on:click={() => (exportColorTheme = theme.id)}
           >
-          <span class="mt-1 block text-xs leading-5 body-muted">{theme.description}</span>
-        </button>
-      {/each}
+            <span class="export-swatch"><span></span><span></span><span></span></span>
+            <span class="mt-4 flex items-center gap-2 text-sm font-semibold"
+              ><span class="h-3 w-3 rounded-full" style={`background: ${theme.accent};`}
+              ></span>{theme.label}</span
+            >
+            <span class="mt-1 block text-xs leading-5 body-muted">{theme.description}</span>
+          </button>
+        {/each}
+      </div>
+      <div class="mt-6 flex justify-end gap-2">
+        <button class="btn" on:click={() => (exportDialogOpen = false)}>取消</button><button
+          class="btn-primary"
+          disabled={rendering}
+          on:click={confirmPdfExport}><Download size={15} />选择保存位置</button
+        >
+      </div>
     </div>
-    <div class="mt-6 flex justify-end gap-2">
-      <button class="btn" on:click={() => (exportDialogOpen = false)}>取消</button><button
-        class="btn-primary"
-        disabled={rendering}
-        on:click={confirmPdfExport}><Download size={15} />选择保存位置</button
-      >
-    </div>
-  </div>
+  </ResumeExportPanel>
 {/if}
 
 <ResumeChatDialog

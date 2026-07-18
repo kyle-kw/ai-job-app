@@ -23,6 +23,9 @@
   import FitScore from '$lib/components/FitScore.svelte';
   import JobSkillFilter from '$lib/components/JobSkillFilter.svelte';
   import JobSearchDialog from '$lib/components/JobSearchDialog.svelte';
+  import JobDetailPanel from '$lib/components/jobs/JobDetailPanel.svelte';
+  import JobFilterSidebar from '$lib/components/jobs/JobFilterSidebar.svelte';
+  import JobListPanel from '$lib/components/jobs/JobListPanel.svelte';
   import { chooseLocalExportPath, localExportStamp } from '$lib/export-file';
   import { COMPANY_SCALE_FILTER_OPTIONS, type CompanyScaleFilterCode } from '$lib/job-filters';
   import { backend } from '$lib/services/backend';
@@ -599,10 +602,7 @@
 </script>
 
 <div class="flex h-[calc(100vh-74px)] min-h-[646px] overflow-hidden">
-  <aside
-    class="filter-sidebar scrollbar-thin w-[250px] shrink-0 overflow-y-auto border-r p-4"
-    style="border-color: var(--line); background: color-mix(in srgb, var(--canvas) 72%, var(--panel));"
-  >
+  <JobFilterSidebar>
     <button
       class="btn-primary mb-4 w-full"
       type="button"
@@ -717,12 +717,9 @@
           >{:else}<strong class="text-success">已完成</strong>{/if}
       </div>
     </div>
-  </aside>
+  </JobFilterSidebar>
 
-  <section
-    class="job-list scrollbar-thin w-[382px] shrink-0 overflow-y-auto border-r bg-panel"
-    style="border-color: var(--line);"
-  >
+  <JobListPanel>
     <div
       class="sticky top-0 z-10 border-b"
       style="border-color: var(--line); background: color-mix(in srgb, var(--panel) 94%, transparent); backdrop-filter: blur(10px);"
@@ -877,9 +874,9 @@
           {jobsError}<button class="btn ml-2" on:click={() => void loadNextPage()}>重试</button>
         </div>{/if}
     {/if}
-  </section>
+  </JobListPanel>
 
-  <section class="scrollbar-thin min-w-0 flex-1 overflow-y-auto">
+  <JobDetailPanel>
     {#if selected}
       <div
         class="sticky top-0 z-10 border-b bg-canvas px-6 pt-5"
@@ -1238,7 +1235,7 @@
         {/if}
       </div>
     {/if}
-  </section>
+  </JobDetailPanel>
 </div>
 
 <JobSearchDialog
@@ -1293,13 +1290,5 @@
     height: 2px;
     border-radius: 2px;
     background: var(--brand);
-  }
-  @media (max-width: 1280px) {
-    .filter-sidebar {
-      width: 210px;
-    }
-    .job-list {
-      width: 330px;
-    }
   }
 </style>

@@ -22,6 +22,10 @@
     WalletCards
   } from 'lucide-svelte';
   import ReportBars from '$lib/components/ReportBars.svelte';
+  import ReportChartsPanel from '$lib/components/reports/ReportChartsPanel.svelte';
+  import ReportCompetitivenessPanel from '$lib/components/reports/ReportCompetitivenessPanel.svelte';
+  import ReportInterviewPanel from '$lib/components/reports/ReportInterviewPanel.svelte';
+  import ReportScopePanel from '$lib/components/reports/ReportScopePanel.svelte';
   import { chooseLocalExportPath, localExportStamp } from '$lib/export-file';
   import { backend } from '$lib/services/backend';
   import type {
@@ -386,7 +390,7 @@
     </div>
   </header>
 
-  <section class="panel mb-5 p-5" aria-labelledby="keyword-filter-title">
+  <ReportScopePanel>
     <div class="flex flex-wrap items-start justify-between gap-4">
       <div>
         <h3 id="keyword-filter-title" class="section-title">报告关键词</h3>
@@ -439,7 +443,7 @@
         暂无抓取关键词。完成一次岗位抓取后即可按关键词生成报告。
       </p>
     {/if}
-  </section>
+  </ReportScopePanel>
 
   {#if exportMessage}
     <div
@@ -466,7 +470,7 @@
       </div>
     </section>
   {:else}
-    <section class="panel mb-7 overflow-hidden" aria-labelledby="interview-preparation-title">
+    <ReportInterviewPanel>
       <div
         class="flex flex-wrap items-start justify-between gap-4 border-b p-6"
         style="border-color: var(--line);"
@@ -724,7 +728,7 @@
           {/if}
         </div>
       {/if}
-    </section>
+    </ReportInterviewPanel>
 
     {#if loading}
       <div class="space-y-5">
@@ -968,7 +972,7 @@
         {/if}
       </section>
 
-      <section class="panel mt-5 overflow-hidden" aria-labelledby="competitiveness-title">
+      <ReportCompetitivenessPanel>
         <div
           class="flex flex-wrap items-start justify-between gap-4 border-b p-6"
           style="border-color: var(--line);"
@@ -1130,7 +1134,7 @@
               </div>{/if}
           </div>
         {/if}
-      </section>
+      </ReportCompetitivenessPanel>
 
       <section class="mt-5 panel p-6">
         <div class="mb-4 flex items-center gap-2">
@@ -1146,106 +1150,108 @@
         </div>
       </section>
 
-      <section class="mt-7">
-        <div class="mb-3">
-          <p class="eyebrow">Skill demand</p>
-          <h3 class="section-title mt-1">技能需求与共现组合</h3>
-        </div>
-        <div class="grid grid-cols-2 gap-5">
-          <article class="panel p-6">
-            <h4 class="mb-5 text-sm font-semibold">岗位需要哪些技能</h4>
-            <ReportBars rows={report.topSkills} limit={14} hrefForRow={skillHref} />
-          </article>
-          <article class="panel p-6">
-            <h4 class="mb-5 text-sm font-semibold">技能共现组合</h4>
-            <ReportBars rows={report.skillPairs} limit={10} hrefForRow={skillPairHref} />
-          </article>
-        </div>
-      </section>
+      <ReportChartsPanel>
+        <section class="mt-7">
+          <div class="mb-3">
+            <p class="eyebrow">Skill demand</p>
+            <h3 class="section-title mt-1">技能需求与共现组合</h3>
+          </div>
+          <div class="grid grid-cols-2 gap-5">
+            <article class="panel p-6">
+              <h4 class="mb-5 text-sm font-semibold">岗位需要哪些技能</h4>
+              <ReportBars rows={report.topSkills} limit={14} hrefForRow={skillHref} />
+            </article>
+            <article class="panel p-6">
+              <h4 class="mb-5 text-sm font-semibold">技能共现组合</h4>
+              <ReportBars rows={report.skillPairs} limit={10} hrefForRow={skillPairHref} />
+            </article>
+          </div>
+        </section>
 
-      <section class="mt-7">
-        <div class="mb-3">
-          <p class="eyebrow">Candidate requirements</p>
-          <h3 class="section-title mt-1">薪资与候选人门槛</h3>
-        </div>
-        <div class="grid grid-cols-3 gap-5">
-          <article class="panel p-6">
-            <h4 class="mb-5 text-sm font-semibold">薪资区间分布</h4>
-            <ReportBars rows={report.salary.bands} hrefForRow={salaryBandHref} />
-            <div
-              class="mt-5 grid grid-cols-3 gap-2 border-t pt-4 text-center"
-              style="border-color: var(--line);"
-            >
-              <div>
-                <strong class="block text-sm">{salary(report.salary.medianLowK)}</strong><span
-                  class="text-[11px] body-muted">下限中位数</span
-                >
+        <section class="mt-7">
+          <div class="mb-3">
+            <p class="eyebrow">Candidate requirements</p>
+            <h3 class="section-title mt-1">薪资与候选人门槛</h3>
+          </div>
+          <div class="grid grid-cols-3 gap-5">
+            <article class="panel p-6">
+              <h4 class="mb-5 text-sm font-semibold">薪资区间分布</h4>
+              <ReportBars rows={report.salary.bands} hrefForRow={salaryBandHref} />
+              <div
+                class="mt-5 grid grid-cols-3 gap-2 border-t pt-4 text-center"
+                style="border-color: var(--line);"
+              >
+                <div>
+                  <strong class="block text-sm">{salary(report.salary.medianLowK)}</strong><span
+                    class="text-[11px] body-muted">下限中位数</span
+                  >
+                </div>
+                <div>
+                  <strong class="block text-sm">{salary(report.salary.medianHighK)}</strong><span
+                    class="text-[11px] body-muted">上限中位数</span
+                  >
+                </div>
+                <div>
+                  <strong class="block text-sm">{report.salary.extraMonthsCount}</strong><span
+                    class="text-[11px] body-muted">13 薪及以上</span
+                  >
+                </div>
               </div>
-              <div>
-                <strong class="block text-sm">{salary(report.salary.medianHighK)}</strong><span
-                  class="text-[11px] body-muted">上限中位数</span
-                >
+            </article>
+            <article class="panel p-6">
+              <h4 class="mb-5 text-sm font-semibold">经验要求</h4>
+              <ReportBars rows={report.experience} hrefForRow={experienceHref} />
+            </article>
+            <article class="panel p-6">
+              <h4 class="mb-5 text-sm font-semibold">学历要求</h4>
+              <ReportBars rows={report.degree} />
+            </article>
+          </div>
+          {#if report.salaryByExperience.length > 0}<article class="panel mt-5 p-6">
+              <h4 class="mb-5 text-sm font-semibold">不同经验要求的薪资中位数</h4>
+              <div class="grid grid-cols-5 gap-3">
+                {#each report.salaryByExperience.slice(0, 5) as item}<a
+                    href={drilldownHref({ experience: item.label })}
+                    class="rounded-xl p-4 surface-soft transition hover:ring-2 hover:ring-[var(--brand)]"
+                    ><span class="text-xs body-muted">{item.label}</span><strong
+                      class="mt-2 block text-xl tabular-nums">{item.medianK.toFixed(1)}K</strong
+                    ><span class="text-[11px] body-muted">{item.count} 个薪资样本</span></a
+                  >{/each}
               </div>
-              <div>
-                <strong class="block text-sm">{report.salary.extraMonthsCount}</strong><span
-                  class="text-[11px] body-muted">13 薪及以上</span
-                >
-              </div>
-            </div>
-          </article>
-          <article class="panel p-6">
-            <h4 class="mb-5 text-sm font-semibold">经验要求</h4>
-            <ReportBars rows={report.experience} hrefForRow={experienceHref} />
-          </article>
-          <article class="panel p-6">
-            <h4 class="mb-5 text-sm font-semibold">学历要求</h4>
-            <ReportBars rows={report.degree} />
-          </article>
-        </div>
-        {#if report.salaryByExperience.length > 0}<article class="panel mt-5 p-6">
-            <h4 class="mb-5 text-sm font-semibold">不同经验要求的薪资中位数</h4>
-            <div class="grid grid-cols-5 gap-3">
-              {#each report.salaryByExperience.slice(0, 5) as item}<a
-                  href={drilldownHref({ experience: item.label })}
-                  class="rounded-xl p-4 surface-soft transition hover:ring-2 hover:ring-[var(--brand)]"
-                  ><span class="text-xs body-muted">{item.label}</span><strong
-                    class="mt-2 block text-xl tabular-nums">{item.medianK.toFixed(1)}K</strong
-                  ><span class="text-[11px] body-muted">{item.count} 个薪资样本</span></a
-                >{/each}
-            </div>
-          </article>{/if}
-      </section>
+            </article>{/if}
+        </section>
 
-      <section class="mt-7">
-        <div class="mb-3">
-          <p class="eyebrow">Market structure</p>
-          <h3 class="section-title mt-1">市场结构</h3>
-        </div>
-        <div class="grid grid-cols-2 gap-5">
-          <article class="panel p-6">
-            <h4 class="mb-5 text-sm font-semibold">岗位方向</h4>
-            <ReportBars rows={report.roles} />
-          </article>
-          <article class="panel p-6">
-            <h4 class="mb-5 flex items-center gap-2 text-sm font-semibold">
-              <MapPinned size={15} class="text-brand" />城市分布
-            </h4>
-            <ReportBars rows={report.cities} hrefForRow={cityHref} />
-          </article>
-          <article class="panel p-6">
-            <h4 class="mb-5 text-sm font-semibold">行业分布</h4>
-            <ReportBars rows={report.industries} />
-          </article>
-          <article class="panel p-6">
-            <h4 class="mb-5 text-sm font-semibold">公司规模</h4>
-            <ReportBars rows={report.companyScales} />
-          </article>
-          <article class="panel col-span-2 p-6">
-            <h4 class="mb-5 text-sm font-semibold">常见福利</h4>
-            <div class="max-w-4xl"><ReportBars rows={report.welfare} limit={12} /></div>
-          </article>
-        </div>
-      </section>
+        <section class="mt-7">
+          <div class="mb-3">
+            <p class="eyebrow">Market structure</p>
+            <h3 class="section-title mt-1">市场结构</h3>
+          </div>
+          <div class="grid grid-cols-2 gap-5">
+            <article class="panel p-6">
+              <h4 class="mb-5 text-sm font-semibold">岗位方向</h4>
+              <ReportBars rows={report.roles} />
+            </article>
+            <article class="panel p-6">
+              <h4 class="mb-5 flex items-center gap-2 text-sm font-semibold">
+                <MapPinned size={15} class="text-brand" />城市分布
+              </h4>
+              <ReportBars rows={report.cities} hrefForRow={cityHref} />
+            </article>
+            <article class="panel p-6">
+              <h4 class="mb-5 text-sm font-semibold">行业分布</h4>
+              <ReportBars rows={report.industries} />
+            </article>
+            <article class="panel p-6">
+              <h4 class="mb-5 text-sm font-semibold">公司规模</h4>
+              <ReportBars rows={report.companyScales} />
+            </article>
+            <article class="panel col-span-2 p-6">
+              <h4 class="mb-5 text-sm font-semibold">常见福利</h4>
+              <div class="max-w-4xl"><ReportBars rows={report.welfare} limit={12} /></div>
+            </article>
+          </div>
+        </section>
+      </ReportChartsPanel>
 
       <footer
         class="mt-6 flex items-center justify-between border-t pt-5 text-xs body-muted"
