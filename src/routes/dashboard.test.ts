@@ -39,6 +39,10 @@ describe('dashboard', () => {
     expect(
       screen.getByText('配置未完成时，其他页面仍然可以正常查看。', { exact: false })
     ).toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: '必要配置进度' })).toHaveAttribute(
+      'aria-valuenow',
+      '0'
+    );
     expect(screen.queryByText('求职工作台')).not.toBeInTheDocument();
   });
 
@@ -72,6 +76,8 @@ describe('dashboard', () => {
     expect(screen.getByText(/最近抓取 · 数据分析/)).toBeInTheDocument();
     expect(screen.getByText('本次岗位样本观察')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '数据分析观察' })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: '开始岗位搜索' })).toHaveLength(1);
+    expect(screen.getByRole('heading', { name: '工作台已就绪' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: '管理连接' })).toHaveAttribute(
       'href',
       '/settings#boss'
@@ -118,7 +124,7 @@ describe('dashboard', () => {
     snapshot.set(state);
     render(Dashboard);
 
-    await fireEvent.click(screen.getByRole('button', { name: '设置搜索条件' }));
+    await fireEvent.click(screen.getByRole('button', { name: '开始岗位搜索' }));
 
     expect(screen.getByLabelText('关键词')).toHaveValue('财务分析');
     expect(screen.getByLabelText('城市')).toHaveValue('北京');

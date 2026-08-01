@@ -21,6 +21,7 @@ const empty: BootstrapSnapshot = {
   scrapeRuns: [],
   lastSearchSpec: null,
   settings: {
+    theme: 'system',
     advancedMode: false,
     automaticUpdateChecks: true,
     privacyAcknowledgedVersion: null,

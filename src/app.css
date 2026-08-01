@@ -7,6 +7,7 @@
     Inter, 'SF Pro Display', 'SF Pro Text', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
   color: var(--ink);
   background: var(--canvas);
+  color-scheme: light;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   --canvas: #f5f6f2;
@@ -14,12 +15,14 @@
   --panel-soft: #f0f2ed;
   --ink: #1c2622;
   --muted: #68736e;
-  --line: #dfe4de;
-  --line-strong: #cbd3cc;
   --brand: #176b57;
-  --brand-hover: #0e5847;
   --brand-soft: #e4f1ec;
-  --brand-faint: #f1f8f5;
+  --sidebar: #ebeee8;
+  --line: color-mix(in srgb, var(--muted) 20%, var(--panel));
+  --line-strong: color-mix(in srgb, var(--muted) 35%, var(--panel));
+  --brand-hover: color-mix(in srgb, var(--brand) 82%, #000);
+  --brand-faint: color-mix(in srgb, var(--brand-soft) 52%, var(--panel));
+  --focus: color-mix(in srgb, var(--brand) 22%, transparent);
   --success: #257a5e;
   --warning: #a76615;
   --warning-soft: #fff3dc;
@@ -27,11 +30,40 @@
   --danger-soft: #fceaea;
   --blue: #376f99;
   --blue-soft: #eaf2f8;
-  --sidebar: #ebeee8;
-  --focus: rgba(23, 107, 87, 0.22);
+}
+
+html[data-theme='mist'] {
+  --canvas: #f4f7fa;
+  --panel-soft: #edf3f7;
+  --ink: #1d2935;
+  --muted: #647484;
+  --brand: #2f6f91;
+  --brand-soft: #e2eff6;
+  --sidebar: #eaf1f6;
+}
+
+html[data-theme='lavender'] {
+  --canvas: #f8f6fa;
+  --panel-soft: #f2eef6;
+  --ink: #2c2633;
+  --muted: #746b7c;
+  --brand: #72518f;
+  --brand-soft: #eee7f4;
+  --sidebar: #f1ecf5;
+}
+
+html[data-theme='apricot'] {
+  --canvas: #faf7f2;
+  --panel-soft: #f5eee5;
+  --ink: #302820;
+  --muted: #756b61;
+  --brand: #99502b;
+  --brand-soft: #f6e6da;
+  --sidebar: #f4ede4;
 }
 
 html[data-theme='dark'] {
+  color-scheme: dark;
   --canvas: #151a18;
   --panel: #1e2522;
   --panel-soft: #242c28;

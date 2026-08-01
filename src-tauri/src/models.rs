@@ -589,9 +589,22 @@ mod tests {
         }))
         .unwrap();
         assert!(settings.advanced_mode);
+        assert_eq!(settings.theme, AppTheme::System);
         assert!(settings.automatic_update_checks);
         assert!(settings.privacy_acknowledged_version.is_none());
         assert!(settings.last_update_check_at.is_none());
+    }
+
+    #[test]
+    fn app_themes_use_the_frontend_wire_values() {
+        assert_eq!(serde_json::to_value(AppTheme::System).unwrap(), "system");
+        assert_eq!(serde_json::to_value(AppTheme::Forest).unwrap(), "forest");
+        assert_eq!(serde_json::to_value(AppTheme::Mist).unwrap(), "mist");
+        assert_eq!(
+            serde_json::to_value(AppTheme::Lavender).unwrap(),
+            "lavender"
+        );
+        assert_eq!(serde_json::to_value(AppTheme::Apricot).unwrap(), "apricot");
     }
 }
 
@@ -735,9 +748,22 @@ impl Default for BossProfileState {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AppTheme {
+    #[default]
+    System,
+    Forest,
+    Mist,
+    Lavender,
+    Apricot,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
+    #[serde(default)]
+    pub theme: AppTheme,
     pub advanced_mode: bool,
     #[serde(default = "default_automatic_update_checks")]
     pub automatic_update_checks: bool,
@@ -754,6 +780,7 @@ const fn default_automatic_update_checks() -> bool {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
+            theme: AppTheme::default(),
             advanced_mode: false,
             automatic_update_checks: true,
             privacy_acknowledged_version: None,

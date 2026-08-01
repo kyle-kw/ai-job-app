@@ -15,6 +15,7 @@
     HardDrive,
     KeyRound,
     LockKeyhole,
+    Palette,
     PlugZap,
     RefreshCw,
     RotateCcw,
@@ -34,10 +35,12 @@
   import { shouldReloadAfterClear } from '$lib/clear-data';
   import { checkForUpdate, updateCheckError, updateChecking } from '$lib/stores/distribution';
   import { refresh, saveSettings, snapshot } from '$lib/stores/app';
+  import { APP_THEMES, applyAppTheme, systemPrefersDark } from '$lib/theme';
   import type {
     AiProviderConfig,
     AppInfo,
     AppSettings,
+    AppTheme,
     BackupInfo,
     ClearDataResult,
     ClearDataScope,
@@ -56,7 +59,7 @@
   let toast = '';
   let localSettings: AppSettings | null = null;
   let settingsInitialized = false;
-  let settingsSaving: 'automaticUpdateChecks' | 'advancedMode' | null = null;
+  let settingsSaving: 'theme' | 'automaticUpdateChecks' | 'advancedMode' | null = null;
   let appInfo: AppInfo | null = null;
   let automaticBackups: BackupInfo[] = [];
   let maintenanceError = '';
@@ -171,6 +174,26 @@
       showToast('设置已自动保存');
     } catch (error) {
       localSettings = previous;
+      const message = error instanceof Error ? error.message : String(error);
+      showToast(`自动保存失败：${message}`);
+    } finally {
+      settingsSaving = null;
+    }
+  }
+
+  async function persistTheme(theme: AppTheme) {
+    if (!localSettings || settingsSaving || localSettings.theme === theme) return;
+    const previous = localSettings;
+    const next = { ...localSettings, theme };
+    localSettings = next;
+    settingsSaving = 'theme';
+    applyAppTheme(theme, systemPrefersDark());
+    try {
+      await saveSettings(next);
+      showToast('主题已自动保存');
+    } catch (error) {
+      localSettings = previous;
+      applyAppTheme(previous.theme, systemPrefersDark());
       const message = error instanceof Error ? error.message : String(error);
       showToast(`自动保存失败：${message}`);
     } finally {
@@ -306,11 +329,67 @@
 <div class="page-content max-w-[1240px]">
   <div class="mb-7">
     <p class="eyebrow">SETTINGS</p>
-    <h2 class="page-title mt-1">连接、模型与高级能力</h2>
-    <p class="mt-1 text-sm body-muted">
-      管理 BOSS 专用浏览器、默认模型和本地数据；界面固定为简体中文并跟随系统主题。
-    </p>
+    <h2 class="page-title mt-1">外观、连接与高级能力</h2>
+    <p class="mt-1 text-sm body-muted">设置应用主题，管理 BOSS 专用浏览器、默认模型和本地数据。</p>
   </div>
+
+  {#if localSettings}
+    <section class="mb-6 panel overflow-hidden" aria-labelledby="appearance-title">
+      <div
+        class="flex flex-wrap items-center justify-between gap-3 border-b px-6 py-5"
+        style="border-color: var(--line);"
+      >
+        <div class="flex items-center gap-3">
+          <span class="grid h-10 w-10 place-items-center rounded-xl bg-brand-soft text-brand"
+            ><Palette size={18} /></span
+          >
+          <div>
+            <h3 id="appearance-title" class="section-title">外观主题</h3>
+            <p class="mt-0.5 text-xs body-muted">
+              固定浅色主题不受系统深浅模式影响；修改后立即应用并自动保存。
+            </p>
+          </div>
+        </div>
+        {#if settingsSaving === 'theme'}<span class="text-xs body-muted" aria-live="polite"
+            >保存中…</span
+          >{/if}
+      </div>
+      <div class="theme-grid grid grid-cols-5 gap-3 p-5" role="radiogroup" aria-label="外观主题">
+        {#each APP_THEMES as theme}
+          <label
+            class:theme-selected={localSettings.theme === theme.id}
+            class="theme-option relative cursor-pointer rounded-xl border p-3 transition"
+          >
+            <input
+              class="sr-only"
+              type="radio"
+              name="app-theme"
+              value={theme.id}
+              checked={localSettings.theme === theme.id}
+              disabled={settingsSaving !== null}
+              on:change={() => void persistTheme(theme.id)}
+            />
+            <span
+              class="flex h-9 overflow-hidden rounded-lg border"
+              style="border-color: var(--line);"
+            >
+              {#each theme.swatches as swatch}
+                <span class="flex-1" style={`background: ${swatch};`}></span>
+              {/each}
+            </span>
+            <span class="mt-3 flex items-center justify-between gap-2">
+              <span class="text-sm font-semibold">{theme.label}</span>
+              {#if localSettings.theme === theme.id}<span
+                  class="grid h-5 w-5 place-items-center rounded-full bg-brand text-white"
+                  aria-hidden="true"><Check size={12} strokeWidth={3} /></span
+                >{/if}
+            </span>
+            <span class="mt-1 block text-[11px] leading-4 body-muted">{theme.description}</span>
+          </label>
+        {/each}
+      </div>
+    </section>
+  {/if}
 
   <div id="boss" class="mb-6 scroll-mt-24">
     <BossSetupCard eyebrow="浏览器连接" title="BOSS 专用浏览器" />
@@ -857,7 +936,36 @@
     display: flow-root;
     contain: layout paint;
   }
+  .theme-option {
+    border-color: var(--line);
+    background: var(--panel);
+  }
+  .theme-option:hover {
+    border-color: var(--brand);
+    transform: translateY(-1px);
+  }
+  .theme-option:focus-within {
+    outline: 3px solid var(--focus);
+    outline-offset: 1px;
+  }
+  .theme-option.theme-selected {
+    border-color: var(--brand);
+    background: var(--brand-faint);
+    box-shadow: 0 0 0 1px var(--brand);
+  }
+  .theme-option:has(input:disabled) {
+    cursor: wait;
+    opacity: 0.72;
+  }
+  @media (max-width: 1120px) {
+    .theme-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
   @media (max-width: 980px) {
+    .theme-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
     .provider-layout {
       grid-template-columns: minmax(0, 1fr);
     }

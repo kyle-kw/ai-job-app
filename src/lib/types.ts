@@ -292,7 +292,10 @@ export interface ConfigurationSnapshot {
   llm: ConfigurationItem;
 }
 
+export type AppTheme = 'system' | 'forest' | 'mist' | 'lavender' | 'apricot';
+
 export interface AppSettings {
+  theme: AppTheme;
   advancedMode: boolean;
   automaticUpdateChecks: boolean;
   privacyAcknowledgedVersion?: string | null;

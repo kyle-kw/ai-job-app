@@ -282,6 +282,7 @@ export const mockSnapshot: BootstrapSnapshot = {
     companyScale: ''
   },
   settings: {
+    theme: 'system',
     advancedMode: false,
     automaticUpdateChecks: true,
     privacyAcknowledgedVersion: null,

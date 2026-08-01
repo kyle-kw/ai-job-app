@@ -9,11 +9,14 @@
   import { backend } from '$lib/services/backend';
   import { appError, initialize, loading, refresh, saveSettings, snapshot } from '$lib/stores/app';
   import { availableUpdate, checkForUpdate } from '$lib/stores/distribution';
+  import { applyAppTheme } from '$lib/theme';
   import { shouldStartAutomaticUpdateCheck } from '$lib/update-policy';
 
   let taskDrawerOpen = false;
   let acceptingPrivacy = false;
   let autoCheckStartedFor = '';
+  let mounted = false;
+  let prefersDark = false;
   const privacyVersion = '2026-07-14';
 
   $: acknowledgedVersion = $snapshot.settings.privacyAcknowledgedVersion ?? '';
@@ -31,10 +34,7 @@
     autoCheckStartedFor = acknowledgedVersion;
     void checkForUpdate(false);
   }
-
-  function applySystemTheme(media: MediaQueryList) {
-    document.documentElement.dataset.theme = media.matches ? 'dark' : 'light';
-  }
+  $: if (mounted) applyAppTheme($snapshot.settings.theme ?? 'system', prefersDark);
 
   async function acceptPrivacy() {
     acceptingPrivacy = true;
@@ -48,8 +48,9 @@
   onMount(() => {
     document.documentElement.lang = 'zh-CN';
     const media = window.matchMedia('(prefers-color-scheme: dark)');
-    const syncTheme = () => applySystemTheme(media);
+    const syncTheme = () => (prefersDark = media.matches);
     syncTheme();
+    mounted = true;
     media.addEventListener('change', syncTheme);
     void initialize();
     return () => media.removeEventListener('change', syncTheme);

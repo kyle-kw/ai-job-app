@@ -8,6 +8,7 @@ import SettingsPage from './+page.svelte';
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  document.documentElement.dataset.theme = 'forest';
 });
 
 function readySnapshot() {
@@ -93,6 +94,37 @@ describe('settings page', () => {
       )
     );
     expect(screen.queryByRole('button', { name: '保存设置' })).not.toBeInTheDocument();
+  });
+
+  it('previews and automatically saves a fixed light theme', async () => {
+    snapshot.set(readySnapshot());
+    const saveSettings = vi
+      .spyOn(backend, 'saveSettings')
+      .mockImplementation(async (settings) => structuredClone(settings));
+    render(SettingsPage);
+
+    const apricot = screen.getByRole('radio', { name: /暖杏/ });
+    await fireEvent.click(apricot);
+
+    expect(document.documentElement.dataset.theme).toBe('apricot');
+    await waitFor(() => expect(apricot).toBeChecked());
+    await waitFor(() =>
+      expect(saveSettings).toHaveBeenCalledWith(expect.objectContaining({ theme: 'apricot' }))
+    );
+    expect(await screen.findByText('主题已自动保存')).toBeInTheDocument();
+  });
+
+  it('rolls the theme preview back when automatic saving fails', async () => {
+    snapshot.set(readySnapshot());
+    document.documentElement.dataset.theme = 'forest';
+    vi.spyOn(backend, 'saveSettings').mockRejectedValue(new Error('写入失败'));
+    render(SettingsPage);
+
+    await fireEvent.click(screen.getByRole('radio', { name: /雾蓝/ }));
+
+    await waitFor(() => expect(screen.getByRole('radio', { name: /跟随系统/ })).toBeChecked());
+    expect(document.documentElement.dataset.theme).toBe('forest');
+    expect(await screen.findByText('自动保存失败：写入失败')).toBeInTheDocument();
   });
 
   it('automatically saves advanced mode and rolls the switch back when saving fails', async () => {

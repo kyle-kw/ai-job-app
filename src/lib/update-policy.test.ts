@@ -3,6 +3,7 @@ import { shouldStartAutomaticUpdateCheck } from '$lib/update-policy';
 import type { AppSettings } from '$lib/types';
 
 const settings: AppSettings = {
+  theme: 'system',
   advancedMode: false,
   automaticUpdateChecks: true,
   privacyAcknowledgedVersion: '2026-07-14',

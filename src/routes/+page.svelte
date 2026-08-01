@@ -70,6 +70,8 @@
   });
 
   $: setupComplete = $snapshot.readiness.boss && $snapshot.readiness.ai;
+  $: completedSetupSteps = Number($snapshot.readiness.boss) + Number($snapshot.readiness.ai);
+  $: setupProgress = completedSetupSteps * 50;
   $: llmState =
     $snapshot.configuration?.llm?.state ?? ($snapshot.readiness.ai ? 'ready' : 'needs_setup');
   $: availableProviders = availableProviderConfigs($snapshot.providers);
@@ -189,21 +191,24 @@
 <div class="page-content max-w-[1240px]">
   {#if $loading}
     <div class="space-y-5">
-      <div class="skeleton h-40 rounded-2xl"></div>
-      <div class="grid grid-cols-3 gap-5">
-        <div class="skeleton h-32 rounded-2xl"></div>
-        <div class="skeleton h-32 rounded-2xl"></div>
-        <div class="skeleton h-32 rounded-2xl"></div>
+      <div class="skeleton h-44 rounded-[24px]"></div>
+      <div class="overview-grid grid grid-cols-3 gap-4">
+        <div class="skeleton h-28 rounded-2xl"></div>
+        <div class="skeleton h-28 rounded-2xl"></div>
+        <div class="skeleton h-28 rounded-2xl"></div>
       </div>
-      <div class="skeleton h-80 rounded-2xl"></div>
+      <div class="workspace-grid grid grid-cols-[minmax(0,1fr)_320px] gap-5">
+        <div class="skeleton h-80 rounded-2xl"></div>
+        <div class="skeleton h-80 rounded-2xl"></div>
+      </div>
     </div>
   {:else if !setupComplete}
     <section
-      class="relative overflow-hidden rounded-[24px] border px-7 py-7 shadow-panel"
+      class="dashboard-hero relative overflow-hidden rounded-[24px] border px-7 py-7 shadow-panel"
       style="border-color: var(--line); background: linear-gradient(115deg, var(--panel) 0%, var(--brand-faint) 100%);"
     >
       <div class="dot-grid pointer-events-none absolute inset-y-0 right-0 w-[42%] opacity-40"></div>
-      <div class="relative flex items-end justify-between gap-8">
+      <div class="hero-content relative flex items-center justify-between gap-8">
         <div class="max-w-[720px]">
           <div
             class="mb-3 inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold"
@@ -217,10 +222,32 @@
             专用浏览器并验证默认模型后，就可以开始抓取和分析岗位。配置未完成时，其他页面仍然可以正常查看。
           </p>
         </div>
-        <span
-          class="hidden h-12 w-12 shrink-0 place-items-center rounded-2xl bg-panel text-brand shadow-sm lg:grid"
-          ><Rocket size={22} /></span
+        <div
+          class="setup-progress-card hidden w-[220px] shrink-0 rounded-2xl border bg-panel p-4 lg:block"
         >
+          <div class="flex items-center justify-between">
+            <span class="flex items-center gap-2 text-xs font-semibold text-brand"
+              ><Rocket size={15} />配置进度</span
+            >
+            <strong class="text-lg">{completedSetupSteps} / 2</strong>
+          </div>
+          <div
+            class="mt-3 h-2 overflow-hidden rounded-full surface-soft"
+            role="progressbar"
+            aria-label="必要配置进度"
+            aria-valuemin="0"
+            aria-valuemax="2"
+            aria-valuenow={completedSetupSteps}
+          >
+            <span
+              class="block h-full rounded-full bg-brand transition-all"
+              style={`width: ${setupProgress}%`}
+            ></span>
+          </div>
+          <p class="mt-2 text-[11px] body-muted">
+            {completedSetupSteps === 0 ? '从浏览器连接开始' : '再完成一项即可开始搜索'}
+          </p>
+        </div>
       </div>
     </section>
 
@@ -389,11 +416,11 @@
     </section>
   {:else}
     <section
-      class="relative overflow-hidden rounded-[24px] border px-7 py-7 shadow-panel"
+      class="dashboard-hero relative overflow-hidden rounded-[24px] border px-7 py-7 shadow-panel"
       style="border-color: var(--line); background: linear-gradient(115deg, var(--panel) 0%, var(--brand-faint) 100%);"
     >
       <div class="dot-grid pointer-events-none absolute inset-y-0 right-0 w-[42%] opacity-40"></div>
-      <div class="relative flex items-end justify-between gap-8">
+      <div class="hero-content relative flex items-center justify-between gap-8">
         <div class="max-w-[720px]">
           <div
             class="mb-3 inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold"
@@ -405,7 +432,9 @@
             {$snapshot.resume?.name ? `${$snapshot.resume.name}，欢迎回来` : '欢迎来到求职舱'}
           </h2>
           <p class="mt-2 text-sm leading-6 body-muted">
-            集中查看本地岗位样本、优先机会与简历版本，把时间花在更值得核对和跟进的岗位上。
+            {latestRun
+              ? `最近完成“${latestRun.keyword} · ${latestRun.city}”岗位采集，优先核对下面的新机会。`
+              : '从第一次岗位搜索开始，建立你的本地机会库并持续沉淀求职洞察。'}
           </p>
         </div>
         <button
@@ -417,8 +446,8 @@
       </div>
     </section>
 
-    <section class="mt-6 grid grid-cols-3 gap-4">
-      <article class="panel-flat p-5">
+    <section class="overview-grid mt-5 grid grid-cols-3 gap-4" aria-label="求职进展概览">
+      <article class="metric-card panel-flat p-5">
         <div class="flex items-center justify-between">
           <span class="grid h-10 w-10 place-items-center rounded-xl bg-brand-soft text-brand"
             ><BriefcaseBusiness size={19} /></span
@@ -429,7 +458,7 @@
         </p>
         <p class="mt-1 text-xs body-muted">累计岗位</p>
       </article>
-      <article class="panel-flat p-5">
+      <article class="metric-card panel-flat p-5">
         <div class="flex items-center justify-between">
           <span class="grid h-10 w-10 place-items-center rounded-xl bg-brand-soft text-brand"
             ><Sparkles size={19} /></span
@@ -440,7 +469,7 @@
         </p>
         <p class="mt-1 text-xs body-muted">新增岗位</p>
       </article>
-      <article class="panel-flat p-5">
+      <article class="metric-card panel-flat p-5">
         <div class="flex items-center justify-between">
           <span class="grid h-10 w-10 place-items-center rounded-xl bg-brand-soft text-brand"
             ><BarChart3 size={19} /></span
@@ -463,90 +492,126 @@
         >
       </div>{/if}
 
-    <section class="mt-6 grid grid-cols-[1.25fr_.75fr] gap-5">
-      <article class="panel p-6">
-        <div class="flex items-start justify-between">
+    <section class="workspace-grid mt-5 grid grid-cols-[minmax(0,1fr)_320px] items-start gap-5">
+      <article class="panel overflow-hidden">
+        <div
+          class="flex items-end justify-between gap-4 border-b px-5 py-4"
+          style="border-color: var(--line);"
+        >
           <div>
-            <p class="eyebrow">下一步</p>
-            <h3 class="section-title mt-1">开始一轮岗位搜索</h3>
-            <p class="mt-2 text-sm leading-6 body-muted">
-              选择关键词、城市与范围；确认后会先检查 BOSS 登录，再自动抓取岗位列表和详情。
-            </p>
+            <p class="eyebrow">优先处理</p>
+            <h3 class="section-title mt-1">{$snapshot.resume ? '与你最接近的机会' : '最近岗位'}</h3>
           </div>
-          <span class="grid h-10 w-10 place-items-center rounded-xl bg-brand-soft text-brand"
-            ><Search size={19} /></span
+          <a href="/jobs" class="flex items-center gap-1 text-xs font-semibold text-brand"
+            >查看全部 <ArrowRight size={14} /></a
           >
         </div>
-        <button class="btn-primary mt-6" disabled={scrapeTaskRunning} on:click={openSearchDialog}
-          >{scrapeTaskRunning ? '已有抓取任务运行' : '设置搜索条件'}
-          <ArrowRight size={15} /></button
-        >
-      </article>
-      <article class="panel p-6">
-        <p class="eyebrow">主简历</p>
-        <h3 class="section-title mt-1">
-          {$snapshot.resume
-            ? `${$snapshot.resume.name || '未命名简历'} · 版本 ${$snapshot.resume.version}`
-            : '尚未建立主简历'}
-        </h3>
-        <p class="mt-2 text-xs leading-5 body-muted">
-          {$snapshot.resume
-            ? $snapshot.resume.sourceFileName
-            : '导入或创建简历后，可获得基于事实的岗位匹配与材料建议。'}
-        </p>
-        <a class="btn mt-6 w-full" href="/resume"
-          >{$snapshot.resume ? '维护主简历' : '创建主简历'} <ArrowRight size={15} /></a
-        >
-      </article>
-    </section>
-
-    <section class="mt-8">
-      <div class="mb-3 flex items-end justify-between">
-        <div>
-          <p class="eyebrow">优先处理</p>
-          <h3 class="section-title mt-1">{$snapshot.resume ? '与你最接近的机会' : '最近岗位'}</h3>
-        </div>
-        <a href="/jobs" class="flex items-center gap-1 text-xs font-semibold text-brand"
-          >查看全部 <ArrowRight size={14} /></a
-        >
-      </div>
-      {#if dashboardLoading && !dashboardPage}
-        <div class="grid grid-cols-3 gap-4">
-          {#each [1, 2, 3] as _}<div class="skeleton h-32 rounded-2xl"></div>{/each}
-        </div>
-      {:else if topJobs.length}
-        <div class="grid grid-cols-3 gap-4">
-          {#each topJobs as job}<a
-              href={`/jobs?job=${job.id}`}
-              class="panel-flat group p-4 transition hover:-translate-y-0.5 hover:shadow-panel"
-              ><div class="flex gap-3">
-                {#if $snapshot.resume}<FitScore score={job.fit?.overallScore ?? 0} size="sm" />{/if}
+        {#if dashboardLoading && !dashboardPage}
+          <div class="divide-y px-5" style="border-color: var(--line);">
+            {#each [1, 2, 3] as _}<div class="flex items-center gap-4 py-5">
+                <div class="skeleton h-12 w-12 rounded-xl"></div>
+                <div class="min-w-0 flex-1 space-y-2">
+                  <div class="skeleton h-4 w-1/2 rounded"></div>
+                  <div class="skeleton h-3 w-2/3 rounded"></div>
+                </div>
+                <div class="skeleton h-5 w-20 rounded"></div>
+              </div>{/each}
+          </div>
+        {:else if topJobs.length}
+          <div class="divide-y" style="border-color: var(--line);">
+            {#each topJobs as job}<a
+                href={`/jobs?job=${job.id}`}
+                class="opportunity-row group grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-4 px-5 py-4 transition"
+                >{#if $snapshot.resume}<FitScore
+                    score={job.fit?.overallScore ?? 0}
+                    size="sm"
+                  />{:else}<span
+                    class="grid h-11 w-11 place-items-center rounded-xl bg-brand-soft text-brand"
+                    ><BriefcaseBusiness size={18} /></span
+                  >{/if}
                 <div class="min-w-0">
                   <h4 class="truncate text-sm font-semibold group-hover:text-brand">{job.title}</h4>
-                  <p class="mt-0.5 truncate text-xs body-muted">
-                    {job.company} · {job.location.split('·')[0]}
+                  <p class="mt-1 truncate text-xs body-muted">
+                    {job.company} · {job.location.split('·')[0]} · {job.experience}
                   </p>
                 </div>
+                <div class="min-w-[112px] text-right">
+                  <p class="truncate text-sm font-semibold text-brand">{job.salary}</p>
+                  <p class="mt-1 text-[11px] body-muted">{job.degree}</p>
+                </div></a
+              >{/each}
+          </div>
+        {:else}
+          <div class="p-10 text-center">
+            <BriefcaseBusiness size={24} class="mx-auto text-brand" />
+            <p class="mt-3 text-sm font-semibold">岗位库还是空的</p>
+            <p class="mt-1 text-xs body-muted">开始第一次岗位搜索后，机会会显示在这里。</p>
+          </div>
+        {/if}
+      </article>
+
+      <aside class="panel overflow-hidden" aria-label="工作状态">
+        <div class="border-b px-5 py-4" style="border-color: var(--line);">
+          <p class="eyebrow">当前状态</p>
+          <h3 class="section-title mt-1">工作台已就绪</h3>
+        </div>
+        <div class="p-5">
+          <div class="rounded-xl p-4 surface-soft">
+            <div class="flex items-start gap-3">
+              <span class="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-panel text-brand"
+                ><FileText size={17} /></span
+              >
+              <div class="min-w-0">
+                <p class="text-sm font-semibold">
+                  {$snapshot.resume?.name || '尚未建立主简历'}
+                </p>
+                <p class="mt-1 truncate text-[11px] body-muted">
+                  {$snapshot.resume
+                    ? `版本 ${$snapshot.resume.version} · ${$snapshot.resume.sourceFileName}`
+                    : '创建后即可显示岗位匹配度'}
+                </p>
               </div>
-              <div class="my-3 divider"></div>
-              <div class="flex items-center justify-between gap-3">
-                <span class="truncate text-sm font-semibold text-brand">{job.salary}</span><span
-                  class="shrink-0 text-[11px] body-muted">{job.experience} · {job.degree}</span
-                >
-              </div></a
-            >{/each}
+            </div>
+            <a class="btn mt-3 h-9 w-full" href="/resume"
+              >{$snapshot.resume ? '维护主简历' : '创建主简历'} <ArrowRight size={14} /></a
+            >
+          </div>
+
+          <div class="my-5 divider"></div>
+          <div class="space-y-3 text-xs">
+            <div class="flex items-center justify-between gap-3">
+              <span class="flex items-center gap-2 body-muted"
+                ><ShieldCheck size={15} />BOSS 连接</span
+              >
+              <span class="flex items-center gap-1.5 font-semibold text-success"
+                ><span class="h-1.5 w-1.5 rounded-full bg-success"></span>已就绪</span
+              >
+            </div>
+            <div class="flex items-center justify-between gap-3">
+              <span class="flex items-center gap-2 body-muted"><Bot size={15} />默认模型</span>
+              <span class="flex items-center gap-1.5 font-semibold text-success"
+                ><span class="h-1.5 w-1.5 rounded-full bg-success"></span>已验证</span
+              >
+            </div>
+          </div>
+
+          <div class="my-5 divider"></div>
+          <div>
+            <p class="eyebrow">最近抓取</p>
+            <p class="mt-2 truncate text-sm font-semibold">
+              {latestRun ? `${latestRun.keyword} · ${latestRun.city}` : '暂无抓取记录'}
+            </p>
+            <p class="mt-1 text-[11px] body-muted">
+              {latestRun ? `${latestRun.totalSeen} 个本地样本` : '完成搜索后将在这里显示进展'}
+            </p>
+          </div>
+          <a class="btn mt-4 w-full" href="/settings#boss">管理连接 <ArrowRight size={14} /></a>
         </div>
-      {:else}
-        <div class="panel-flat p-8 text-center">
-          <BriefcaseBusiness size={24} class="mx-auto text-brand" />
-          <p class="mt-3 text-sm font-semibold">岗位库还是空的</p>
-          <p class="mt-1 text-xs body-muted">开始第一次岗位搜索后，机会会显示在这里。</p>
-        </div>
-      {/if}
+      </aside>
     </section>
 
     {#if latestRun?.reportMarkdown}
-      <section class="mt-8 panel p-6">
+      <section class="mt-6 panel p-6">
         <div class="mb-4 flex items-center justify-between">
           <div>
             <p class="eyebrow">最近一轮 · {latestRun.city}</p>
@@ -557,20 +622,6 @@
         <MarkdownView source={latestRun.reportMarkdown} />
       </section>
     {/if}
-
-    <section
-      class="mt-6 flex items-center justify-between rounded-2xl border px-5 py-4"
-      style="border-color: var(--line); background: var(--panel-soft);"
-    >
-      <div class="flex items-center gap-3">
-        <CheckCircle2 size={18} class="text-success" />
-        <div>
-          <p class="text-sm font-semibold">BOSS 与默认模型已就绪</p>
-          <p class="mt-0.5 text-xs body-muted">抓取前仍会验证真实登录状态；连接配置可随时调整。</p>
-        </div>
-      </div>
-      <a class="btn" href="/settings#boss">管理连接 <ArrowRight size={15} /></a>
-    </section>
   {/if}
 </div>
 
@@ -582,15 +633,79 @@
     onStart={runScrape}
   />{/if}
 {#if toast}<div
-    class="fixed bottom-6 left-1/2 z-[80] -translate-x-1/2 rounded-xl bg-[var(--ink)] px-4 py-3 text-sm text-white shadow-xl"
+    class="fixed bottom-6 left-1/2 z-[80] -translate-x-1/2 rounded-xl bg-[#1d2824] px-4 py-3 text-sm text-white shadow-xl"
   >
     {toast}
   </div>{/if}
 
 <style>
+  .setup-progress-card {
+    border-color: var(--line);
+  }
+  .metric-card {
+    position: relative;
+    overflow: hidden;
+    transition:
+      transform 160ms ease,
+      border-color 160ms ease,
+      box-shadow 160ms ease;
+  }
+  .metric-card::after {
+    position: absolute;
+    right: -24px;
+    bottom: -36px;
+    width: 96px;
+    height: 96px;
+    border-radius: 999px;
+    background: var(--brand-faint);
+    content: '';
+  }
+  .metric-card > * {
+    position: relative;
+    z-index: 1;
+  }
+  .metric-card:hover {
+    transform: translateY(-2px);
+    border-color: var(--brand);
+    box-shadow: 0 12px 28px color-mix(in srgb, var(--brand) 10%, transparent);
+  }
+  .opportunity-row:hover {
+    background: var(--brand-faint);
+  }
+  @media (max-width: 1120px) {
+    .workspace-grid {
+      grid-template-columns: minmax(0, 1fr) 300px;
+    }
+  }
   @media (max-width: 980px) {
+    .hero-content {
+      align-items: flex-start;
+      flex-direction: column;
+    }
     .setup-grid {
       grid-template-columns: minmax(0, 1fr);
+    }
+    .workspace-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+  @media (max-width: 720px) {
+    .overview-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .dashboard-hero {
+      padding: 1.25rem;
+    }
+    .dashboard-hero .btn-primary {
+      width: 100%;
+    }
+    .opportunity-row {
+      grid-template-columns: auto minmax(0, 1fr);
+    }
+    .opportunity-row > :last-child {
+      grid-column: 2;
+      min-width: 0;
+      text-align: left;
     }
   }
 </style>

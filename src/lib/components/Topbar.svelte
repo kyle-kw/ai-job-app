@@ -9,7 +9,7 @@
     '/jobs': { title: '岗位库', subtitle: '抓取、筛选并理解每一个机会' },
     '/reports': { title: '数据报告', subtitle: '从本地岗位数据生成求职与面试准备洞察' },
     '/resume': { title: '我的简历', subtitle: '维护一份可信、可复用的职业事实库' },
-    '/settings': { title: '设置', subtitle: '配置默认模型与高级能力' }
+    '/settings': { title: '设置', subtitle: '管理外观、连接、默认模型与高级能力' }
   };
   $: current = titles[$page.url.pathname] ?? titles['/'];
 </script>
