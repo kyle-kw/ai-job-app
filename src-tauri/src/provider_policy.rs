@@ -49,6 +49,9 @@ mod tests {
             vision_verified: false,
             last_tested_at: None,
             last_test_error: None,
+            reasoning_effort: None,
+            temperature: None,
+            max_tokens: None,
         }
     }
 

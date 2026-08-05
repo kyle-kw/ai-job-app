@@ -235,6 +235,12 @@ export interface AiProviderConfig {
   visionVerified: boolean;
   lastTestedAt?: string | null;
   lastTestError?: string | null;
+  /** Chat Completions reasoning_effort; omit/empty = do not send. */
+  reasoningEffort?: string | null;
+  /** Sampling temperature in (0, 1]; default 0.2 when unset. */
+  temperature?: number | null;
+  /** Max completion tokens in [1000, 64000]; default 3000 when unset. */
+  maxTokens?: number | null;
 }
 
 export interface ScrapeRun {

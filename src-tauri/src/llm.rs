@@ -101,6 +101,8 @@ pub async fn test(provider: &AiProviderConfig) -> Result<ProviderTestResult, Str
     validate_base_url(provider)?;
     let key = load_secret(provider)?;
     let started = Instant::now();
+    // Connection verification only requires structured JSON output.
+    // Image/vision capability is optional and never required to pass the test.
     let value: Value = chat_json(
         provider,
         &key,
@@ -109,10 +111,23 @@ pub async fn test(provider: &AiProviderConfig) -> Result<ProviderTestResult, Str
     )
     .await?;
     let structured = value.get("ok").and_then(Value::as_bool) == Some(true);
-    let (vision_supported, vision_message) = match test_vision(provider, &key).await {
-        Ok(true) => (true, "图片识别能力正常".to_string()),
-        Ok(false) => (false, "模型接收了图片，但未能读取测试文字".to_string()),
-        Err(error) => (false, format!("图片能力未通过：{}", redact(&error))),
+    let (vision_supported, vision_message) = if structured {
+        match test_vision(provider, &key).await {
+            Ok(true) => (true, "支持扫描件识别".to_string()),
+            Ok(false) => (
+                false,
+                "未通过图片探测（可选，不影响连接验证）".to_string(),
+            ),
+            Err(error) => (
+                false,
+                format!("未检测图片能力（可选）：{}", redact(&error)),
+            ),
+        }
+    } else {
+        (
+            false,
+            "未检测图片能力（连接验证不要求）".to_string(),
+        )
     };
     Ok(ProviderTestResult {
         ok: structured,
@@ -195,6 +210,59 @@ async fn chat_json(
     chat_json_with_content(provider, api_key, system, Value::String(user.to_string())).await
 }
 
+const DEFAULT_TEMPERATURE: f64 = 0.2;
+const DEFAULT_MAX_TOKENS: u32 = 3000;
+const MAX_TEMPERATURE: f64 = 1.0;
+const MIN_MAX_TOKENS: u32 = 1000;
+const MAX_MAX_TOKENS: u32 = 64_000;
+
+/// Resolve temperature to (0, 1]. Unset → 0.2.
+fn resolve_temperature(provider: &AiProviderConfig) -> f64 {
+    let value = provider.temperature.unwrap_or(DEFAULT_TEMPERATURE);
+    if !value.is_finite() || value <= 0.0 {
+        return DEFAULT_TEMPERATURE;
+    }
+    value.min(MAX_TEMPERATURE)
+}
+
+/// Resolve max completion tokens to [1000, 64000]. Unset → 3000.
+fn resolve_max_tokens(provider: &AiProviderConfig) -> u32 {
+    provider
+        .max_tokens
+        .unwrap_or(DEFAULT_MAX_TOKENS)
+        .clamp(MIN_MAX_TOKENS, MAX_MAX_TOKENS)
+}
+
+/// Build the Chat Completions JSON body.
+///
+/// When `reasoning_effort` is set (non-empty after trim), the field is sent and
+/// `temperature` is omitted (many reasoning models reject temperature).
+/// When unset, `temperature` is sent using the configured or default value.
+fn build_chat_body(provider: &AiProviderConfig, system: &str, user_content: Value) -> Value {
+    let mut body = json!({
+        "model": provider.model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_content}
+        ],
+        "max_completion_tokens": resolve_max_tokens(provider),
+        "response_format": {"type": "json_object"}
+    });
+    let effort = provider
+        .reasoning_effort
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if let Some(map) = body.as_object_mut() {
+        if let Some(effort) = effort {
+            map.insert("reasoning_effort".into(), Value::String(effort.to_string()));
+        } else {
+            map.insert("temperature".into(), json!(resolve_temperature(provider)));
+        }
+    }
+    body
+}
+
 async fn chat_json_with_content(
     provider: &AiProviderConfig,
     api_key: &str,
@@ -207,16 +275,7 @@ async fn chat_json_with_content(
         base_url.as_str().trim_end_matches('/')
     ))
     .map_err(|_| "Invalid Base URL endpoint".to_string())?;
-    let body = json!({
-        "model": provider.model,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user_content}
-        ],
-        "temperature": 0.2,
-        "max_completion_tokens": 3000,
-        "response_format": {"type": "json_object"}
-    });
+    let body = build_chat_body(provider, system, user_content);
     let response = Client::builder()
         .timeout(Duration::from_secs(60))
         .redirect(Policy::none())
@@ -309,9 +368,8 @@ mod tests {
         assert!(!redact("failure sk-secret-value").contains("secret"));
     }
 
-    #[test]
-    fn validates_provider_url_security_policy() {
-        let mut provider = AiProviderConfig {
+    fn sample_provider() -> AiProviderConfig {
+        AiProviderConfig {
             id: "test".into(),
             kind: "custom".into(),
             name: "Test".into(),
@@ -325,7 +383,15 @@ mod tests {
             vision_verified: false,
             last_tested_at: None,
             last_test_error: None,
-        };
+            reasoning_effort: None,
+            temperature: None,
+            max_tokens: None,
+        }
+    }
+
+    #[test]
+    fn validates_provider_url_security_policy() {
+        let mut provider = sample_provider();
         assert!(validate_base_url(&provider).is_ok());
         provider.base_url = "http://192.168.1.20:11434/v1".into();
         assert!(validate_base_url(&provider).is_err());
@@ -335,5 +401,59 @@ mod tests {
         assert!(validate_base_url(&provider).is_err());
         provider.base_url = "https://user:pass@example.com/v1?x=1".into();
         assert!(validate_base_url(&provider).is_err());
+    }
+
+    #[test]
+    fn chat_body_without_reasoning_effort_keeps_temperature() {
+        let provider = sample_provider();
+        let body = build_chat_body(&provider, "sys", Value::String("user".into()));
+        assert_eq!(body["temperature"], 0.2);
+        assert!(body.get("reasoning_effort").is_none());
+        assert_eq!(body["model"], "model");
+        assert_eq!(body["max_completion_tokens"], 3000);
+    }
+
+    #[test]
+    fn chat_body_with_reasoning_effort_omits_temperature() {
+        let mut provider = sample_provider();
+        provider.reasoning_effort = Some("high".into());
+        let body = build_chat_body(&provider, "sys", Value::String("user".into()));
+        assert_eq!(body["reasoning_effort"], "high");
+        assert!(body.get("temperature").is_none());
+    }
+
+    #[test]
+    fn chat_body_treats_blank_reasoning_effort_as_unset() {
+        let mut provider = sample_provider();
+        provider.reasoning_effort = Some("   ".into());
+        let body = build_chat_body(&provider, "sys", Value::String("user".into()));
+        assert_eq!(body["temperature"], 0.2);
+        assert!(body.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn chat_body_uses_configured_temperature_and_max_tokens() {
+        let mut provider = sample_provider();
+        provider.temperature = Some(0.7);
+        provider.max_tokens = Some(8000);
+        let body = build_chat_body(&provider, "sys", Value::String("user".into()));
+        assert_eq!(body["temperature"], 0.7);
+        assert_eq!(body["max_completion_tokens"], 8000);
+    }
+
+    #[test]
+    fn chat_body_clamps_temperature_and_max_tokens_to_allowed_range() {
+        let mut provider = sample_provider();
+        provider.temperature = Some(2.5);
+        provider.max_tokens = Some(50);
+        let body = build_chat_body(&provider, "sys", Value::String("user".into()));
+        assert_eq!(body["temperature"], 1.0);
+        assert_eq!(body["max_completion_tokens"], 1000);
+
+        provider.temperature = Some(0.0);
+        provider.max_tokens = Some(100_000);
+        let body = build_chat_body(&provider, "sys", Value::String("user".into()));
+        assert_eq!(body["temperature"], 0.2);
+        assert_eq!(body["max_completion_tokens"], 64_000);
     }
 }

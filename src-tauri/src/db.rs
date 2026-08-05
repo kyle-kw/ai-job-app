@@ -755,6 +755,9 @@ fn default_xiaomi_provider() -> AiProviderConfig {
         vision_verified: false,
         last_tested_at: None,
         last_test_error: None,
+        reasoning_effort: None,
+        temperature: None,
+        max_tokens: None,
     }
 }
 
@@ -773,6 +776,9 @@ fn default_custom_provider() -> AiProviderConfig {
         vision_verified: false,
         last_tested_at: None,
         last_test_error: None,
+        reasoning_effort: None,
+        temperature: None,
+        max_tokens: None,
     }
 }
 

@@ -540,7 +540,91 @@
                   ><option value={true}>是</option><option value={false}>否</option></select
                 ></label
               >
+              <label
+                ><span class="label">推理强度</span><select
+                  class="select"
+                  value={draft.reasoningEffort ?? ''}
+                  on:change={(event) => {
+                    if (!draft) return;
+                    const value = event.currentTarget.value;
+                    draft = { ...draft, reasoningEffort: value ? value : null };
+                  }}
+                >
+                  <option value="">default</option>
+                  <option value="low">low</option>
+                  <option value="medium">medium</option>
+                  <option value="high">high</option>
+                  <option value="xhigh">xhigh</option>
+                  <option value="max">max</option>
+                  <option value="ultra">ultra</option>
+                </select></label
+              >
+              <label
+                ><span class="label">Temperature</span><input
+                  class="input"
+                  type="number"
+                  min="0.01"
+                  max="1"
+                  step="0.01"
+                  placeholder="default (0.2)"
+                  value={draft.temperature ?? ''}
+                  on:change={(event) => {
+                    if (!draft) return;
+                    const text = event.currentTarget.value.trim();
+                    if (!text) {
+                      draft = { ...draft, temperature: null };
+                      event.currentTarget.value = '';
+                      return;
+                    }
+                    const raw = Number(text);
+                    if (!Number.isFinite(raw) || raw <= 0) {
+                      draft = { ...draft, temperature: null };
+                      event.currentTarget.value = '';
+                      return;
+                    }
+                    const clamped = Math.min(raw, 1);
+                    draft = { ...draft, temperature: clamped };
+                    event.currentTarget.value = String(clamped);
+                  }}
+                /></label
+              >
+              <label
+                ><span class="label">Max tokens</span><input
+                  class="input"
+                  type="number"
+                  min="1000"
+                  max="64000"
+                  step="100"
+                  placeholder="default (3000)"
+                  value={draft.maxTokens ?? ''}
+                  on:change={(event) => {
+                    if (!draft) return;
+                    const text = event.currentTarget.value.trim();
+                    if (!text) {
+                      draft = { ...draft, maxTokens: null };
+                      event.currentTarget.value = '';
+                      return;
+                    }
+                    const raw = Number(text);
+                    if (!Number.isFinite(raw)) {
+                      draft = { ...draft, maxTokens: null };
+                      event.currentTarget.value = '';
+                      return;
+                    }
+                    const clamped = Math.min(64000, Math.max(1000, Math.round(raw)));
+                    draft = { ...draft, maxTokens: clamped };
+                    event.currentTarget.value = String(clamped);
+                  }}
+                /></label
+              >
             </div>
+            <p class="text-[11px] body-muted">
+              推理强度仅对支持 reasoning 的模型有效（如 GPT-5.6）。选
+              <code>default</code> 时不传该参数；选中具体级别后请求会发送
+              <code>reasoning_effort</code> 且不再附带 <code>temperature</code>。Temperature /
+              Max tokens 留空表示使用默认（0.2 / 3000）；填写时 Temperature 范围 (0, 1]，Max
+              tokens 范围 [1000, 64000]。
+            </p>
 
             {#if result}<div
                 class="flex items-start gap-3 rounded-xl border p-3"

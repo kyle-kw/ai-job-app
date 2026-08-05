@@ -575,7 +575,14 @@ fn validate_model_coverage_report(
 }
 
 fn provider_fingerprint(provider: &AiProviderConfig) -> String {
-    hash_json(&json!({"id":provider.id,"baseUrl":provider.base_url,"model":provider.model}))
+    hash_json(&json!({
+        "id": provider.id,
+        "baseUrl": provider.base_url,
+        "model": provider.model,
+        "reasoningEffort": provider.reasoning_effort,
+        "temperature": provider.temperature,
+        "maxTokens": provider.max_tokens,
+    }))
 }
 
 fn keyword_scope_key(keywords: &[ReportKeyword]) -> String {

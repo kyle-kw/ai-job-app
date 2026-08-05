@@ -562,6 +562,34 @@ mod tests {
             "model":"model", "isDefault":true, "verified":true
         })).unwrap();
         assert!(!provider.vision_verified);
+        assert!(provider.reasoning_effort.is_none());
+    }
+
+    #[test]
+    fn provider_reasoning_effort_round_trips_when_set() {
+        let provider: AiProviderConfig = serde_json::from_value(serde_json::json!({
+            "id":"provider", "kind":"custom", "name":"Custom", "baseUrl":"https://example.invalid/v1",
+            "model":"gpt-5.6", "isDefault":true, "verified":true, "reasoningEffort":"high"
+        }))
+        .unwrap();
+        assert_eq!(provider.reasoning_effort.as_deref(), Some("high"));
+        let serialized = serde_json::to_value(&provider).unwrap();
+        assert_eq!(serialized["reasoningEffort"], "high");
+    }
+
+    #[test]
+    fn provider_temperature_and_max_tokens_round_trip() {
+        let provider: AiProviderConfig = serde_json::from_value(serde_json::json!({
+            "id":"provider", "kind":"custom", "name":"Custom", "baseUrl":"https://example.invalid/v1",
+            "model":"model", "isDefault":true, "verified":true,
+            "temperature": 0.7, "maxTokens": 8000
+        }))
+        .unwrap();
+        assert_eq!(provider.temperature, Some(0.7));
+        assert_eq!(provider.max_tokens, Some(8000));
+        let serialized = serde_json::to_value(&provider).unwrap();
+        assert_eq!(serialized["temperature"], 0.7);
+        assert_eq!(serialized["maxTokens"], 8000);
     }
 
     #[test]
@@ -630,6 +658,17 @@ pub struct AiProviderConfig {
     pub last_tested_at: Option<String>,
     #[serde(default)]
     pub last_test_error: Option<String>,
+    /// OpenAI-compatible Chat Completions `reasoning_effort` (e.g. low/medium/high).
+    /// When unset, the request omits the field and keeps legacy temperature behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+    /// Sampling temperature in (0, 1]. When unset, defaults to 0.2 at request time.
+    /// Omitted from the request body when `reasoning_effort` is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+    /// Max completion tokens in [1000, 64000]. When unset, defaults to 3000 at request time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
