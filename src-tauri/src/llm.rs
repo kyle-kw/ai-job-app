@@ -114,20 +114,11 @@ pub async fn test(provider: &AiProviderConfig) -> Result<ProviderTestResult, Str
     let (vision_supported, vision_message) = if structured {
         match test_vision(provider, &key).await {
             Ok(true) => (true, "支持扫描件识别".to_string()),
-            Ok(false) => (
-                false,
-                "未通过图片探测（可选，不影响连接验证）".to_string(),
-            ),
-            Err(error) => (
-                false,
-                format!("未检测图片能力（可选）：{}", redact(&error)),
-            ),
+            Ok(false) => (false, "未通过图片探测（可选，不影响连接验证）".to_string()),
+            Err(error) => (false, format!("未检测图片能力（可选）：{}", redact(&error))),
         }
     } else {
-        (
-            false,
-            "未检测图片能力（连接验证不要求）".to_string(),
-        )
+        (false, "未检测图片能力（连接验证不要求）".to_string())
     };
     Ok(ProviderTestResult {
         ok: structured,

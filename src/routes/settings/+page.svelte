@@ -621,9 +621,9 @@
             <p class="text-[11px] body-muted">
               推理强度仅对支持 reasoning 的模型有效（如 GPT-5.6）。选
               <code>default</code> 时不传该参数；选中具体级别后请求会发送
-              <code>reasoning_effort</code> 且不再附带 <code>temperature</code>。Temperature /
-              Max tokens 留空表示使用默认（0.2 / 3000）；填写时 Temperature 范围 (0, 1]，Max
-              tokens 范围 [1000, 64000]。
+              <code>reasoning_effort</code> 且不再附带 <code>temperature</code>。Temperature / Max
+              tokens 留空表示使用默认（0.2 / 3000）；填写时 Temperature 范围 (0, 1]，Max tokens 范围
+              [1000, 64000]。
             </p>
 
             {#if result}<div

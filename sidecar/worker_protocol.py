@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 SHANGHAI_TZ = timezone(timedelta(hours=8), name="Asia/Shanghai")
-APP_VERSION = "0.2.5"
+APP_VERSION = "0.2.6"
 PROTOCOL_VERSION = "2"
 
 
