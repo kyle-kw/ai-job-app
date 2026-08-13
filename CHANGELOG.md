@@ -9,7 +9,7 @@
 ### Changed
 
 - 将视觉能力探测调整为可选流程，避免探测失败阻断基础连接验证。
-- 更新 SvelteKit、DOMPurify 和 nanoid，修复上游依赖安全公告。
+- 更新 SvelteKit、DOMPurify、nanoid 和 pypdf，修复上游依赖安全公告。
 
 ## [0.2.5] - 2026-08-01
 
