@@ -16,7 +16,11 @@ module.exports = {
         danger: 'var(--danger)'
       },
       boxShadow: {
+        sm: '0 1px 2px 0 rgb(0 0 0 / 0.05)',
         panel: '0 1px 2px rgba(15, 23, 42, 0.04), 0 12px 36px rgba(15, 23, 42, 0.05)'
+      },
+      backdropBlur: {
+        sm: '4px'
       }
     }
   },

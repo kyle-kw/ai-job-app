@@ -34,6 +34,7 @@ BOSS 列表抓取通过 Chrome CDP 监听页面自身的搜索响应，保留 AP
 - Windows 10/11 x64：NSIS 安装包，按当前用户安装。
 - macOS 12+ Intel：DMG。
 - macOS 12+ Apple Silicon：DMG。
+- macOS 需 Safari/WebKit 16.4+；macOS 12 用户需先安装可用的系统与 Safari 更新。
 - BOSS 功能要求用户自行安装 Google Chrome；应用不会下载浏览器。
 
 当前公开 Beta 不包含 Windows/macOS 平台代码签名和 Apple 公证，因此 SmartScreen 或 Gatekeeper 可能显示来源警告。Tauri updater 更新包仍使用独立签名验证，签名失败的包不会安装。

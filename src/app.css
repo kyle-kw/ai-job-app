@@ -1,6 +1,45 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+@config '../tailwind.config.cjs';
+
+@theme {
+  --default-ring-width: 3px;
+  --default-ring-color: #3b82f6;
+}
+
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: #e5e7eb;
+  }
+  input::placeholder,
+  textarea::placeholder {
+    color: #9ca3af;
+  }
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+@utility btn {
+  @apply inline-flex h-10 items-center justify-center gap-2 rounded-xl border px-4 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50;
+  border-color: var(--line-strong);
+  background: var(--panel);
+
+  &:hover:not(:disabled) {
+    border-color: var(--brand);
+    color: var(--brand);
+  }
+}
+
+@utility chip {
+  @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium;
+  background: var(--panel-soft);
+  color: var(--muted);
+}
 
 :root {
   font-family:
@@ -86,36 +125,38 @@ html[data-theme='dark'] {
   --focus: rgba(101, 189, 163, 0.2);
 }
 
-* {
-  box-sizing: border-box;
-}
-html,
-body {
-  margin: 0;
-  min-width: 320px;
-  min-height: 100%;
-}
-body {
-  background: var(--canvas);
-  color: var(--ink);
-  overflow: hidden;
-}
-button,
-input,
-select,
-textarea {
-  font: inherit;
-}
-button {
-  color: inherit;
-}
-a {
-  color: inherit;
-  text-decoration: none;
-}
-::selection {
-  background: var(--brand-soft);
-  color: var(--ink);
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+  html,
+  body {
+    margin: 0;
+    min-width: 320px;
+    min-height: 100%;
+  }
+  body {
+    background: var(--canvas);
+    color: var(--ink);
+    overflow: hidden;
+  }
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
+  button {
+    color: inherit;
+  }
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+  ::selection {
+    background: var(--brand-soft);
+    color: var(--ink);
+  }
 }
 
 @layer components {
@@ -152,15 +193,6 @@ a {
   }
   .body-muted {
     color: var(--muted);
-  }
-  .btn {
-    @apply inline-flex h-10 items-center justify-center gap-2 rounded-xl border px-4 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50;
-    border-color: var(--line-strong);
-    background: var(--panel);
-  }
-  .btn:hover:not(:disabled) {
-    border-color: var(--brand);
-    color: var(--brand);
   }
   .btn:focus-visible,
   .input:focus-visible,
@@ -206,7 +238,7 @@ a {
   .input,
   .select,
   .textarea {
-    @apply w-full rounded-xl border bg-panel px-3 text-sm text-ink outline-none transition;
+    @apply w-full rounded-xl border bg-panel px-3 text-sm text-ink outline-hidden transition;
     border-color: var(--line-strong);
   }
   .input,
@@ -228,11 +260,6 @@ a {
   }
   .label {
     @apply mb-1.5 block text-[13px] font-semibold;
-  }
-  .chip {
-    @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium;
-    background: var(--panel-soft);
-    color: var(--muted);
   }
   .chip-brand {
     @apply chip;
