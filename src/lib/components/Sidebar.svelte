@@ -1,6 +1,7 @@
 <script lang="ts">
   import { BarChart3, BriefcaseBusiness, FileText, Home, Settings2, Sparkles } from 'lucide-svelte';
   import { page } from '$app/stores';
+  import { jobsBrowseHref } from '$lib/jobs-browse-cache';
 
   const nav = [
     { href: '/', label: '首页', icon: Home },
@@ -33,7 +34,7 @@
   <nav class="space-y-1" aria-label="主导航">
     {#each nav as item}
       <a
-        href={item.href}
+        href={item.href === '/jobs' ? $jobsBrowseHref : item.href}
         aria-label={item.label}
         aria-current={active(item.href) ? 'page' : undefined}
         title={item.label}

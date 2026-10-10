@@ -11,7 +11,10 @@ const navigationMocks = vi.hoisted(() => ({
     window.history.replaceState(state, '', url);
   })
 }));
-vi.mock('$app/navigation', () => ({ replaceState: navigationMocks.replaceState }));
+vi.mock('$app/navigation', () => ({
+  replaceState: navigationMocks.replaceState,
+  beforeNavigate: vi.fn()
+}));
 
 const cities = [
   '北京',

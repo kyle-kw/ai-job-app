@@ -33,6 +33,7 @@
   import { formatLocalDateTime } from '$lib/date-time';
   import { availableProviderConfigs } from '$lib/provider-policy';
   import { shouldReloadAfterClear } from '$lib/clear-data';
+  import { clearJobsBrowseSnapshot } from '$lib/jobs-browse-cache';
   import { checkForUpdate, updateCheckError, updateChecking } from '$lib/stores/distribution';
   import { refresh, saveSettings, snapshot } from '$lib/stores/app';
   import { APP_THEMES, applyAppTheme, systemPrefersDark } from '$lib/theme';
@@ -251,6 +252,7 @@
     maintenanceBusy = true;
     try {
       await backend.restoreBackup(selected);
+      clearJobsBrowseSnapshot();
       await backend.restartApp();
     } catch (error) {
       maintenanceError = error instanceof Error ? error.message : String(error);
@@ -303,6 +305,7 @@
     clearResult = null;
     try {
       clearResult = await backend.clearData(scope);
+      if (scope === 'all') clearJobsBrowseSnapshot();
       clearConfirmation = null;
       if (shouldReloadAfterClear(clearResult)) {
         await refresh();

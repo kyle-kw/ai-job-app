@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { replaceState } from '$app/navigation';
+  import { onMount, tick } from 'svelte';
+  import { beforeNavigate, replaceState } from '$app/navigation';
   import {
     ArrowUpRight,
     BriefcaseBusiness,
@@ -28,6 +28,20 @@
   import JobListPanel from '$lib/components/jobs/JobListPanel.svelte';
   import { chooseLocalExportPath, localExportStamp } from '$lib/export-file';
   import { COMPANY_SCALE_FILTER_OPTIONS, type CompanyScaleFilterCode } from '$lib/job-filters';
+  import {
+    invalidateJobsBrowseData,
+    jobsBrowseDataKey,
+    jobsBrowseHref,
+    jobsBrowseRevision,
+    jobsViewKeyFromSearch,
+    readJobsDetailScrollTop,
+    readJobsBrowseScrollTop,
+    readJobsBrowseSnapshot,
+    restoreJobsDetailScrollTop,
+    restoreJobsListScrollTop,
+    saveJobsBrowseSnapshot,
+    type JobsBrowseSnapshot
+  } from '$lib/jobs-browse-cache';
   import { backend } from '$lib/services/backend';
   import { latestCompletedScrapeRun } from '$lib/scrape-history';
   import { createSearchSpec } from '$lib/search-spec';
@@ -82,6 +96,11 @@
   let filterTimer: number | undefined;
   let lastFilterKey = '';
   let lastTerminalTaskKey = '';
+  let loadedFilterKey = '';
+  let loadedDataKey = '';
+  let browseHref = '/jobs';
+  let navigationSaved = false;
+  let lastBrowseRevision = 0;
 
   const makeFilterKey = (
     nextQuery: string,
@@ -140,6 +159,15 @@
   $: if (mounted && terminalTaskKey && terminalTaskKey !== lastTerminalTaskKey) {
     lastTerminalTaskKey = terminalTaskKey;
     void reloadJobs();
+    void reloadFilterOptions();
+  }
+  $: if (mounted && $jobsBrowseRevision !== lastBrowseRevision) {
+    lastBrowseRevision = $jobsBrowseRevision;
+    persistJobsBrowseSnapshot();
+    const cached = readJobsBrowseSnapshot(
+      jobsViewKeyFromSearch(new URL(browseHref, window.location.origin).searchParams)
+    );
+    void reloadJobs(cached?.listValid ? cached : undefined);
     void reloadFilterOptions();
   }
   $: {
@@ -213,23 +241,59 @@
     }
   }
 
-  async function reloadJobs() {
+  async function reloadJobs(restore?: JobsBrowseSnapshot) {
+    if (!mounted) return;
     const requestId = ++jobsRequestId;
+    const jobQuery = currentJobQuery();
+    const requestedFilterKey = makeFilterKey(
+      query,
+      minScore,
+      onlyNew,
+      companyScaleFilter,
+      cityFilter,
+      missingDescription,
+      keywordKeys,
+      skillFilters,
+      experienceFilter,
+      salaryBandFilter,
+      sort
+    );
+    const requestedDataKey = jobsBrowseDataKey($snapshot);
     jobsLoading = true;
     jobsError = '';
     try {
-      const result = await backend.listJobsPage(currentJobQuery());
+      const result = await backend.listJobsPage(jobQuery);
       if (requestId !== jobsRequestId) return;
-      jobs = result.items;
-      totalJobs = result.total;
-      pendingDetailCount = result.pendingDetailCount;
-      nextCursor = result.nextCursor ?? null;
-      if (requestedJobId && !jobs.some((job) => job.id === requestedJobId)) {
+      let items = result.items;
+      let cursor = result.nextCursor ?? null;
+      const cursors = new Set<string>();
+      while (restore && items.length < restore.jobs.length && cursor && !cursors.has(cursor)) {
+        cursors.add(cursor);
+        const page = await backend.listJobsPage({ ...jobQuery, cursor });
+        if (requestId !== jobsRequestId) return;
+        const known = new Set(items.map((job) => job.id));
+        items = [...items, ...page.items.filter((job) => !known.has(job.id))];
+        cursor = page.nextCursor ?? null;
+      }
+      if (requestedJobId && !items.some((job) => job.id === requestedJobId)) {
         try {
-          jobs = [await backend.getJob(requestedJobId), ...jobs];
+          const requestedJob = await backend.getJob(requestedJobId);
+          if (requestId !== jobsRequestId) return;
+          items = [requestedJob, ...items];
         } catch {
           /* invalid deep link */
         }
+      }
+      if (requestId !== jobsRequestId) return;
+      jobs = items;
+      totalJobs = result.total;
+      pendingDetailCount = result.pendingDetailCount;
+      nextCursor = cursor;
+      loadedFilterKey = requestedFilterKey;
+      loadedDataKey = requestedDataKey;
+      if (restore) {
+        await tick();
+        if (requestId === jobsRequestId && mounted) restoreBrowseScroll(restore);
       }
     } catch (error) {
       if (requestId === jobsRequestId)
@@ -240,7 +304,7 @@
   }
 
   async function loadNextPage() {
-    if (!nextCursor || jobsLoading) return;
+    if (!nextCursor || jobsLoading || loadedFilterKey !== filterKey) return;
     const cursor = nextCursor;
     const requestId = ++jobsRequestId;
     jobsLoading = true;
@@ -296,8 +360,50 @@
     };
   }
 
+  function persistJobsBrowseSnapshot() {
+    if (jobs.length === 0 && (jobsLoading || jobsError)) return;
+    saveJobsBrowseSnapshot({
+      href: browseHref,
+      viewKey: jobsViewKeyFromSearch(new URL(browseHref, window.location.origin).searchParams),
+      dataKey: loadedDataKey,
+      listValid: loadedFilterKey === filterKey,
+      jobs,
+      totalJobs,
+      pendingDetailCount,
+      nextCursor,
+      selectedId,
+      activeTab,
+      scrollTop: readJobsBrowseScrollTop(),
+      detailScrollTop: readJobsDetailScrollTop(),
+      shellScrollTop: document.querySelector('.page-shell')?.scrollTop ?? 0,
+      query,
+      minScore,
+      onlyNew,
+      companyScaleFilter,
+      missingDescription,
+      sort
+    });
+  }
+
+  function restoreBrowseScroll(cached: JobsBrowseSnapshot) {
+    restoreJobsListScrollTop(cached.scrollTop);
+    restoreJobsDetailScrollTop(selectedId === cached.selectedId ? cached.detailScrollTop : 0);
+    const shell = document.querySelector('.page-shell');
+    if (shell) shell.scrollTop = cached.shellScrollTop;
+  }
+
+  beforeNavigate(({ to }) => {
+    if (mounted && to?.url.pathname !== '/jobs') {
+      persistJobsBrowseSnapshot();
+      navigationSaved = true;
+    }
+  });
+
   onMount(() => {
-    const params = new URL(window.location.href).searchParams;
+    const url = new URL(window.location.href);
+    browseHref = `${url.pathname}${url.search}${url.hash}`;
+    jobsBrowseHref.set(browseHref);
+    const params = url.searchParams;
     requestedJobId = params.get('job');
     fromReport = params.get('from') === 'report';
     keywordKeys = [
@@ -324,6 +430,24 @@
     )
       ? (requestedSalaryBand as ReportSalaryBand)
       : '';
+    const viewKey = jobsViewKeyFromSearch(params);
+    const cached = readJobsBrowseSnapshot(viewKey);
+    if (cached) {
+      query = cached.query;
+      minScore = cached.minScore;
+      onlyNew = cached.onlyNew;
+      companyScaleFilter = cached.companyScaleFilter;
+      missingDescription = cached.missingDescription;
+      sort = cached.sort;
+      if (cached.listValid) {
+        jobs = cached.jobs;
+        totalJobs = cached.totalJobs;
+        pendingDetailCount = cached.pendingDetailCount;
+        nextCursor = cached.nextCursor;
+        selectedId = cached.selectedId;
+        activeTab = cached.activeTab;
+      }
+    }
     mounted = true;
     lastFilterKey = makeFilterKey(
       query,
@@ -339,9 +463,23 @@
       sort
     );
     lastTerminalTaskKey = terminalTaskKey;
-    void reloadJobs();
+    lastBrowseRevision = $jobsBrowseRevision;
+    if (cached?.listValid && cached.dataKey === jobsBrowseDataKey($snapshot)) {
+      loadedFilterKey = lastFilterKey;
+      loadedDataKey = cached.dataKey;
+      void tick().then(() => {
+        if (mounted) restoreBrowseScroll(cached);
+      });
+    } else {
+      void reloadJobs(cached?.listValid ? cached : undefined);
+    }
     void reloadFilterOptions();
-    return () => window.clearTimeout(filterTimer);
+    return () => {
+      window.clearTimeout(filterTimer);
+      if (!navigationSaved) persistJobsBrowseSnapshot();
+      mounted = false;
+      jobsRequestId += 1;
+    };
   });
 
   function showToast(message: string) {
@@ -378,6 +516,7 @@
     greetingBusy = true;
     try {
       await backend.generateGreeting(selected.id);
+      lastBrowseRevision = invalidateJobsBrowseData();
       await refresh();
       await reloadJobs();
       showToast('招呼语已生成');
@@ -422,7 +561,7 @@
 
   function syncJobsUrl() {
     if (typeof window === 'undefined') return;
-    const url = new URL(window.location.href);
+    const url = new URL(browseHref, window.location.origin);
     for (const key of [
       'job',
       'from',
@@ -443,6 +582,8 @@
     if (experienceFilter) url.searchParams.set('experience', experienceFilter);
     if (salaryBandFilter) url.searchParams.set('salaryBand', salaryBandFilter);
     const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+    browseHref = nextUrl;
+    jobsBrowseHref.set(nextUrl);
     replaceState(nextUrl, {});
   }
 
@@ -473,6 +614,7 @@
     analyzingJobId = jobId;
     try {
       const result = await backend.analyzeJob(jobId, force);
+      lastBrowseRevision = invalidateJobsBrowseData();
       await refresh();
       await reloadJobs();
       const source = result.source === 'llm' ? 'AI 分析' : '本地基础匹配';
@@ -544,6 +686,7 @@
         confirmation.mode === 'single'
           ? await backend.deleteJob(confirmation.job.id)
           : await backend.deleteMissingDescriptionJobs(confirmation.query);
+      lastBrowseRevision = invalidateJobsBrowseData();
       selectedId = '';
       await reloadFilterOptions();
       await reloadJobs();
