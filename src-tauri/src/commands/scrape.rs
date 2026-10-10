@@ -293,12 +293,6 @@ pub async fn start_scrape(
                     .lock()
                     .map(|task| task.clone())
                     .unwrap_or_else(|_| new_task("scrape", "岗位抓取"));
-                let recoverable = if error.contains("登录") || error.contains("CDP") {
-                    "请在自动打开的 BOSS 专用浏览器中完成登录或验证码，然后重新点击“开始抓取”。"
-                        .to_string()
-                } else {
-                    error
-                };
                 let progress = task.progress;
                 update_task(
                     &app,
@@ -307,7 +301,7 @@ pub async fn start_scrape(
                     "failed",
                     progress,
                     "岗位抓取未完成",
-                    Some(recoverable),
+                    Some(error),
                 );
             }
         }

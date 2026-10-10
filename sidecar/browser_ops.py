@@ -40,9 +40,21 @@ def stable_job_id(external_id: str, company: str, title: str, location: str) -> 
 
 def normalize_job(raw: dict[str, Any], detail: dict[str, Any] | None = None) -> dict[str, Any]:
     detail = detail or {}
-    labels = split_pipe(raw.get("job_labels") or raw.get("tags") or detail.get("tags_list"))
+    labels = list(
+        dict.fromkeys(
+            split_pipe(raw.get("tags"))
+            + split_pipe(detail.get("tags_list"))
+            + split_pipe(raw.get("job_labels"))
+        )
+    )
     experience = next(
-        (item for item in labels if "年" in item or item in {"应届生", "经验不限", "在校生"}), ""
+        (
+            item
+            for item in labels
+            if re.search(r"\d+\s*(?:[-~至]\s*\d+)?\s*年", item)
+            or item in {"应届生", "经验不限", "在校生"}
+        ),
+        "",
     )
     degree_values = {"初中", "中专", "高中", "大专", "本科", "硕士", "博士", "学历不限"}
     degree = next((item for item in labels if any(value in item for value in degree_values)), "")
@@ -157,13 +169,19 @@ def setup_boss(params: dict[str, Any]) -> dict[str, Any]:
     return outcome
 
 
-def ensure_boss_session(boss: Any, login_timeout: int, reset_profile: bool = False) -> None:
+def ensure_boss_session(
+    boss: Any,
+    login_timeout: int,
+    reset_profile: bool = False,
+    *,
+    wait_login: bool = True,
+) -> None:
     with contextlib.redirect_stdout(io.StringIO()) as captured:
         code = boss.run_setup_chrome(
             9222,
             copy_login_state=False,
             reset_profile=reset_profile,
-            wait_login=True,
+            wait_login=wait_login,
             login_timeout=login_timeout,
         )
     if code != 0:
@@ -315,24 +333,54 @@ def _scrape_jobs(boss: Any, params: dict[str, Any]) -> dict[str, Any]:
     for input_name, scraper_name in mapping.items():
         if params.get(input_name):
             filters[scraper_name] = str(params[input_name])
-    emit("progress", progress=12, message="正在检查 BOSS 登录状态；若出现登录界面，请完成登录")
-    ensure_boss_session(boss, int(params.get("loginTimeout", 300)))
-    emit("progress", progress=24, message=f"登录状态正常，城市：{city_name}（{city_code}）")
+    login_timeout = int(params.get("loginTimeout", 300))
+    emit("progress", progress=12, message="正在启动 BOSS 专用浏览器")
+    ensure_boss_session(boss, login_timeout, wait_login=False)
+    emit(
+        "progress",
+        progress=24,
+        message=f"正在搜索岗位并检查登录状态，城市：{city_name}（{city_code}）",
+    )
     with tempfile.TemporaryDirectory(prefix="ai-job-scrape-") as temporary:
         output = str(pathlib.Path(temporary) / "jobs.json")
         details_output = str(pathlib.Path(temporary) / "details.json")
         with contextlib.redirect_stdout(io.StringIO()):
-            listing = boss.scrape_list(
-                keyword,
-                city_code,
-                pages,
-                filters,
-                output,
-                cdp_port=9222,
-                fmt="json",
-                allow_dom_fallback=False,
-                on_job=lambda raw: emit("job", phase="list", job=normalize_job(raw)),
-            )
+            listed_any = False
+
+            def emit_list_job(raw: dict[str, Any]) -> None:
+                nonlocal listed_any
+                listed_any = True
+                emit("job", phase="list", job=normalize_job(raw))
+
+            def scrape_listing() -> dict[str, Any]:
+                return boss.scrape_list(
+                    keyword,
+                    city_code,
+                    pages,
+                    filters,
+                    output,
+                    cdp_port=9222,
+                    fmt="json",
+                    allow_dom_fallback=False,
+                    on_job=emit_list_job,
+                )
+
+            try:
+                listing = scrape_listing()
+            except boss.LoginGateError as error:
+                if (
+                    listed_any
+                    or error.result is None
+                    or error.result.status is not boss.LoginProbeStatus.UNAUTHENTICATED
+                ):
+                    raise
+                emit(
+                    "progress",
+                    progress=24,
+                    message="BOSS 登录已过期，请在专用浏览器中完成登录；完成后搜索会自动继续",
+                )
+                ensure_boss_session(boss, login_timeout)
+                listing = scrape_listing()
 
             listed_jobs = list(listing.get("jobs") or [])
             detail_candidates = [

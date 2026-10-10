@@ -698,7 +698,7 @@ class WorkerTests(unittest.TestCase):
             def run_setup_chrome(cls, *_args, **kwargs):
                 cls.setup_called = True
                 self.assertFalse(kwargs["reset_profile"])
-                self.assertTrue(kwargs["wait_login"])
+                self.assertFalse(kwargs["wait_login"])
                 self.assertEqual(kwargs["login_timeout"], 300)
                 call_order.append("setup")
                 return 0
@@ -1102,6 +1102,7 @@ class WorkerTests(unittest.TestCase):
 
     def test_scrape_exception_still_closes_dedicated_chrome(self):
         class FakeBoss:
+            LoginGateError = boss_vendor.LoginGateError
             DEFAULT_CDP_DATA_DIR = "fake-profile"
             stop_called = False
 
@@ -1135,6 +1136,29 @@ class WorkerTests(unittest.TestCase):
                 worker.scrape_jobs({"keyword": "AI", "city": "上海", "pages": 1})
 
         self.assertTrue(FakeBoss.stop_called)
+
+    def test_job_normalization_preserves_requirements_when_api_labels_contain_benefits(self):
+        job = worker.normalize_job(
+            {
+                "job_id": "tagged-job",
+                "tags": "3-5年 | 本科",
+                "job_labels": "年终奖 | 五险一金 | 硕士优先",
+            }
+        )
+
+        self.assertEqual(job["experience"], "3-5年")
+        self.assertEqual(job["degree"], "本科")
+
+    def test_job_normalization_uses_detail_requirements_and_does_not_treat_bonus_as_experience(
+        self,
+    ):
+        job = worker.normalize_job(
+            {"job_id": "detail-tags", "job_labels": "年终奖"},
+            {"tags_list": "应届生 | 大专", "jd": "有效描述"},
+        )
+        self.assertEqual(job["experience"], "应届生")
+        self.assertEqual(job["degree"], "大专")
+        self.assertEqual(worker.normalize_job({"job_labels": "年终奖"})["experience"], "")
 
     def test_unknown_city_is_rejected_before_browser_connection(self):
         class FakeBoss:
