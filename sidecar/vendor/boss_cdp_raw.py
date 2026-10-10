@@ -1085,10 +1085,36 @@ def check_login_state(cdp_port=DEFAULT_CDP_PORT):
         close_page_session(cdp, tid)
 
 
+def login_page_ready_for_probe(cdp, sid):
+    """Wait for manual login navigation without reading or changing the form.
+
+    Leaving the login route only permits an authoritative background probe;
+    it is not evidence of a usable login state by itself.
+    """
+    try:
+        url = cdp.eval_js("location.href", sid)
+    except (RuntimeError,) + CDP_TRANSIENT_EXCEPTIONS:
+        # A login redirect can temporarily destroy its execution context.
+        return False
+    if not isinstance(url, str):
+        return False
+    parsed = urlparse(url)
+    if (parsed.scheme, parsed.netloc) != (
+        urlparse(BOSS_ORIGIN).scheme, urlparse(BOSS_ORIGIN).netloc,
+    ):
+        return False
+    path = parsed.path.lower()
+    return not (
+        path.startswith("/web/user") or "/login" in path or "_security_check" in path
+    )
+
+
 def wait_for_login(cdp_port=DEFAULT_CDP_PORT, timeout=DEFAULT_LOGIN_TIMEOUT, interval=3):
-    """Open BOSS login page and wait until plaintext salary is available."""
+    """Keep manual login stable, then verify salary in a separate background tab."""
     cdp = CDPSession(cdp_port)
     tid = None
+    probe_cdp = None
+    probe_tid = None
 
     deadline = time.time() + timeout
     logged_in = False
@@ -1097,12 +1123,25 @@ def wait_for_login(cdp_port=DEFAULT_CDP_PORT, timeout=DEFAULT_LOGIN_TIMEOUT, int
     print(f"等待 BOSS 登录完成（最长 {timeout}s）", end="", flush=True)
     try:
         tid, sid = create_page_session(cdp, background=False)
-        cdp.send("Page.navigate", {"url": "https://www.zhipin.com/web/user/"}, sid)
+        cdp.send("Page.navigate", {"url": f"{BOSS_ORIGIN}/web/user/"}, sid)
         while time.time() < deadline:
+            if not login_page_ready_for_probe(cdp, sid):
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    break
+                print(".", end="", flush=True)
+                time.sleep(min(interval, remaining))
+                continue
+            if probe_cdp is None:
+                # The default browser context shares cookies between tabs.
+                # A separate transport also lets cleanup close the probe
+                # without disconnecting the interactive login session.
+                probe_cdp = CDPSession(cdp_port)
+                probe_tid, probe_sid = create_page_session(probe_cdp)
             query, city_code = LOGIN_PROBE_TARGETS[attempt % len(LOGIN_PROBE_TARGETS)]
             try:
                 result = probe_login_state(
-                    cdp, sid, query=query, city_code=city_code,
+                    probe_cdp, probe_sid, query=query, city_code=city_code,
                     timeout=min(PROBE_CAPTURE_TIMEOUT, max(0, deadline - time.time())),
                 )
             except CDP_TRANSIENT_EXCEPTIONS as e:
@@ -1147,6 +1186,7 @@ def wait_for_login(cdp_port=DEFAULT_CDP_PORT, timeout=DEFAULT_LOGIN_TIMEOUT, int
         print("   Chrome 会继续保持打开；登录后可重新运行 --check 或抓取命令")
         return False
     finally:
+        close_page_session(probe_cdp, probe_tid)
         close_page_session(cdp, tid if logged_in else None)
 
 

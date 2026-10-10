@@ -481,6 +481,7 @@ class BossCaptureTests(unittest.TestCase):
         ]
         with (
             patch.object(boss, "CDPSession", return_value=cdp),
+            patch.object(cdp, "eval_js", return_value=f"{boss.BOSS_ORIGIN}/web/geek/job"),
             patch.object(boss.time, "time", side_effect=cdp.clock.time),
             patch.object(boss.time, "sleep", side_effect=cdp.clock.sleep),
             patch.object(boss, "probe_login_state", side_effect=results) as probe,
@@ -499,6 +500,7 @@ class BossCaptureTests(unittest.TestCase):
         cdp = FakeCaptureCDP()
         with (
             patch.object(boss, "CDPSession", return_value=cdp),
+            patch.object(cdp, "eval_js", return_value=f"{boss.BOSS_ORIGIN}/web/geek/job"),
             patch.object(boss.time, "time", side_effect=cdp.clock.time),
             patch.object(boss.time, "sleep", side_effect=cdp.clock.sleep),
             patch.object(
@@ -522,6 +524,7 @@ class BossCaptureTests(unittest.TestCase):
                 cdp = FakeCaptureCDP()
                 with (
                     patch.object(boss, "CDPSession", return_value=cdp),
+                    patch.object(cdp, "eval_js", return_value=f"{boss.BOSS_ORIGIN}/web/geek/job"),
                     patch.object(boss.time, "time", side_effect=cdp.clock.time),
                     patch.object(boss.time, "sleep", side_effect=cdp.clock.sleep),
                     patch.object(
@@ -541,6 +544,7 @@ class BossCaptureTests(unittest.TestCase):
         cdp = FakeCaptureCDP(failures={"Target.closeTarget": RuntimeError("already closed")})
         with (
             patch.object(boss, "CDPSession", return_value=cdp),
+            patch.object(cdp, "eval_js", return_value=f"{boss.BOSS_ORIGIN}/web/geek/job"),
             patch.object(
                 boss,
                 "probe_login_state",
